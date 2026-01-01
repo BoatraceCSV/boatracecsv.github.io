@@ -222,16 +222,18 @@ def download_boatrace_files(
         rate_limiter = RateLimiter()
 
     # Convert date to K-file and B-file format
-    # e.g., 2025-12-01 -> K251201
+    # e.g., 2025-12-01 -> https://www1.mbrace.or.jp/od2/K/202512/k251201.lzh
     date_parts = date.split("-")
-    year = date_parts[0][2:]  # Last 2 digits of year
-    month = date_parts[1]
-    day = date_parts[2]
-    file_date = f"{year}{month}{day}"
+    year = date_parts[0]  # Full year (YYYY)
+    month = date_parts[1]  # Month (MM)
+    day = date_parts[2]  # Day (DD)
+    year_short = year[2:]  # Last 2 digits of year (YY)
+    file_date = f"{year_short}{month}{day}"
+    year_month = f"{year}{month}"  # YYYYMM format
 
-    base_url = "http://www1.mbrace.or.jp/od2"
-    k_file_url = f"{base_url}/K{file_date}.LZH"
-    b_file_url = f"{base_url}/B{file_date}.LZH"
+    base_url = "https://www1.mbrace.or.jp/od2"
+    k_file_url = f"{base_url}/K/{year_month}/k{file_date}.lzh"
+    b_file_url = f"{base_url}/B/{year_month}/b{file_date}.lzh"
 
     # Download K-file
     k_content, k_status = download_file(

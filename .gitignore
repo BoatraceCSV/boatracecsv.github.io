@@ -3,3 +3,5 @@ tmp/
 .claude/
 .specify/
 .venv/
+__pycache__
+logs
