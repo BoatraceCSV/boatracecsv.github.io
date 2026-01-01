@@ -18,8 +18,8 @@ git clone https://github.com/your-org/boatrace-data.git
 cd boatrace-data
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r scripts/requirements.txt
@@ -200,4 +200,4 @@ See [Quickstart Guide - Troubleshooting](specs/001-boatrace-automation/quickstar
 
 ## License
 
-[Your License Here]
+MIT License
