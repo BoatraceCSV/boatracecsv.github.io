@@ -1,6 +1,7 @@
 tmp/
 .tmp/
 .claude/
+.serena/
 .specify/
 .venv/
 __pycache__

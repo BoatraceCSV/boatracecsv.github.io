@@ -23,27 +23,26 @@ from boatrace import git_operations
 def load_config(config_path: str = ".boatrace/config.json") -> dict:
     """Load configuration from file."""
     try:
+        # Ensure config_path is relative to project root
         config_file = Path(config_path)
+        
+        # If config_path is relative and doesn't exist from current directory,
+        # try from parent directory (project root)
+        if not config_file.is_absolute() and not config_file.exists():
+            # Try one level up
+            config_file = Path(__file__).parent.parent / config_path
+        
         if config_file.exists():
             with open(config_file) as f:
                 return json.load(f)
     except Exception as e:
-        logging_module.warning(
-            "config_load_failed",
-            path=config_path,
+        logging_module.error(
+            "config_load_error",
             error=str(e),
         )
-
-    # Return defaults
-    return {
-        "rate_limit_interval_seconds": 3,
-        "max_retries": 3,
-        "initial_backoff_seconds": 5,
-        "max_backoff_seconds": 30,
-        "request_timeout_seconds": 30,
-        "log_level": "INFO",
-        "log_file": "logs/boatrace-{DATE}.json",
-    }
+    
+    # Return defaults if config not found
+    return {}
 
 
 def parse_arguments():
@@ -183,6 +182,9 @@ def process_date(
 
     files_processed = False
 
+    # Determine project root (parent of scripts directory)
+    project_root = Path(__file__).parent.parent
+
     # Process K-file (results)
     if k_content:
         try:
@@ -205,8 +207,9 @@ def process_date(
 
                         # Write
                         if not session.dry_run:
-                            csv_path = f"data/results/{date_str.split('-')[0]}/{date_str.split('-')[1]}/{date_str.split('-')[2]}.csv"
-                            if write_csv(csv_path, csv_content, session.force_overwrite):
+                            year, month, day = date_str.split("-")
+                            csv_path = project_root / f"data/results/{year}/{month}/{day}.csv"
+                            if write_csv(str(csv_path), csv_content, session.force_overwrite):
                                 session.csv_files_created += 1
                                 files_processed = True
                             else:
@@ -250,8 +253,9 @@ def process_date(
 
                         # Write
                         if not session.dry_run:
-                            csv_path = f"data/programs/{date_str.split('-')[0]}/{date_str.split('-')[1]}/{date_str.split('-')[2]}.csv"
-                            if write_csv(csv_path, csv_content, session.force_overwrite):
+                            year, month, day = date_str.split("-")
+                            csv_path = project_root / f"data/programs/{year}/{month}/{day}.csv"
+                            if write_csv(str(csv_path), csv_content, session.force_overwrite):
                                 session.csv_files_created += 1
                                 files_processed = True
                             else:
@@ -336,10 +340,17 @@ def main():
             current_date = current_dt.strftime("%Y-%m-%d")
 
             if process_date(current_date, session, config, rate_limiter):
-                # Collect CSV file paths for git commit
+                # Collect CSV file paths for git commit (only if they exist)
+                project_root = Path(__file__).parent.parent
                 year, month, day = current_date.split("-")
-                csv_files.append(f"data/results/{year}/{month}/{day}.csv")
-                csv_files.append(f"data/programs/{year}/{month}/{day}.csv")
+                
+                results_csv = project_root / f"data/results/{year}/{month}/{day}.csv"
+                programs_csv = project_root / f"data/programs/{year}/{month}/{day}.csv"
+                
+                if results_csv.exists():
+                    csv_files.append(f"data/results/{year}/{month}/{day}.csv")
+                if programs_csv.exists():
+                    csv_files.append(f"data/programs/{year}/{month}/{day}.csv")
 
             current_dt += timedelta(days=1)
 

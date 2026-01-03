@@ -1,6 +1,7 @@
 """Git commit and push operations."""
 
 import subprocess
+from pathlib import Path
 from typing import List, Optional
 from . import logger as logging_module
 
@@ -97,10 +98,15 @@ def stage_files(files: List[str]) -> bool:
         return True
 
     try:
+        # Get the project root (parent of scripts directory)
+        # This ensures git commands work correctly regardless of where the script is run from
+        project_root = Path(__file__).parent.parent.parent
+        
         subprocess.run(
             ["git", "add"] + files,
             capture_output=True,
             check=True,
+            cwd=str(project_root),
         )
 
         logging_module.debug(
@@ -135,11 +141,15 @@ def commit(message: str) -> Optional[str]:
         Commit hash if successful, None otherwise
     """
     try:
+        # Get the project root
+        project_root = Path(__file__).parent.parent.parent
+        
         result = subprocess.run(
             ["git", "commit", "-m", message],
             capture_output=True,
             text=True,
             check=False,
+            cwd=str(project_root),
         )
 
         if result.returncode == 0:
@@ -195,6 +205,9 @@ def push(branch: str = "main", force: bool = False) -> bool:
         True if successful, False otherwise
     """
     try:
+        # Get the project root
+        project_root = Path(__file__).parent.parent.parent
+        
         args = ["git", "push", "origin", branch]
         if force:
             args.append("-f")
@@ -204,6 +217,7 @@ def push(branch: str = "main", force: bool = False) -> bool:
             capture_output=True,
             text=True,
             check=False,
+            cwd=str(project_root),
         )
 
         if result.returncode == 0:
