@@ -1,6 +1,7 @@
 """Extract LZH-compressed files."""
 
 from typing import Dict, Optional
+from io import BytesIO
 from . import logger as logging_module
 
 try:
@@ -32,57 +33,58 @@ def extract_lzh(lzh_bytes: bytes) -> Optional[Dict[str, str]]:
         return None
 
     try:
-        # Open LZH archive
-        with lhafile.LhaFile(lzh_bytes) as lha:
-            result = {}
+        # Open LZH archive from bytes using BytesIO
+        lzh_file = BytesIO(lzh_bytes)
+        lha = lhafile.LhaFile(lzh_file)
+        result = {}
 
-            # Extract each file
-            for item in lha.infolist():
-                # Skip directories
-                if item.filename.endswith("/"):
-                    continue
+        # Extract each file
+        for item in lha.infolist():
+            # Skip directories
+            if item.filename.endswith("/"):
+                continue
 
-                try:
-                    # Read file content
-                    file_content = lha.read(item.filename)
+            try:
+                # Read file content
+                file_content = lha.read(item.filename)
 
-                    # Decode from Shift-JIS to UTF-8
-                    # Shift-JIS is the encoding used by boatrace files
-                    text_content = file_content.decode("shift-jis")
+                # Decode from Shift-JIS to UTF-8
+                # Shift-JIS is the encoding used by boatrace files
+                text_content = file_content.decode("shift-jis")
 
-                    result[item.filename] = text_content
+                result[item.filename] = text_content
 
-                    logging_module.debug(
-                        "file_extracted",
-                        filename=item.filename,
-                        size_bytes=len(file_content),
-                    )
-
-                except UnicodeDecodeError as e:
-                    logging_module.warning(
-                        "decode_error",
-                        filename=item.filename,
-                        error=str(e),
-                    )
-                except Exception as e:
-                    logging_module.warning(
-                        "extract_file_error",
-                        filename=item.filename,
-                        error=str(e),
-                    )
-
-            if not result:
-                logging_module.error(
-                    "extraction_empty",
-                    reason="No files extracted from archive",
+                logging_module.debug(
+                    "file_extracted",
+                    filename=item.filename,
+                    size_bytes=len(file_content),
                 )
-                return None
 
-            logging_module.info(
-                "lzh_extracted",
-                files_count=len(result),
+            except UnicodeDecodeError as e:
+                logging_module.warning(
+                    "decode_error",
+                    filename=item.filename,
+                    error=str(e),
+                )
+            except Exception as e:
+                logging_module.warning(
+                    "extract_file_error",
+                    filename=item.filename,
+                    error=str(e),
+                )
+
+        if not result:
+            logging_module.error(
+                "extraction_empty",
+                reason="No files extracted from archive",
             )
-            return result
+            return None
+
+        logging_module.info(
+            "lzh_extracted",
+            files_count=len(result),
+        )
+        return result
 
     except Exception as e:
         logging_module.error(

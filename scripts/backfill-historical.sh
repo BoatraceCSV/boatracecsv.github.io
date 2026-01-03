@@ -75,7 +75,7 @@ echo ""
 # Run main script with backfill mode
 cd "$SCRIPT_DIR"
 
-if python fetch-and-convert.py \
+if python3 fetch-and-convert.py \
     --mode backfill \
     --start-date "$START_DATE" \
     --end-date "$END_DATE" \

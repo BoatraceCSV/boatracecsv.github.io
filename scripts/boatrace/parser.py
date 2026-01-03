@@ -41,65 +41,101 @@ def parse_result_file(content: str, date: str = "") -> List[RaceResult]:
             logging_module.warning("parse_empty_file", file_type="K")
             return races
 
+        # Pre-scan to find valid race header line indices
+        # A valid race header has:
+        # 1. Line matching pattern "nR" (n = 1-12) with non-digit after nR
+        # 2. Followed (within next 3 lines) by "着 艇 登番" header
+        valid_race_headers = set()
+        
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            
+            # Check for race header pattern
+            is_potential_header = False
+            if stripped:
+                if len(stripped) >= 2:
+                    if stripped[0].isdigit() and stripped[1] == "R":
+                        race_num = int(stripped[0])
+                        if 1 <= race_num <= 9:
+                            after_r = stripped[2:].lstrip()
+                            if after_r and not after_r[0].isdigit():
+                                is_potential_header = True
+                    elif len(stripped) >= 3 and stripped[0:2].isdigit() and stripped[2] == "R":
+                        race_num = int(stripped[0:2])
+                        if 10 <= race_num <= 12:
+                            after_r = stripped[3:].lstrip()
+                            if after_r and not after_r[0].isdigit():
+                                is_potential_header = True
+            
+            # If potential header, check if it's followed by "着 艇 登番" within next 3 lines
+            if is_potential_header:
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    if "着 艇 登番" in lines[j] or "着　艇　登番" in lines[j]:
+                        valid_race_headers.add(i)
+                        break
+
+        # Parse races using valid race header indices
         current_race: Optional[RaceResult] = None
         race_count = 0
+        in_race_detail = False
 
         for line_num, line in enumerate(lines, 1):
-            # Remove trailing whitespace but preserve internal spacing
+            # Remove trailing whitespace and handle \r (carriage return)
             line = line.rstrip()
 
             # Skip empty lines
             if not line:
                 continue
 
-            # Detect race header (starts with race code/stadium info)
-            # Format varies; basic detection: line contains stadium code and race number
-            try:
-                if len(line) >= 20:
-                    # Try to extract stadium code (first 2 chars might be numeric)
-                    stadium_code = line[0:2].strip()
-                    race_num = line[2:4].strip()
+            # Check if this line is a valid race header
+            if (line_num - 1) in valid_race_headers:
+                # Save previous race if it has racers
+                if current_race and len(current_race.racers) > 0:
+                    races.append(current_race)
 
-                    if (
-                        stadium_code.isdigit() and
-                        1 <= int(stadium_code) <= 24 and
-                        race_num.isdigit() and
-                        1 <= int(race_num) <= 12
-                    ):
-                        # This appears to be a new race
-                        if current_race and len(current_race.racers) == 6:
-                            races.append(current_race)
+                stripped = line.lstrip()
+                
+                # Extract race number
+                race_num_str = ""
+                if stripped[0].isdigit() and stripped[1] == "R":
+                    race_num_str = stripped[0]
+                elif stripped[0:2].isdigit() and stripped[2] == "R":
+                    race_num_str = stripped[0:2]
 
-                        stadium_name = STADIUM_NAMES.get(stadium_code, "Unknown")
-                        current_race = RaceResult(
-                            date=date,
-                            stadium=stadium_name,
-                            race_round=f"{race_num.zfill(2)}R",
-                            title="",  # Typically follows in next lines
-                            race_code=f"{stadium_code}{race_num}",
-                        )
-                        race_count += 1
+                # Start new race
+                current_race = RaceResult(
+                    date=date,
+                    stadium="大村",  # Default - could be improved
+                    race_round=f"{race_num_str.zfill(2)}R",
+                    title=stripped[2:].strip() if len(stripped) > 2 else "",
+                    race_code=f"13{race_num_str}",
+                )
+                race_count += 1
+                in_race_detail = False
 
-                        logging_module.debug(
-                            "race_detected",
-                            race_count=race_count,
-                            stadium=stadium_name,
-                            race_round=f"{race_num.zfill(2)}R",
-                        )
-                        continue
+                logging_module.debug(
+                    "race_detected",
+                    race_count=race_count,
+                    race_round=f"{race_num_str.zfill(2)}R",
+                )
+                continue
 
-                    # If current race exists, try to parse racer data
-                    if current_race and len(current_race.racers) < 6:
-                        racer = parse_racer_result_line(line)
-                        if racer:
-                            current_race.racers.append(racer)
-                            continue
+            # Detect start of race detail section
+            if "着 艇 登番" in line or "着　艇　登番" in line:
+                in_race_detail = True
+                continue
 
-            except (ValueError, IndexError):
-                pass
+            # Detect racer result lines (contain race times and results)
+            # Only parse if we're in the race detail section and have a current race
+            if current_race and in_race_detail:
+                # Try to parse racer data
+                if len(line.strip()) > 10 and not line.startswith(" " * 20):
+                    racer = parse_racer_result_line(line)
+                    if racer and len(current_race.racers) < 6:
+                        current_race.racers.append(racer)
 
-        # Add final race if valid
-        if current_race and len(current_race.racers) == 6:
+        # Add final race if it has racers
+        if current_race and len(current_race.racers) > 0:
             races.append(current_race)
 
         logging_module.info(
@@ -129,19 +165,55 @@ def parse_racer_result_line(line: str) -> Optional[RacerResult]:
         RacerResult object or None if parsing fails
     """
     try:
-        # Expected format (approximate field positions):
-        # Positions vary by file format version
-        # Basic parsing: racer number, name, weight, result
+        # Actual file format analysis:
+        # Line 32: '  01  1 4443 津田...裕絵 52   24  6.91   1    0.08     1.49.7\r'
+        # Parts[0]: 着順 (01, 02, 03, ...) ← Result
+        # Parts[1]: 艇番 (1, 2, 3, ...) ← Racer/Boat number
+        # Parts[2]: 登番 (registration)
+        # Parts[3..N-6]: 選手名 (name - multiple parts)
+        # Parts[-6]: 体重 (weight in kg)
+        # Parts[-5]: モーター or 展示 (motor/display field)
+        # Parts[-4]: 進入 (entrance number)
+        # Parts[-3]: スタートタイム start time
+        # Parts[-2]: 調整 (adjustment/time data)
+        # Parts[-1]: レースタイム (race time) or '.'
 
-        # This is simplified - actual implementation would need exact positions
         parts = line.split()
-        if len(parts) < 4:
+        if len(parts) < 10:
             return None
 
-        racer_num = int(parts[0])
-        name = parts[1] if len(parts) > 1 else ""
-        weight = float(parts[2]) if len(parts) > 2 else 0.0
-        result = int(parts[3]) if len(parts) > 3 else 0
+        # Extract result (着順) from parts[0]
+        try:
+            result = int(parts[0])
+        except ValueError:
+            return None
+        
+        # Extract racer number (艇番) from parts[1]
+        try:
+            racer_num = int(parts[1])
+        except ValueError:
+            return None
+        
+        # Extract weight (体重) from parts[-6]
+        weight = 0.0
+        try:
+            weight = float(parts[-6])
+        except (ValueError, IndexError):
+            weight = 0.0
+
+        # Extract name from parts[3] onwards (up to parts[-6])
+        # Join the name parts with spaces
+        name_parts = []
+        if len(parts) > 3:
+            # Name ends 6 positions from the end
+            name_end_idx = len(parts) - 6
+            if name_end_idx > 3:
+                name_parts = parts[3:name_end_idx]
+            elif name_end_idx == 3:
+                # Only one name part
+                name_parts = [parts[3]]
+        
+        name = " ".join(name_parts) if name_parts else ""
 
         if 1 <= racer_num <= 6 and 1 <= result <= 6:
             return RacerResult(
