@@ -4,5 +4,5 @@ tmp/
 .serena/
 .specify/
 .venv/
-__pycache__
+scripts/boatrace/__pycache__/
 logs
