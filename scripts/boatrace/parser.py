@@ -248,8 +248,17 @@ def parse_program_file(content: str, date: str = "") -> List[RaceProgram]:
             logging_module.warning("parse_empty_file", file_type="B")
             return programs
 
+        # Full-width character mappings for race numbers
+        # Used in B-files (programs) which use full-width characters
+        fullwidth_numbers = {
+            "１": "1", "２": "2", "３": "3", "４": "4", "５": "5",
+            "６": "6", "７": "7", "８": "8", "９": "9", "０": "0",
+            "１０": "10", "１１": "11", "１２": "12",
+        }
+
         current_program: Optional[RaceProgram] = None
         program_count = 0
+        in_program_detail = False
 
         for line_num, line in enumerate(lines, 1):
             line = line.rstrip()
@@ -257,52 +266,69 @@ def parse_program_file(content: str, date: str = "") -> List[RaceProgram]:
             if not line:
                 continue
 
-            try:
-                if len(line) >= 20:
-                    # Detect program header (race number and stadium)
-                    stadium_code = line[0:2].strip()
-                    race_num = line[2:4].strip()
+            # Detect race header pattern: "　ＮＲ  race_title..."
+            # Example: "　１Ｒ  シリーズ戦予          Ｈ１８００ｍ  電話投票締切予定１４：５７"
+            # These use full-width characters
+            is_race_header = False
+            race_num_str = ""
+            
+            stripped = line.lstrip()
+            
+            # Check for full-width race number patterns (１Ｒ, ２Ｒ, ..., １０Ｒ, １１Ｒ, １２Ｒ)
+            if "Ｒ" in stripped:
+                # Try to extract full-width race number
+                if stripped.startswith("１０Ｒ"):
+                    is_race_header = True
+                    race_num_str = "10"
+                elif stripped.startswith("１１Ｒ"):
+                    is_race_header = True
+                    race_num_str = "11"
+                elif stripped.startswith("１２Ｒ"):
+                    is_race_header = True
+                    race_num_str = "12"
+                elif len(stripped) >= 2 and stripped[0] in fullwidth_numbers and stripped[1] == "Ｒ":
+                    race_num_str = fullwidth_numbers[stripped[0]]
+                    is_race_header = True
+            
+            if is_race_header:
+                # Save previous program if it has racer frames
+                if current_program and len(current_program.racer_frames) > 0:
+                    programs.append(current_program)
 
-                    if (
-                        stadium_code.isdigit() and
-                        1 <= int(stadium_code) <= 24 and
-                        race_num.isdigit() and
-                        1 <= int(race_num) <= 12
-                    ):
-                        # New program
-                        if current_program and len(current_program.racer_frames) == 6:
-                            programs.append(current_program)
+                # Default to Omura (stadium 13)
+                current_program = RaceProgram(
+                    date=date,
+                    stadium="大村",  # Default - could be improved
+                    race_round=f"{race_num_str.zfill(2)}R",
+                    title=stripped[2:].strip() if len(stripped) > 2 else "",
+                    race_code=f"13{race_num_str}",
+                )
+                program_count += 1
+                in_program_detail = False
 
-                        stadium_name = STADIUM_NAMES.get(stadium_code, "Unknown")
-                        current_program = RaceProgram(
-                            date=date,
-                            stadium=stadium_name,
-                            race_round=f"{race_num.zfill(2)}R",
-                            title="",
-                            race_code=f"{stadium_code}{race_num}",
-                        )
-                        program_count += 1
+                logging_module.debug(
+                    "program_detected",
+                    program_count=program_count,
+                    race_round=f"{race_num_str.zfill(2)}R",
+                )
+                continue
 
-                        logging_module.debug(
-                            "program_detected",
-                            program_count=program_count,
-                            stadium=stadium_name,
-                            race_round=f"{race_num.zfill(2)}R",
-                        )
-                        continue
+            # Detect start of program detail section (header line with boat numbers)
+            # Pattern: "艇 選手 選手  年 支 体級..." or similar
+            if "艇" in line and "選手" in line:
+                in_program_detail = True
+                continue
 
-                    # Parse racer frame data
-                    if current_program and len(current_program.racer_frames) < 6:
-                        frame = parse_racer_frame_line(line)
-                        if frame:
-                            current_program.racer_frames.append(frame)
-                            continue
-
-            except (ValueError, IndexError):
-                pass
+            # Parse racer frame data
+            if current_program and in_program_detail:
+                # Try to parse racer frame
+                if len(line.strip()) > 10 and not line.startswith(" " * 20):
+                    frame = parse_racer_frame_line(line)
+                    if frame and len(current_program.racer_frames) < 6:
+                        current_program.racer_frames.append(frame)
 
         # Add final program
-        if current_program and len(current_program.racer_frames) == 6:
+        if current_program and len(current_program.racer_frames) > 0:
             programs.append(current_program)
 
         logging_module.info(
@@ -332,38 +358,101 @@ def parse_racer_frame_line(line: str) -> Optional[RacerFrame]:
         RacerFrame object or None if parsing fails
     """
     try:
-        # Simplified parsing of racer frame data
-        # In production, would use exact column positions
-        parts = line.split()
-        if len(parts) < 10:
+        # B-file racer line format (from fixed-width file):
+        # Position 0: 艇番 (1-6)
+        # Position 1: Space
+        # Position 2-5: 登番 (4-digit registration number)
+        # Position 6-9+: 選手名 (racer name, variable length)
+        # Position 10-11: 年齢 (age, 2 digits)
+        # Position 12+: 支部 (prefecture, variable length)
+        # Position 14-15: 体重 (weight, 2 digits)
+        # Position 16-17: クラス (class, 2 characters like B1, A2)
+        # Position 18+: Various statistics (勝率, etc.)
+        
+        stripped = line.strip()
+        if not stripped or len(stripped) < 18:
             return None
 
-        entry_num = int(parts[0])
-        name = parts[2] if len(parts) > 2 else ""
-        age = int(parts[3]) if len(parts) > 3 else 0
-        weight = float(parts[-2]) if len(parts) > 2 else 0.0
-        adjustment = float(parts[-1]) if len(parts) > 1 else 0.0
+        try:
+            # Extract boat number (艇番) from first character
+            entry_num = int(stripped[0])
+        except (ValueError, IndexError):
+            return None
+        
+        # Validate boat number
+        if entry_num < 1 or entry_num > 6:
+            return None
 
-        if 1 <= entry_num <= 6:
-            return RacerFrame(
-                entry_number=entry_num,
-                registration_number="",
-                racer_name=name,
-                age=age,
-                win_rate=0.0,
-                place_rate=0.0,
-                average_score=0.0,
-                motor_number="",
-                motor_wins=0,
-                motor_2nd=0,
-                boat_number="",
-                boat_wins=0,
-                boat_2nd=0,
-                weight=weight,
-                adjustment=adjustment,
-            )
+        # Extract registration number (登番) from positions 2-5
+        try:
+            registration_number = stripped[2:6].strip()
+        except IndexError:
+            registration_number = ""
 
-        return None
+        # Extract racer name from positions 6-9
+        # The name can be variable length, typically 2-4 characters
+        try:
+            name = ""
+            # Collect characters from position 6 until we hit a digit (which indicates age)
+            for i in range(6, min(len(stripped), 15)):
+                char = stripped[i]
+                # Stop at digits (which are part of age)
+                if char.isdigit():
+                    break
+                name += char
+            
+            racer_name = name.replace("\u3000", " ").strip()  # Replace full-width space
+        except IndexError:
+            racer_name = ""
+
+        # Extract age (should be 2 digits, typically after name)
+        age = 0
+        try:
+            # Look for 2-digit age starting from position 10
+            age_str = ""
+            for i in range(10, min(len(stripped), 13)):
+                if stripped[i].isdigit():
+                    age_str += stripped[i]
+                elif age_str:
+                    break
+            
+            if age_str and len(age_str) <= 2:
+                age = int(age_str)
+        except (ValueError, IndexError):
+            age = 0
+
+        # Extract weight (should be 2 digits, typically around position 14-15)
+        weight = 0.0
+        try:
+            weight_str = ""
+            for i in range(14, min(len(stripped), 17)):
+                if stripped[i].isdigit():
+                    weight_str += stripped[i]
+                elif weight_str:
+                    break
+            
+            if weight_str:
+                weight = float(weight_str)
+        except (ValueError, IndexError):
+            weight = 0.0
+
+        return RacerFrame(
+            entry_number=entry_num,
+            registration_number=registration_number,
+            racer_name=racer_name,
+            age=age,
+            win_rate=0.0,
+            place_rate=0.0,
+            average_score=0.0,
+            motor_number="",
+            motor_wins=0,
+            motor_2nd=0,
+            boat_number="",
+            boat_wins=0,
+            boat_2nd=0,
+            weight=weight,
+            adjustment=0.0,
+        )
 
     except (ValueError, IndexError):
         return None
