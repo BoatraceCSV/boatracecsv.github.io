@@ -29,11 +29,11 @@ def test_races_to_csv_basic():
     lines = csv_content.split("\n")
     # Header + 1 data row + empty line
     assert len(lines) >= 2
-    # Header should have expected fields
+    # Header should have expected fields (Japanese headers)
     header = lines[0].split(",")
-    assert "date" in header
-    assert "stadium" in header
-    assert "race_round" in header
+    assert "レース日" in header
+    assert "レース場" in header
+    assert "レース回" in header
 
 
 def test_races_to_csv_empty():
@@ -46,7 +46,7 @@ def test_races_to_csv_empty():
     lines = csv_content.split("\n")
     # Should only have header
     assert len(lines) >= 1
-    assert "date" in lines[0]
+    assert "レース日" in lines[0]
 
 
 def test_race_result_to_row():
@@ -56,6 +56,7 @@ def test_race_result_to_row():
         stadium="唐津",
         race_round="01R",
         title="Test Race",
+        race_code="1201",
         racers=[
             RacerResult(number=i, name=f"racer{i}", weight=58.0, result=i)
             for i in range(1, 7)
@@ -64,10 +65,13 @@ def test_race_result_to_row():
 
     row = converter.race_result_to_row(race)
 
-    assert len(row) >= 22  # At least header fields + 6 racers × 6 fields
-    assert row[0] == "2025-12-01"
-    assert row[1] == "唐津"
-    assert row[2] == "01R"
+    # New header structure: レースコード(0), タイトル(1), 日次(2), レース日(3), レース場(4), レース回(5)...
+    assert len(row) >= 92  # Japanese header format with 92 base columns + racer data
+    assert row[0] == "1201"  # レースコード
+    assert row[1] == "Test Race"  # タイトル
+    assert row[3] == "2025-12-01"  # レース日
+    assert row[4] == "唐津"  # レース場
+    assert row[5] == "01R"  # レース回
 
 
 def test_programs_to_csv_basic():

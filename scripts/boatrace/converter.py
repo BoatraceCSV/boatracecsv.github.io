@@ -7,25 +7,37 @@ from .models import RaceResult, RaceProgram
 from . import logger as logging_module
 
 
-# CSV Headers for results (91 columns)
+# CSV Headers for results
 RESULTS_HEADERS = [
-    "date", "stadium", "race_round", "title", "race_code",
-    "tansho", "fukusho", "wakren", "fuku2",
-    "santan", "sanfuku", "santan_yosoku", "sanfuku_yosoku",
-    "rentan", "renfuku", "rentan_yosoku", "renfuku_yosoku",
-    "wide", "wide_yosoku", "trio", "trio_yosoku", "tiomate",
+    "レースコード", "タイトル", "日次", "レース日", "レース場", "レース回", "レース名",
+    "距離(m)", "天候", "風向", "風速(m)", "波の高さ(cm)", "決まり手",
+    "単勝_艇番", "単勝_払戻金",
+    "複勝_1着_艇番", "複勝_1着_払戻金", "複勝_2着_艇番", "複勝_2着_払戻金",
+    "2連単_組番", "2連単_払戻金", "2連単_人気",
+    "2連複_組番", "2連複_払戻金", "2連複_人気",
+    "拡連複_1-2着_組番", "拡連複_1-2着_払戻金", "拡連複_1-2着_人気",
+    "拡連複_1-3着_組番", "拡連複_1-3着_払戻金", "拡連複_1-3着_人気",
+    "拡連複_2-3着_組番", "拡連複_2-3着_払戻金", "拡連複_2-3着_人気",
+    "3連単_組番", "3連単_払戻金", "3連単_人気",
+    "3連複_組番", "3連複_払戻金", "3連複_人気",
     # Racer 1
-    "r1_number", "r1_name", "r1_weight", "r1_result", "r1_time", "r1_difference",
+    "1着_着順", "1着_艇番", "1着_登録番号", "1着_選手名", "1着_モーター番号", "1着_ボート番号",
+    "1着_展示タイム", "1着_進入コース", "1着_スタートタイミング", "1着_レースタイム",
     # Racer 2
-    "r2_number", "r2_name", "r2_weight", "r2_result", "r2_time", "r2_difference",
+    "2着_着順", "2着_艇番", "2着_登録番号", "2着_選手名", "2着_モーター番号", "2着_ボート番号",
+    "2着_展示タイム", "2着_進入コース", "2着_スタートタイミング", "2着_レースタイム",
     # Racer 3
-    "r3_number", "r3_name", "r3_weight", "r3_result", "r3_time", "r3_difference",
+    "3着_着順", "3着_艇番", "3着_登録番号", "3着_選手名", "3着_モーター番号", "3着_ボート番号",
+    "3着_展示タイム", "3着_進入コース", "3着_スタートタイミング", "3着_レースタイム",
     # Racer 4
-    "r4_number", "r4_name", "r4_weight", "r4_result", "r4_time", "r4_difference",
+    "4着_着順", "4着_艇番", "4着_登録番号", "4着_選手名", "4着_モーター番号", "4着_ボート番号",
+    "4着_展示タイム", "4着_進入コース", "4着_スタートタイミング", "4着_レースタイム",
     # Racer 5
-    "r5_number", "r5_name", "r5_weight", "r5_result", "r5_time", "r5_difference",
+    "5着_着順", "5着_艇番", "5着_登録番号", "5着_選手名", "5着_モーター番号", "5着_ボート番号",
+    "5着_展示タイム", "5着_進入コース", "5着_スタートタイミング", "5着_レースタイム",
     # Racer 6
-    "r6_number", "r6_name", "r6_weight", "r6_result", "r6_time", "r6_difference",
+    "6着_着順", "6着_艇番", "6着_登録番号", "6着_選手名", "6着_モーター番号", "6着_ボート番号",
+    "6着_展示タイム", "6着_進入コース", "6着_スタートタイミング", "6着_レースタイム",
 ]
 
 # CSV Headers for programs (218 columns)
@@ -50,46 +62,91 @@ def race_result_to_row(race: RaceResult) -> List[str]:
     Returns:
         List of CSV field values
     """
+    # Extract race information from available data
+    race_code = race.race_code or ""
+    title = race.title or ""
+    
+    # Parse title to extract distance and weather info if available
+    # Title format: "シリーズ戦予                 H1800m  晴　  風  南西　 3m  波　  2cm"
+    distance = ""  # Will try to extract from title
+    weather = ""
+    wind_direction = ""
+    wind_speed = ""
+    wave_height = ""
+    
+    # Try to parse title for distance (e.g., "H1800m")
+    if "m" in title:
+        parts = title.split()
+        for part in parts:
+            if part.endswith("m") and any(c.isdigit() for c in part):
+                distance = part.replace("H", "").replace("m", "")
+                break
+    
     row = [
-        race.date,
-        race.stadium,
-        race.race_round,
-        race.title,
-        race.race_code or "",
-        race.tansho or "",
-        race.fukusho or "",
-        race.wakren or "",
-        race.fuku2 or "",
-        race.santan or "",
-        race.sanfuku or "",
-        race.santan_yosoku or "",
-        race.sanfuku_yosoku or "",
-        race.rentan or "",
-        race.renfuku or "",
-        race.rentan_yosoku or "",
-        race.renfuku_yosoku or "",
-        race.wide or "",
-        race.wide_yosoku or "",
-        race.trio or "",
-        race.trio_yosoku or "",
-        race.tiomate or "",
+        race_code,                  # レースコード
+        race.title,                 # タイトル
+        "",                         # 日次 (not available in K-file)
+        race.date,                  # レース日
+        race.stadium,               # レース場
+        race.race_round,            # レース回
+        race.title,                 # レース名
+        distance,                   # 距離(m)
+        weather,                    # 天候
+        wind_direction,             # 風向
+        wind_speed,                 # 風速(m)
+        wave_height,                # 波の高さ(cm)
+        "",                         # 決まり手 (not available in K-file)
+        # Betting results
+        "",                         # 単勝_艇番
+        "",                         # 単勝_払戻金
+        "",                         # 複勝_1着_艇番
+        "",                         # 複勝_1着_払戻金
+        "",                         # 複勝_2着_艇番
+        "",                         # 複勝_2着_払戻金
+        "",                         # 2連単_組番
+        "",                         # 2連単_払戻金
+        "",                         # 2連単_人気
+        "",                         # 2連複_組番
+        "",                         # 2連複_払戻金
+        "",                         # 2連複_人気
+        "",                         # 拡連複_1-2着_組番
+        "",                         # 拡連複_1-2着_払戻金
+        "",                         # 拡連複_1-2着_人気
+        "",                         # 拡連複_1-3着_組番
+        "",                         # 拡連複_1-3着_払戻金
+        "",                         # 拡連複_1-3着_人気
+        "",                         # 拡連複_2-3着_組番
+        "",                         # 拡連複_2-3着_払戻金
+        "",                         # 拡連複_2-3着_人気
+        "",                         # 3連単_組番
+        "",                         # 3連単_払戻金
+        "",                         # 3連単_人気
+        "",                         # 3連複_組番
+        "",                         # 3連複_払戻金
+        "",                         # 3連複_人気
     ]
 
     # Add racer data (pad with empty racers if fewer than 6)
-    racers = race.racers + [None] * (6 - len(race.racers))
+    # Sort racers by result (1st place first)
+    sorted_racers = sorted(race.racers, key=lambda r: r.result)
+    sorted_racers = sorted_racers + [None] * (6 - len(sorted_racers))
 
-    for i, racer in enumerate(racers[:6]):
+    for i, racer in enumerate(sorted_racers[:6]):
         if racer:
             row.extend([
-                str(racer.number),
-                racer.name,
-                str(racer.weight),
-                str(racer.result),
-                str(racer.time) if racer.time is not None else "",
-                str(racer.difference) if racer.difference is not None else "",
+                str(racer.result),                  # 着順
+                str(racer.number),                  # 艇番
+                "",                                 # 登録番号 (not available in K-file results)
+                racer.name,                         # 選手名
+                "",                                 # モーター番号 (not available)
+                "",                                 # ボート番号 (not available)
+                "",                                 # 展示タイム (not available)
+                "",                                 # 進入コース (not available)
+                "",                                 # スタートタイミング (not available)
+                "",                                 # レースタイム (not available)
             ])
         else:
-            row.extend(["", "", "", "", "", ""])
+            row.extend(["", "", "", "", "", "", "", "", "", ""])
 
     return row
 
