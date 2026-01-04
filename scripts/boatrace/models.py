@@ -59,6 +59,12 @@ class RacerResult:
     time: Optional[float] = None
     difference: Optional[float] = None
     disqualified: bool = False
+    registration_number: Optional[str] = None
+    motor_number: Optional[str] = None
+    boat_number: Optional[str] = None
+    showcase_time: Optional[float] = None
+    entrance_course: Optional[int] = None
+    start_timing: Optional[float] = None
 
 
 @dataclass
@@ -70,6 +76,16 @@ class RaceResult:
     race_round: str  # e.g., "01R"
     title: str
     race_code: Optional[str] = None
+
+    # Race information (extracted from title or K-file)
+    race_name: Optional[str] = None
+    distance: Optional[str] = None
+    day_of_session: Optional[str] = None
+    weather: Optional[str] = None
+    wind_direction: Optional[str] = None
+    wind_speed: Optional[str] = None
+    wave_height: Optional[str] = None
+    winning_technique: Optional[str] = None
 
     # Betting results
     tansho: Optional[str] = None
