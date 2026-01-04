@@ -40,17 +40,48 @@ RESULTS_HEADERS = [
     "6着_展示タイム", "6着_進入コース", "6着_スタートタイミング", "6着_レースタイム",
 ]
 
-# CSV Headers for programs (218 columns)
+# CSV Headers for programs (same structure as results CSV)
 PROGRAMS_HEADERS = [
-    "date", "stadium", "race_round", "title", "race_code",
-    "race_class", "race_type", "course_condition",
-    "weather", "wind_direction", "wind_speed", "water_temperature", "water_level",
+    "タイトル", "日次", "レース日", "レース場", "レース回", "レース名",
+    "距離(m)", "電話投票締切予定",
 ]
 
-# Add racer frame headers (6 racers × 35 fields each = 210 fields)
-for racer_num in range(1, 7):
-    for field_num in range(1, 36):
-        PROGRAMS_HEADERS.append(f"r{racer_num}_frame_field_{field_num:02d}")
+# Add racer frame headers matching results CSV structure (6 frames)
+# Each frame has: 艇番, 登録番号, 選手名, 年齢, 支部, 体重, 級別,
+#                 全国勝率, 全国2連対率, 当地勝率, 当地2連対率,
+#                 モーター番号, モーター2連対率, ボート番号, ボート2連対率,
+#                 今節成績(12フィールド), 早見 (28 fields per frame)
+for frame_num in range(1, 7):
+    PROGRAMS_HEADERS.extend([
+        f"{frame_num}枠_艇番",
+        f"{frame_num}枠_登録番号",
+        f"{frame_num}枠_選手名",
+        f"{frame_num}枠_年齢",
+        f"{frame_num}枠_支部",
+        f"{frame_num}枠_体重",
+        f"{frame_num}枠_級別",
+        f"{frame_num}枠_全国勝率",
+        f"{frame_num}枠_全国2連対率",
+        f"{frame_num}枠_当地勝率",
+        f"{frame_num}枠_当地2連対率",
+        f"{frame_num}枠_モーター番号",
+        f"{frame_num}枠_モーター2連対率",
+        f"{frame_num}枠_ボート番号",
+        f"{frame_num}枠_ボート2連対率",
+        f"{frame_num}枠_今節成績_1-1",
+        f"{frame_num}枠_今節成績_1-2",
+        f"{frame_num}枠_今節成績_2-1",
+        f"{frame_num}枠_今節成績_2-2",
+        f"{frame_num}枠_今節成績_3-1",
+        f"{frame_num}枠_今節成績_3-2",
+        f"{frame_num}枠_今節成績_4-1",
+        f"{frame_num}枠_今節成績_4-2",
+        f"{frame_num}枠_今節成績_5-1",
+        f"{frame_num}枠_今節成績_5-2",
+        f"{frame_num}枠_今節成績_6-1",
+        f"{frame_num}枠_今節成績_6-2",
+        f"{frame_num}枠_早見",
+    ])
 
 
 def _parse_betting_result(result: str, field_count: int) -> List[str]:
@@ -154,58 +185,64 @@ def race_result_to_row(race: RaceResult) -> List[str]:
 
 
 def race_program_to_row(program: RaceProgram) -> List[str]:
-    """Convert RaceProgram to CSV row.
+    """Convert RaceProgram to CSV row (matching results CSV structure).
 
     Args:
         program: RaceProgram object
 
     Returns:
-        List of CSV field values
+        List of CSV field values (one row per race with all 6 frames)
     """
     row = [
-        program.date,
-        program.stadium,
-        program.race_round,
-        program.title,
-        program.race_code or "",
-        program.race_class or "",
-        program.race_type or "",
-        program.course_condition or "",
-        program.weather or "",
-        program.wind_direction or "",
-        str(program.wind_speed) if program.wind_speed is not None else "",
-        str(program.water_temperature) if program.water_temperature is not None else "",
-        program.water_level or "",
+        program.title,                                      # タイトル
+        program.day_of_session or "",                       # 日次
+        program.date,                                       # レース日
+        program.stadium,                                    # レース場
+        program.race_round,                                 # レース回
+        program.race_name or "",                            # レース名
+        program.distance or "",                             # 距離(m)
+        program.post_time or "",                            # 電話投票締切予定
     ]
 
     # Add racer frame data (pad with empty frames if fewer than 6)
+    # This matches the structure of results CSV where all 6 racers are in one row
     frames = program.racer_frames + [None] * (6 - len(program.racer_frames))
 
     for frame in frames[:6]:
         if frame:
-            # Add 35 fields per frame (or whatever is available)
+            # Add frame fields in Japanese format (28 fields per frame)
             row.extend([
-                str(frame.entry_number),
-                frame.registration_number,
-                frame.racer_name,
-                str(frame.age),
-                str(frame.win_rate),
-                str(frame.place_rate),
-                str(frame.average_score),
-                frame.motor_number,
-                str(frame.motor_wins),
-                str(frame.motor_2nd),
-                frame.boat_number,
-                str(frame.boat_wins),
-                str(frame.boat_2nd),
-                str(frame.weight),
-                str(frame.adjustment),
+                str(frame.entry_number),                    # 艇番
+                frame.registration_number or "",            # 登録番号
+                frame.racer_name or "",                     # 選手名
+                str(frame.age) if frame.age else "",        # 年齢
+                frame.prefecture or "",                     # 支部
+                str(frame.weight) if frame.weight else "",  # 体重
+                frame.class_grade or "",                    # 級別
+                str(frame.win_rate) if frame.win_rate else "",              # 全国勝率
+                str(frame.place_rate) if frame.place_rate else "",          # 全国2連対率
+                str(frame.local_win_rate) if frame.local_win_rate else "",  # 当地勝率
+                str(frame.local_place_rate) if frame.local_place_rate else "",  # 当地2連対率
+                frame.motor_number or "",                   # モーター番号
+                str(frame.motor_2nd_rate) if frame.motor_2nd_rate else "",  # モーター2連対率
+                frame.boat_number or "",                    # ボート番号
+                str(frame.boat_2nd_rate) if frame.boat_2nd_rate else "",    # ボート2連対率
+                frame.results_day1_race1 or "",             # 今節成績_1-1
+                frame.results_day1_race2 or "",             # 今節成績_1-2
+                frame.results_day2_race1 or "",             # 今節成績_2-1
+                frame.results_day2_race2 or "",             # 今節成績_2-2
+                frame.results_day3_race1 or "",             # 今節成績_3-1
+                frame.results_day3_race2 or "",             # 今節成績_3-2
+                frame.results_day4_race1 or "",             # 今節成績_4-1
+                frame.results_day4_race2 or "",             # 今節成績_4-2
+                frame.results_day5_race1 or "",             # 今節成績_5-1
+                frame.results_day5_race2 or "",             # 今節成績_5-2
+                frame.results_day6_race1 or "",             # 今節成績_6-1
+                frame.results_day6_race2 or "",             # 今節成績_6-2
+                frame.hayami or "",                         # 早見
             ])
-            # Add remaining frame fields (20 more to make 35 total)
-            for i in range(20):
-                row.append(getattr(frame, f"field_{i+1}", "") or "")
         else:
-            row.extend([""] * 35)
+            row.extend([""] * 28)
 
     return row
 

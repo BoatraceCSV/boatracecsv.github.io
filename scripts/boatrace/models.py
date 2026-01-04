@@ -25,7 +25,35 @@ class RacerFrame:
     weight: float
     adjustment: float
 
-    # Additional frame fields (35 total per racer)
+    # Racer profile information
+    prefecture: Optional[str] = None  # 支部 (e.g., "福岡")
+    class_grade: Optional[str] = None  # 級別 (e.g., "A1", "B1")
+
+    # Local and boat/motor statistics
+    local_win_rate: Optional[float] = None  # 当地勝率
+    local_place_rate: Optional[float] = None  # 当地2連対率
+    motor_2nd_rate: Optional[float] = None  # モーター2連対率
+    boat_2nd_rate: Optional[float] = None  # ボート2連対率
+
+    # Today's (session's) results - 6 days × 2 halves = 12 values
+    # Format: 日1_1R, 日1_2R, 日2_1R, 日2_2R, 日3_1R, 日3_2R, 日4_1R, 日4_2R, 日5_1R, 日5_2R, 日6_1R, 日6_2R
+    results_day1_race1: Optional[str] = None  # 1日目1R (今節成績_1-1)
+    results_day1_race2: Optional[str] = None  # 1日目2R (今節成績_1-2)
+    results_day2_race1: Optional[str] = None  # 2日目1R (今節成績_2-1)
+    results_day2_race2: Optional[str] = None  # 2日目2R (今節成績_2-2)
+    results_day3_race1: Optional[str] = None  # 3日目1R (今節成績_3-1)
+    results_day3_race2: Optional[str] = None  # 3日目2R (今節成績_3-2)
+    results_day4_race1: Optional[str] = None  # 4日目1R (今節成績_4-1)
+    results_day4_race2: Optional[str] = None  # 4日目2R (今節成績_4-2)
+    results_day5_race1: Optional[str] = None  # 5日目1R (今節成績_5-1)
+    results_day5_race2: Optional[str] = None  # 5日目2R (今節成績_5-2)
+    results_day6_race1: Optional[str] = None  # 6日目1R (今節成績_6-1)
+    results_day6_race2: Optional[str] = None  # 6日目2R (今節成績_6-2)
+
+    # Early indicator
+    hayami: Optional[str] = None  # 早見
+
+    # Additional legacy fields
     field_1: Optional[str] = None
     field_2: Optional[str] = None
     field_3: Optional[str] = None
@@ -34,18 +62,6 @@ class RacerFrame:
     field_6: Optional[str] = None
     field_7: Optional[str] = None
     field_8: Optional[str] = None
-    field_9: Optional[str] = None
-    field_10: Optional[str] = None
-    field_11: Optional[str] = None
-    field_12: Optional[str] = None
-    field_13: Optional[str] = None
-    field_14: Optional[str] = None
-    field_15: Optional[str] = None
-    field_16: Optional[str] = None
-    field_17: Optional[str] = None
-    field_18: Optional[str] = None
-    field_19: Optional[str] = None
-    field_20: Optional[str] = None
 
 
 @dataclass
@@ -126,6 +142,10 @@ class RaceProgram:
     stadium: str
     race_round: str  # e.g., "01R"
     title: str
+    day_of_session: Optional[str] = None  # e.g., "第1日"
+    race_name: Optional[str] = None  # e.g., "予選"
+    distance: Optional[str] = None  # e.g., "1800"
+    post_time: Optional[str] = None  # e.g., "10:40"
     race_code: Optional[str] = None
     race_class: Optional[str] = None
     race_type: Optional[str] = None
