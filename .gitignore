@@ -1,0 +1,11 @@
+tmp/
+.tmp/
+.claude/
+.serena/
+.specify/
+.venv/
+scripts/boatrace/__pycache__/
+scripts/tests/__pycache__/
+scripts/tests/unit/__pycache__/
+scripts/tests/integration/__pycache__/
+logs

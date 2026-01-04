@@ -1,0 +1,90 @@
+name: Daily Boatrace Data Sync
+
+on:
+  schedule:
+    # Every day at 15:10 UTC = 00:10 JST
+    - cron: '10 15 * * *'
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date (YYYY-MM-DD)'
+        required: false
+        default: ''
+      end_date:
+        description: 'End date (YYYY-MM-DD)'
+        required: false
+        default: ''
+      force_overwrite:
+        description: 'Force overwrite existing files'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PYTHONUNBUFFERED: 1
+  LOG_LEVEL: INFO
+
+jobs:
+  fetch-and-convert:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r scripts/requirements.txt
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "${{ secrets.GIT_USER_EMAIL || 'action@github.com' }}"
+          git config --local user.name "${{ secrets.GIT_USER_NAME || 'GitHub Action' }}"
+
+      - name: Fetch and Convert Daily Data
+        run: |
+          python scripts/fetch-and-convert.py
+        if: github.event_name == 'schedule'
+
+      - name: Fetch and Convert (Manual)
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.start_date }}" ]; then
+            ARGS="--start-date ${{ github.event.inputs.start_date }}"
+          fi
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
+          fi
+          if [ "${{ github.event.inputs.force_overwrite }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          python scripts/fetch-and-convert.py $ARGS
+        if: github.event_name == 'workflow_dispatch'
+
+      - name: Check Job Status
+        if: always()
+        run: |
+          if [ ${{ job.status }} = "success" ]; then
+            echo "WORKFLOW_STATUS=SUCCESS" >> $GITHUB_ENV
+          else
+            echo "WORKFLOW_STATUS=FAILURE" >> $GITHUB_ENV
+          fi
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: boatrace-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
+          if-no-files-found: ignore
