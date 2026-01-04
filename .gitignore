@@ -7,4 +7,5 @@ tmp/
 scripts/boatrace/__pycache__/
 scripts/tests/__pycache__/
 scripts/tests/unit/__pycache__/
+scripts/tests/integration/__pycache__/
 logs

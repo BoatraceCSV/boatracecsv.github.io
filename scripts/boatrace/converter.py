@@ -53,6 +53,24 @@ for racer_num in range(1, 7):
         PROGRAMS_HEADERS.append(f"r{racer_num}_frame_field_{field_num:02d}")
 
 
+def _parse_betting_result(result: str, field_count: int) -> List[str]:
+    """Parse betting result string into CSV fields.
+
+    Args:
+        result: Betting result string (e.g., "1,1230")
+        field_count: Number of fields to return (2 or 3 or more for wide)
+
+    Returns:
+        List of field values padded to field_count
+    """
+    if not result:
+        return [""] * field_count
+
+    parts = result.split(",")
+    # Pad with empty strings to match field_count
+    return (parts + [""] * field_count)[:field_count]
+
+
 def race_result_to_row(race: RaceResult) -> List[str]:
     """Convert RaceResult to CSV row.
 
@@ -64,67 +82,51 @@ def race_result_to_row(race: RaceResult) -> List[str]:
     """
     # Extract race information from available data
     race_code = race.race_code or ""
-    title = race.title or ""
-    
-    # Parse title to extract distance and weather info if available
-    # Title format: "シリーズ戦予                 H1800m  晴　  風  南西　 3m  波　  2cm"
-    distance = ""  # Will try to extract from title
-    weather = ""
-    wind_direction = ""
-    wind_speed = ""
-    wave_height = ""
-    
-    # Try to parse title for distance (e.g., "H1800m")
-    if "m" in title:
-        parts = title.split()
-        for part in parts:
-            if part.endswith("m") and any(c.isdigit() for c in part):
-                distance = part.replace("H", "").replace("m", "")
-                break
-    
+
     row = [
         race_code,                  # レースコード
         race.title,                 # タイトル
-        "",                         # 日次 (not available in K-file)
+        race.day_of_session or "",  # 日次
         race.date,                  # レース日
         race.stadium,               # レース場
         race.race_round,            # レース回
-        race.title,                 # レース名
-        distance,                   # 距離(m)
-        weather,                    # 天候
-        wind_direction,             # 風向
-        wind_speed,                 # 風速(m)
-        wave_height,                # 波の高さ(cm)
-        "",                         # 決まり手 (not available in K-file)
-        # Betting results
-        "",                         # 単勝_艇番
-        "",                         # 単勝_払戻金
-        "",                         # 複勝_1着_艇番
-        "",                         # 複勝_1着_払戻金
-        "",                         # 複勝_2着_艇番
-        "",                         # 複勝_2着_払戻金
-        "",                         # 2連単_組番
-        "",                         # 2連単_払戻金
-        "",                         # 2連単_人気
-        "",                         # 2連複_組番
-        "",                         # 2連複_払戻金
-        "",                         # 2連複_人気
-        "",                         # 拡連複_1-2着_組番
-        "",                         # 拡連複_1-2着_払戻金
-        "",                         # 拡連複_1-2着_人気
-        "",                         # 拡連複_1-3着_組番
-        "",                         # 拡連複_1-3着_払戻金
-        "",                         # 拡連複_1-3着_人気
-        "",                         # 拡連複_2-3着_組番
-        "",                         # 拡連複_2-3着_払戻金
-        "",                         # 拡連複_2-3着_人気
-        "",                         # 3連単_組番
-        "",                         # 3連単_払戻金
-        "",                         # 3連単_人気
-        "",                         # 3連複_組番
-        "",                         # 3連複_払戻金
-        "",                         # 3連複_人気
+        race.race_name or "",       # レース名
+        race.distance or "",        # 距離(m)
+        race.weather or "",         # 天候
+        race.wind_direction or "",  # 風向
+        race.wind_speed or "",      # 風速(m)
+        race.wave_height or "",     # 波の高さ(cm)
+        race.winning_technique or "", # 決まり手
     ]
+
+    # Add betting results
+    # 単勝 (win): boat, payout
+    tansho_fields = _parse_betting_result(race.tansho, 2)
+    row.extend(tansho_fields)
+
+    # 複勝 (place): boat1, payout1, boat2, payout2
+    fukusho_fields = _parse_betting_result(race.fukusho, 4)
+    row.extend(fukusho_fields)
+
+    # 2連単 (exacta): combo, payout, popularity
+    santan_fields = _parse_betting_result(race.santan, 3)
+    row.extend(santan_fields)
+
+    # 2連複 (quinella): combo, payout, popularity
+    renfuku_fields = _parse_betting_result(race.renfuku, 3)
+    row.extend(renfuku_fields)
+
+    # 拡連複 (wide): 3 combinations, each with combo, payout, popularity
+    wide_fields = _parse_betting_result(race.wide, 9)
+    row.extend(wide_fields)
+
+    # 3連単 (trifecta): combo, payout, popularity
+    santan_yosoku_fields = _parse_betting_result(race.santan_yosoku, 3)
+    row.extend(santan_yosoku_fields)
+
+    # 3連複 (trio): combo, payout, popularity
+    trio_fields = _parse_betting_result(race.trio, 3)
+    row.extend(trio_fields)
 
     # Add racer data (pad with empty racers if fewer than 6)
     # Sort racers by result (1st place first)
@@ -134,16 +136,16 @@ def race_result_to_row(race: RaceResult) -> List[str]:
     for i, racer in enumerate(sorted_racers[:6]):
         if racer:
             row.extend([
-                str(racer.result),                  # 着順
-                str(racer.number),                  # 艇番
-                "",                                 # 登録番号 (not available in K-file results)
-                racer.name,                         # 選手名
-                "",                                 # モーター番号 (not available)
-                "",                                 # ボート番号 (not available)
-                "",                                 # 展示タイム (not available)
-                "",                                 # 進入コース (not available)
-                "",                                 # スタートタイミング (not available)
-                "",                                 # レースタイム (not available)
+                str(racer.result),                                      # 着順
+                str(racer.number),                                      # 艇番
+                racer.registration_number or "",                        # 登録番号
+                racer.name,                                             # 選手名
+                racer.motor_number or "",                               # モーター番号
+                racer.boat_number or "",                                # ボート番号
+                str(racer.showcase_time) if racer.showcase_time else "", # 展示タイム
+                str(racer.entrance_course) if racer.entrance_course else "", # 進入コース
+                str(racer.start_timing) if racer.start_timing else "",  # スタートタイミング
+                str(racer.time) if racer.time else "",                  # レースタイム
             ])
         else:
             row.extend(["", "", "", "", "", "", "", "", "", ""])
