@@ -7,6 +7,59 @@ from .models import RaceResult, RaceProgram
 from . import logger as logging_module
 
 
+# Venue code mapping for race code generation (YYYYMMDDCCNN format)
+VENUE_CODES = {
+    # Names with "ボートレース" prefix (used in programs CSV)
+    "ボートレース福岡": "01",
+    "ボートレース戸田": "02",
+    "ボートレース江戸川": "03",
+    "ボートレース平和島": "04",
+    "ボートレース多摩川": "05",
+    "ボートレース浜名湖": "06",
+    "ボートレース蒲郡": "07",
+    "ボートレース常滑": "08",
+    "ボートレース津": "09",
+    "ボートレース三国": "10",
+    "ボートレースびわこ": "11",
+    "ボートレース淀": "12",
+    "ボートレース大阪": "13",
+    "ボートレース尼崎": "14",
+    "ボートレース鳴門": "15",
+    "ボートレース丸亀": "16",
+    "ボートレース児島": "17",
+    "ボートレース宮島": "18",
+    "ボートレース徳山": "19",
+    "ボートレース下関": "20",
+    "ボートレース若松": "21",
+    "ボートレース芦屋": "22",
+    "ボートレース大村": "24",
+    # Fallback names without prefix (for results CSV compatibility)
+    "福岡": "01",
+    "戸田": "02",
+    "江戸川": "03",
+    "平和島": "04",
+    "多摩川": "05",
+    "浜名湖": "06",
+    "蒲郡": "07",
+    "常滑": "08",
+    "津": "09",
+    "三国": "10",
+    "びわこ": "11",
+    "淀": "12",
+    "大阪": "13",
+    "尼崎": "14",
+    "鳴門": "15",
+    "丸亀": "16",
+    "児島": "17",
+    "宮島": "18",
+    "徳山": "19",
+    "下関": "20",
+    "若松": "21",
+    "芦屋": "22",
+    "大村": "24",
+}
+
+
 # CSV Headers for results
 RESULTS_HEADERS = [
     "レースコード", "タイトル", "日次", "レース日", "レース場", "レース回", "レース名",
@@ -42,7 +95,7 @@ RESULTS_HEADERS = [
 
 # CSV Headers for programs (same structure as results CSV)
 PROGRAMS_HEADERS = [
-    "タイトル", "日次", "レース日", "レース場", "レース回", "レース名",
+    "レースコード", "タイトル", "日次", "レース日", "レース場", "レース回", "レース名",
     "距離(m)", "電話投票締切予定",
 ]
 
@@ -193,7 +246,30 @@ def race_program_to_row(program: RaceProgram) -> List[str]:
     Returns:
         List of CSV field values (one row per race with all 6 frames)
     """
+    # Generate race code if not provided
+    # Format: YYYYMMDDCCNN where CC is venue code, NN is race round number
+    race_code = program.race_code or ""
+    if not race_code:
+        # Extract date, stadium, and race round to generate code
+        if program.date and program.stadium and program.race_round:
+            try:
+                # Date: YYYYMMDD
+                date_code = program.date.replace("-", "")  # "2025-12-05" -> "20251205"
+                
+                # Venue code: 01-24
+                venue_code = VENUE_CODES.get(program.stadium, "00")
+                
+                # Race round: extract number from "01R", "02R", "1R", "2R", etc.
+                race_round_num = program.race_round.rstrip('R')  # "01R" -> "01", "1R" -> "1"
+                # Ensure 2-digit format
+                race_round_num = race_round_num.zfill(2)  # "1" -> "01"
+
+                race_code = date_code + venue_code + race_round_num
+            except Exception:
+                race_code = ""
+    
     row = [
+        race_code,                                          # レースコード
         program.title,                                      # タイトル
         program.day_of_session or "",                       # 日次
         program.date,                                       # レース日
