@@ -48,8 +48,10 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --local user.email "${{ secrets.GIT_USER_EMAIL || 'action@github.com' }}"
-          git config --local user.name "${{ secrets.GIT_USER_NAME || 'GitHub Action' }}"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          # Configure git to use token for https authentication
+          git config --global url."https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Fetch and Convert Daily Data
         run: |
