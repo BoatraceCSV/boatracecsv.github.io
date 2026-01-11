@@ -700,24 +700,20 @@ def parse_racer_frame_line(line: str) -> Optional[RacerFrame]:
             # Index 4: モーター号
             motor_number = parts[idx] if idx < len(parts) else ""
             idx += 1
-            
-            # Index 5: モーター2連対率 + ボート号 (concatenated, e.g., "33.97170")
+
+            # Index 5: モーター2連対率
             motor_2nd_rate = 0.0
-            boat_number = ""
-            
             if idx < len(parts):
-                curr_part = parts[idx]
-                # This part contains motor_2nd_rate + boat_number
-                if '.' in curr_part:
-                    dot_idx = curr_part.find('.')
-                    motor_2nd_rate = float(curr_part[:dot_idx+3]) if dot_idx + 3 <= len(curr_part) else float(curr_part)
-                    boat_number = curr_part[dot_idx+3:] if dot_idx + 3 < len(curr_part) else ""
-                else:
-                    boat_number = curr_part
-                
+                motor_2nd_rate = float(parts[idx]) if parts[idx] else 0.0
                 idx += 1
-            
-            # Index 6: ボート2連対率
+
+            # Index 6: ボート号
+            boat_number = ""
+            if idx < len(parts):
+                boat_number = parts[idx] if parts[idx] else ""
+                idx += 1
+
+            # Index 7: ボート2連対率
             boat_2nd_rate = 0.0
             if idx < len(parts):
                 boat_2nd_rate = float(parts[idx]) if parts[idx] else 0.0
