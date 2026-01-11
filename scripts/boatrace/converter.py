@@ -3,7 +3,7 @@
 import csv
 from io import StringIO
 from typing import List
-from .models import RaceResult, RaceProgram
+from .models import RaceResult, RaceProgram, RacePreview
 from . import logger as logging_module
 
 
@@ -403,6 +403,113 @@ def programs_to_csv(programs: List[RaceProgram]) -> str:
         logging_module.error(
             "csv_generation_failed",
             file_type="programs",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return ""
+
+
+# CSV Headers for previews (直前情報)
+PREVIEWS_HEADERS = [
+    "レースコード", "タイトル", "レース日", "レース場", "レース回",
+    "風速(m)", "風向", "波の高さ(cm)", "天候", "気温(℃)", "水温(℃)",
+]
+
+# Add boat headers (6 boats, 7 fields each)
+for boat_num in range(1, 7):
+    PREVIEWS_HEADERS.extend([
+        f"艇{boat_num}_艇番",
+        f"艇{boat_num}_コース",
+        f"艇{boat_num}_体重(kg)",
+        f"艇{boat_num}_体重調整(kg)",
+        f"艇{boat_num}_展示タイム",
+        f"艇{boat_num}_チルト調整",
+        f"艇{boat_num}_スタート展示",
+    ])
+
+
+def race_preview_to_row(preview: RacePreview) -> List[str]:
+    """Convert RacePreview to CSV row.
+
+    Args:
+        preview: RacePreview object
+
+    Returns:
+        List of CSV field values
+    """
+    race_code = preview.race_code or ""
+
+    row = [
+        race_code,                              # レースコード
+        preview.title or "",                    # タイトル
+        preview.date,                           # レース日
+        preview.stadium,                        # レース場
+        preview.race_round,                     # レース回
+        str(preview.wind_speed) if preview.wind_speed is not None else "",  # 風速(m)
+        str(preview.wind_direction) if preview.wind_direction is not None else "",  # 風向
+        str(preview.wave_height) if preview.wave_height is not None else "",  # 波の高さ(cm)
+        str(preview.weather) if preview.weather is not None else "",  # 天候
+        str(preview.air_temperature) if preview.air_temperature is not None else "",  # 気温(℃)
+        str(preview.water_temperature) if preview.water_temperature is not None else "",  # 水温(℃)
+    ]
+
+    # Add boat data (pad with empty boats if fewer than 6)
+    boats = preview.boats + [None] * (6 - len(preview.boats))
+
+    for boat in boats[:6]:
+        if boat:
+            row.extend([
+                str(boat.boat_number) if boat.boat_number else "",  # 艇番
+                str(boat.course_number) if boat.course_number is not None else "",  # コース
+                str(boat.weight) if boat.weight is not None else "",  # 体重(kg)
+                str(boat.weight_adjustment) if boat.weight_adjustment is not None else "",  # 体重調整(kg)
+                str(boat.exhibition_time) if boat.exhibition_time is not None else "",  # 展示タイム
+                str(boat.tilt_adjustment) if boat.tilt_adjustment is not None else "",  # チルト調整
+                str(boat.start_timing) if boat.start_timing is not None else "",  # スタート展示
+            ])
+        else:
+            row.extend([""] * 7)
+
+    return row
+
+
+def previews_to_csv(previews: List[RacePreview]) -> str:
+    """Convert list of RacePreview objects to CSV format.
+
+    Args:
+        previews: List of RacePreview objects
+
+    Returns:
+        CSV content as string
+    """
+    try:
+        output = StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+
+        # Write header
+        writer.writerow(PREVIEWS_HEADERS)
+
+        # Write data rows
+        for preview in previews:
+            row = race_preview_to_row(preview)
+            writer.writerow(row)
+
+        csv_content = output.getvalue()
+        output.close()
+
+        logging_module.info(
+            "csv_generated",
+            file_type="previews",
+            rows=len(previews) + 1,  # +1 for header
+            size_bytes=len(csv_content.encode("utf-8")),
+        )
+
+        return csv_content
+
+    except Exception as e:
+        logging_module.error(
+            "csv_generation_failed",
+            file_type="previews",
             error=str(e),
             error_type=type(e).__name__,
         )

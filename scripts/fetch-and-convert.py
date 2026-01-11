@@ -15,7 +15,8 @@ from boatrace.models import ConversionSession
 from boatrace.downloader import download_boatrace_files, RateLimiter
 from boatrace.extractor import extract_k_file, extract_b_file
 from boatrace.parser import parse_result_file, parse_program_file
-from boatrace.converter import races_to_csv, programs_to_csv
+from boatrace.converter import races_to_csv, programs_to_csv, previews_to_csv
+from boatrace.preview_scraper import PreviewScraper
 from boatrace.storage import write_csv
 from boatrace import git_operations
 
@@ -277,6 +278,202 @@ def process_date(
                 error=str(e),
             )
 
+    # Process Preview data (HTML scraping)
+    # First, extract actual races from B-file (programs)
+    # Note: We use B-file only because preview data is published before results
+    actual_races = set()  # Set of (stadium_code, race_number) tuples
+
+    if b_content and programs:
+        logging_module.info(
+            "preview_races_extraction_start",
+            date=date_str,
+            program_count=len(programs),
+        )
+
+        # Import VENUE_CODES from converter for stadium name -> code mapping
+        from boatrace.converter import VENUE_CODES
+
+        for program in programs:
+            # Extract stadium_code from program.stadium using VENUE_CODES mapping
+            stadium_code = VENUE_CODES.get(program.stadium)
+            if not stadium_code:
+                logging_module.debug(
+                    "preview_stadium_not_found",
+                    date=date_str,
+                    stadium_name=program.stadium,
+                )
+                continue
+
+            # Extract race_number from program.race_round (e.g., "1R" -> 1, "01R" -> 1)
+            try:
+                if not program.race_round:
+                    continue
+
+                # Remove 'R' suffix and convert to int
+                race_round_num = program.race_round.rstrip('R')  # "01R" -> "01", "1R" -> "1"
+                race_number = int(race_round_num)  # "01" or "1" -> 1
+
+                # Validate race number is in valid range (1-12)
+                if race_number < 1 or race_number > 12:
+                    logging_module.debug(
+                        "preview_race_number_invalid",
+                        date=date_str,
+                        race_round=program.race_round,
+                        race_number=race_number,
+                        stadium=program.stadium,
+                    )
+                    continue
+
+                actual_races.add((int(stadium_code), race_number))
+            except (ValueError, IndexError, AttributeError):
+                logging_module.debug(
+                    "preview_race_number_parse_error",
+                    date=date_str,
+                    race_round=program.race_round,
+                    stadium=program.stadium,
+                )
+
+        logging_module.info(
+            "preview_races_extraction_complete",
+            date=date_str,
+            actual_race_count=len(actual_races),
+        )
+
+    # Only scrape if we have actual races from programs
+    if config.get("enable_preview_scraping", True) and actual_races:
+        try:
+            previews = []
+            preview_scraper = PreviewScraper(
+                timeout_seconds=config.get("preview_scraper_timeout", 30),
+                rate_limiter=rate_limiter,
+            )
+
+            logging_module.info(
+                "preview_scraping_start",
+                date=date_str,
+                total_expected=len(actual_races),
+            )
+
+            # Group races by stadium for better logging
+            races_by_stadium = {}
+            for stadium_code, race_number in actual_races:
+                if stadium_code not in races_by_stadium:
+                    races_by_stadium[stadium_code] = []
+                races_by_stadium[stadium_code].append(race_number)
+
+            # Scrape only actual races from stadiums with programs
+            for stadium_code in sorted(races_by_stadium.keys()):
+                race_numbers = sorted(races_by_stadium[stadium_code])
+
+                logging_module.info(
+                    "preview_stadium_start",
+                    date=date_str,
+                    stadium=stadium_code,
+                    races=race_numbers,
+                    race_count=len(race_numbers),
+                )
+
+                for race_number in race_numbers:
+                    try:
+                        preview = preview_scraper.scrape_race_preview(
+                            date_str, stadium_code, race_number
+                        )
+                        if preview:
+                            previews.append(preview)
+                            session.previews_scraped += 1
+                    except Exception as e:
+                        session.previews_failed += 1
+                        session.add_error(
+                            date=date_str,
+                            error_type="preview_scrape_error",
+                            message=str(e),
+                            file_type="Preview",
+                        )
+                        logging_module.debug(
+                            "preview_scrape_failed",
+                            date=date_str,
+                            stadium=stadium_code,
+                            race=race_number,
+                            error=str(e),
+                        )
+
+                logging_module.info(
+                    "preview_stadium_complete",
+                    date=date_str,
+                    stadium=stadium_code,
+                    scraped_count=sum(1 for p in previews if p.stadium_number == stadium_code),
+                )
+
+            # Convert and save previews if any were scraped
+            logging_module.info(
+                "preview_scraping_complete",
+                date=date_str,
+                total_scraped=len(previews),
+            )
+
+            if previews:
+                logging_module.info(
+                    "preview_csv_conversion_start",
+                    date=date_str,
+                    preview_count=len(previews),
+                )
+
+                csv_content = previews_to_csv(previews)
+
+                logging_module.info(
+                    "preview_csv_conversion_complete",
+                    date=date_str,
+                    csv_size_bytes=len(csv_content.encode("utf-8")),
+                )
+
+                if csv_content:
+                    # Write
+                    if not session.dry_run:
+                        year, month, day = date_str.split("-")
+                        csv_path = project_root / f"data/previews/{year}/{month}/{day}.csv"
+                        logging_module.info(
+                            "preview_csv_write_start",
+                            date=date_str,
+                            path=str(csv_path),
+                        )
+
+                        if write_csv(str(csv_path), csv_content, session.force_overwrite):
+                            session.csv_files_created += 1
+                            files_processed = True
+                            logging_module.info(
+                                "preview_csv_write_success",
+                                date=date_str,
+                                path=str(csv_path),
+                            )
+                        else:
+                            session.csv_files_skipped += 1
+                            logging_module.warning(
+                                "preview_csv_write_skipped",
+                                date=date_str,
+                                path=str(csv_path),
+                            )
+                    else:
+                        session.csv_files_created += 1
+                        files_processed = True
+                        logging_module.info(
+                            "preview_csv_write_dry_run",
+                            date=date_str,
+                            preview_count=len(previews),
+                        )
+
+        except Exception as e:
+            session.add_error(
+                date=date_str,
+                error_type="preview_processing_error",
+                message=str(e),
+                file_type="Preview",
+            )
+            logging_module.error(
+                "preview_processing_error",
+                date=date_str,
+                error=str(e),
+            )
+
     return files_processed
 
 
@@ -343,14 +540,17 @@ def main():
                 # Collect CSV file paths for git commit (only if they exist)
                 project_root = Path(__file__).parent.parent
                 year, month, day = current_date.split("-")
-                
+
                 results_csv = project_root / f"data/results/{year}/{month}/{day}.csv"
                 programs_csv = project_root / f"data/programs/{year}/{month}/{day}.csv"
-                
+                previews_csv = project_root / f"data/previews/{year}/{month}/{day}.csv"
+
                 if results_csv.exists():
                     csv_files.append(f"data/results/{year}/{month}/{day}.csv")
                 if programs_csv.exists():
                     csv_files.append(f"data/programs/{year}/{month}/{day}.csv")
+                if previews_csv.exists():
+                    csv_files.append(f"data/previews/{year}/{month}/{day}.csv")
 
             current_dt += timedelta(days=1)
 

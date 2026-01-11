@@ -5,5 +5,8 @@
   "max_backoff_seconds": 30,
   "request_timeout_seconds": 30,
   "log_level": "INFO",
-  "log_file": "logs/boatrace-{DATE}.json"
+  "log_file": "logs/boatrace-{DATE}.json",
+  "enable_preview_scraping": true,
+  "preview_scraper_timeout": 30,
+  "preview_max_retries": 3
 }
