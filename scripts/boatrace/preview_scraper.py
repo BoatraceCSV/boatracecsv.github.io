@@ -228,21 +228,40 @@ class PreviewScraper:
             Race title or None
         """
         try:
-            # Try to find race title in heading tags
-            h1 = soup.find("h1")
-            if h1:
-                return h1.get_text(strip=True)
+            # Method 1: Try heading tags
+            for tag in ["h1", "h2", "h3"]:
+                elem = soup.find(tag)
+                if elem:
+                    title = elem.get_text(strip=True)
+                    if title:
+                        return title
 
-            h2 = soup.find("h2")
-            if h2:
-                return h2.get_text(strip=True)
+            # Method 2: Look for div/span with class containing title
+            main_div = soup.find("main")
+            if main_div:
+                # Check for common title patterns
+                for container in main_div.find_all(['div', 'p', 'span']):
+                    cls = container.get('class', [])
+                    if any('title' in str(c).lower() or 'race' in str(c).lower() for c in cls):
+                        text = container.get_text(strip=True)
+                        if text and len(text) > 5:
+                            return text
 
+            # Method 3: Return None if not found
             return None
         except Exception:
             return None
 
     def _parse_weather_info(self, soup: BeautifulSoup) -> Optional[dict]:
         """Parse weather information from HTML.
+
+        HTML structure uses weather1_bodyUnit divs with class indicators:
+        - is-direction: 気温 (air temperature)
+        - is-weather: 天候 (weather code in image class)
+        - is-wind: 風速 (wind speed)
+        - is-windDirection: 風向 (wind direction code in image class)
+        - is-waterTemperature: 水温 (water temperature)
+        - is-wave: 波高 (wave height)
 
         Args:
             soup: BeautifulSoup object
@@ -253,31 +272,75 @@ class PreviewScraper:
         try:
             weather_data = {}
 
-            # Find main content area (similar to PHP scraper's baseXPath)
+            # Find main content area
             main_div = soup.find("main")
             if not main_div:
                 return None
 
-            # Extract temperature information
-            air_temp_text = self._find_text_by_label(main_div, "気温")
-            weather_data["air_temperature"] = self._parse_float(air_temp_text)
+            # Find weather section (weather1_body container)
+            weather_body = main_div.find("div", class_="weather1_body")
+            if not weather_body:
+                return None
 
-            weather_text = self._find_text_by_label(main_div, "天候")
-            weather_data["weather"] = self._parse_weather_code(weather_text)
+            # Get all weather unit divs
+            units = weather_body.find_all("div", class_="weather1_bodyUnit")
 
-            wind_speed_text = self._find_text_by_label(main_div, "風速")
-            weather_data["wind_speed"] = self._parse_float(wind_speed_text)
+            # Extract each weather element by class indicator
+            for unit in units:
+                unit_class = " ".join(unit.get("class", []))
 
-            wind_dir_text = self._find_text_by_label(main_div, "風向")
-            weather_data["wind_direction"] = self._parse_wind_direction(wind_dir_text)
+                if "is-direction" in unit_class:
+                    # Air temperature
+                    label_data = unit.find("span", class_="weather1_bodyUnitLabelData")
+                    if label_data:
+                        weather_data["air_temperature"] = self._parse_float(label_data.get_text(strip=True))
 
-            wave_height_text = self._find_text_by_label(main_div, "波高")
-            weather_data["wave_height"] = self._parse_float(wave_height_text)
+                elif "is-weather" in unit_class:
+                    # Weather code - extract from image class or text
+                    img = unit.find("p", class_="weather1_bodyUnitImage")
+                    if img:
+                        # Get class to determine weather code
+                        img_class = " ".join(img.get("class", []))
+                        # is-weather1 = 晴, is-weather2 = 曇, etc.
+                        weather_data["weather"] = self._extract_weather_code_from_class(img_class)
+                    else:
+                        # Fallback: get text from span
+                        span = unit.find("span", class_="weather1_bodyUnitLabelTitle")
+                        if span:
+                            weather_data["weather"] = self._parse_weather_code(span.get_text(strip=True))
 
-            water_temp_text = self._find_text_by_label(main_div, "水温")
-            weather_data["water_temperature"] = self._parse_float(water_temp_text)
+                elif "is-wind" in unit_class and "is-windDirection" not in unit_class:
+                    # Wind speed
+                    label_data = unit.find("span", class_="weather1_bodyUnitLabelData")
+                    if label_data:
+                        wind_text = label_data.get_text(strip=True)
+                        # Parse "2m" -> 2.0
+                        weather_data["wind_speed"] = self._parse_float(wind_text.replace("m", "").strip())
 
-            return weather_data
+                elif "is-windDirection" in unit_class:
+                    # Wind direction code - extract from image class
+                    img = unit.find("p", class_="weather1_bodyUnitImage")
+                    if img:
+                        # Get class to determine wind direction code
+                        img_class = " ".join(img.get("class", []))
+                        # is-wind1 = 北, is-wind2 = 北東, etc.
+                        weather_data["wind_direction"] = self._extract_wind_code_from_class(img_class)
+
+                elif "is-waterTemperature" in unit_class:
+                    # Water temperature
+                    label_data = unit.find("span", class_="weather1_bodyUnitLabelData")
+                    if label_data:
+                        weather_data["water_temperature"] = self._parse_float(label_data.get_text(strip=True))
+
+                elif "is-wave" in unit_class:
+                    # Wave height
+                    label_data = unit.find("span", class_="weather1_bodyUnitLabelData")
+                    if label_data:
+                        wave_text = label_data.get_text(strip=True)
+                        # Parse "3cm" -> 3.0
+                        weather_data["wave_height"] = self._parse_float(wave_text.replace("cm", "").strip())
+
+            return weather_data if weather_data else None
 
         except Exception as e:
             logging_module.debug(
@@ -288,6 +351,12 @@ class PreviewScraper:
 
     def _parse_boat_info(self, soup: BeautifulSoup) -> Optional[List[PreviewBoatInfo]]:
         """Parse boat information from HTML.
+
+        HTML structure based on PHP XPath analysis:
+        - Course/boat layout table: Contains 6 rows (one per course), each row has boat info
+          XPath: div[2]/div[level]/div[2]/div[1]/table/tbody/tr[courseNum]
+        - Boat detail table: Contains 6 tbody elements (one per boat), each with weight/adjustment data
+          XPath: div[2]/div[level]/div[1]/div[1]/table/tbody[boatNum]
 
         Args:
             soup: BeautifulSoup object
@@ -302,16 +371,135 @@ class PreviewScraper:
             if not main_div:
                 return None
 
-            # Find table containing racer information
-            tables = main_div.find_all("table")
-            if not tables:
+            # Initialize boats with boat_number only
+            boats_dict = {i: PreviewBoatInfo(boat_number=i) for i in range(1, 7)}
+
+            # Find all tables in main content
+            all_tables = main_div.find_all("table", recursive=True)
+            if not all_tables:
                 return None
 
-            # Process each boat (should be 6)
-            for boat_number in range(1, 7):
-                boat_info = self._extract_boat_data(soup, boat_number)
-                if boat_info:
-                    boats.append(boat_info)
+            # Strategy: Find the course/boat table and boat detail table by content analysis
+            # Look for table that has 6 rows (one per course) with boat numbers
+            course_table = None
+            boat_detail_table = None
+
+            for table in all_tables:
+                tbody = table.find("tbody")
+                if not tbody:
+                    continue
+
+                rows = tbody.find_all("tr")
+                if len(rows) == 6:
+                    # Likely course table (6 courses)
+                    if not course_table:
+                        course_table = table
+
+            # Find boat detail tables (should have 6 tbody elements)
+            for table in all_tables:
+                tbodies = table.find_all("tbody")
+                if len(tbodies) == 6:
+                    # Likely boat detail table
+                    if not boat_detail_table:
+                        boat_detail_table = table
+
+            # === Extract from course table ===
+            if course_table:
+                tbody = course_table.find("tbody")
+                rows = tbody.find_all("tr")
+                for course_idx, row in enumerate(rows, 1):  # course_idx: 1-6
+                    cells = row.find_all("td")
+                    if cells:
+                        # First cell usually contains boat number and start timing
+                        spans = cells[0].find_all("span")
+                        if spans:
+                            try:
+                                boat_num = int(spans[0].get_text(strip=True))
+                                if 1 <= boat_num <= 6:
+                                    boats_dict[boat_num].course_number = course_idx
+
+                                    # Start timing may be in span[2] or span[3]
+                                    if len(spans) >= 3:
+                                        timing_text = spans[2].get_text(strip=True)
+                                        boats_dict[boat_num].start_timing = self._parse_float(
+                                            timing_text
+                                        )
+                            except (ValueError, IndexError):
+                                pass
+
+            # === Extract from boat detail table ===
+            if boat_detail_table:
+                tbodies = boat_detail_table.find_all("tbody")
+                for boat_num, tbody in enumerate(tbodies, 1):  # boat_num: 1-6
+                    if boat_num > 6:
+                        break
+
+                    rows = tbody.find_all("tr")
+                    if len(rows) >= 3:
+                        # First row contains weight and timing data
+                        row1_cells = rows[0].find_all("td")
+                        if len(row1_cells) >= 6:
+                            # Weight is usually in td[3] or td[4]
+                            boats_dict[boat_num].weight = self._parse_float(
+                                row1_cells[3].get_text(strip=True)
+                            )
+                            # Exhibition time in td[4] or td[5]
+                            boats_dict[boat_num].exhibition_time = self._parse_float(
+                                row1_cells[4].get_text(strip=True)
+                            )
+                            # Tilt adjustment in td[5] or td[6]
+                            boats_dict[boat_num].tilt_adjustment = self._parse_float(
+                                row1_cells[5].get_text(strip=True)
+                            )
+
+                        # Third row contains weight adjustment
+                        row3_cells = rows[2].find_all("td")
+                        if row3_cells:
+                            boats_dict[boat_num].weight_adjustment = self._parse_float(
+                                row3_cells[0].get_text(strip=True)
+                            )
+
+            # === Extract start timing from ST display table ===
+            # Look for table with class "is-w238" which contains ST data
+            st_table = None
+            for table in all_tables:
+                table_class = " ".join(table.get("class", []))
+                if "is-w238" in table_class:
+                    st_table = table
+                    break
+
+            if st_table:
+                tbody = st_table.find("tbody", class_="is-p10-0")
+                if tbody:
+                    rows = tbody.find_all("tr")
+                    for course_idx, row in enumerate(rows, 1):  # course_idx: 1-6
+                        if course_idx > 6:
+                            break
+
+                        # Each row has a div.table1_boatImage1 with boat number and ST
+                        boat_image_div = row.find("div", class_="table1_boatImage1")
+                        if boat_image_div:
+                            # Boat number is in span.table1_boatImage1Number
+                            boat_num_span = boat_image_div.find("span", class_="table1_boatImage1Number")
+                            if boat_num_span:
+                                try:
+                                    boat_num = int(boat_num_span.get_text(strip=True))
+                                    if 1 <= boat_num <= 6:
+                                        # ST value is in span.table1_boatImage1Time
+                                        st_span = boat_image_div.find("span", class_="table1_boatImage1Time")
+                                        if st_span:
+                                            st_text = st_span.get_text(strip=True)
+                                            # "F.XX" means false start with negative timing (e.g., "F.01" = -0.01)
+                                            if st_text.startswith("F."):
+                                                # Convert "F.01" to "-0.01"
+                                                st_text = "-0." + st_text[2:]
+                                            boats_dict[boat_num].start_timing = self._parse_float(st_text)
+                                except (ValueError, AttributeError):
+                                    pass
+
+            # Collect boats in order
+            for boat_num in range(1, 7):
+                boats.append(boats_dict[boat_num])
 
             # Return None if we don't have exactly 6 boats
             if len(boats) != 6:
@@ -386,6 +574,9 @@ class PreviewScraper:
     ) -> Optional[str]:
         """Find text by associated label.
 
+        Searches for label text in div/span elements and extracts associated value.
+        Handles both inline and sibling element patterns.
+
         Args:
             element: BeautifulSoup element to search in
             label: Label text to search for
@@ -394,23 +585,55 @@ class PreviewScraper:
             Associated value text or None
         """
         try:
-            # Search for text containing the label
+            # Method 1: Search for label in all strings (direct match)
             for elem in element.find_all(string=True):
                 if label in str(elem):
-                    # Get parent element
                     parent = elem.parent
                     if parent:
-                        # Try to find value in next sibling or nearby elements
-                        next_elem = parent.find_next_sibling()
-                        if next_elem:
-                            return next_elem.get_text(strip=True)
-
-                        # Try to find in parent's next elements
+                        # Try pattern: label and value in same element
                         text = parent.get_text(strip=True)
-                        # Extract value after label
-                        parts = text.split(label)
-                        if len(parts) > 1:
-                            return parts[1].strip()
+                        if label in text:
+                            # Extract value after label
+                            parts = text.split(label)
+                            if len(parts) > 1:
+                                value = parts[1].strip()
+                                # Clean up: remove next label if present
+                                for next_label in ["気温", "天候", "風速", "風向", "波高", "水温"]:
+                                    if next_label in value:
+                                        value = value.split(next_label)[0].strip()
+                                        break
+                                if value:
+                                    return value
+
+                        # Try pattern: label in element, value in next sibling
+                        next_sibling = parent.find_next_sibling()
+                        if next_sibling:
+                            value = next_sibling.get_text(strip=True)
+                            if value:
+                                return value
+
+                        # Try pattern: label in element, value in next span/div
+                        next_elem = parent.find_next()
+                        if next_elem:
+                            value = next_elem.get_text(strip=True)
+                            if value:
+                                return value
+
+            # Method 2: Look for div/span containing label, check nearby for value
+            for container in element.find_all(['div', 'span']):
+                text = container.get_text(strip=True)
+                if label in text:
+                    # Try to extract value from same container
+                    parts = text.split(label)
+                    if len(parts) > 1:
+                        value = parts[1].strip()
+                        # Clean up
+                        for next_label in ["気温", "天候", "風速", "風向", "波高", "水温"]:
+                            if next_label in value:
+                                value = value.split(next_label)[0].strip()
+                                break
+                        if value:
+                            return value
 
             return None
         except Exception:
@@ -552,6 +775,69 @@ class PreviewScraper:
 
         for key, code in direction_map.items():
             if key in wind_text:
+                return code
+
+        return None
+
+    @staticmethod
+    def _extract_weather_code_from_class(img_class: str) -> Optional[int]:
+        """Extract weather code from image class.
+
+        HTML structure uses is-weather1/2/3/4/5 to indicate weather type:
+        - is-weather1: 晴 (clear)
+        - is-weather2: 曇 (cloudy)
+        - is-weather3: 雨 (rain)
+        - is-weather4: 大雨 (heavy rain)
+        - is-weather5: 霧 (fog)
+
+        Args:
+            img_class: Image element class string
+
+        Returns:
+            Weather code (1-5) or None
+        """
+        if not img_class:
+            return None
+
+        # Extract numeric code from class like "weather1_bodyUnitImage is-weather1"
+        for i in range(1, 6):
+            if f"is-weather{i}" in img_class:
+                return i
+
+        return None
+
+    @staticmethod
+    def _extract_wind_code_from_class(img_class: str) -> Optional[int]:
+        """Extract wind direction code from image class.
+
+        HTML structure uses is-wind1/2/3/4/5 to indicate wind direction:
+        - is-wind1: 北 (north)
+        - is-wind2: 北東 (northeast)
+        - is-wind3: 東 (east)
+        - is-wind4: 南東 (southeast)
+        - is-wind5: 南 (south)
+
+        Args:
+            img_class: Image element class string
+
+        Returns:
+            Wind direction code (1-4) or None
+        """
+        if not img_class:
+            return None
+
+        # Map is-wind1..5 to wind direction codes 1-4
+        # Note: is-wind5 seems to indicate special cases
+        wind_map = {
+            "is-wind1": 1,  # 北
+            "is-wind2": 2,  # 北東
+            "is-wind3": 2,  # 東
+            "is-wind4": 3,  # 南東
+            "is-wind5": 4,  # 南
+        }
+
+        for wind_class, code in wind_map.items():
+            if wind_class in img_class:
                 return code
 
         return None
