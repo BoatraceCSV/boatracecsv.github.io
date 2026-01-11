@@ -59,7 +59,21 @@ class PreviewScraper:
         url = self._build_url(date, stadium_code, race_number)
 
         try:
+            logging_module.debug(
+                "preview_scrape_start",
+                url=url,
+                date=date,
+                stadium=stadium_code,
+                race=race_number,
+            )
+
             self.rate_limiter.wait()
+
+            logging_module.debug(
+                "preview_http_request",
+                url=url,
+                timeout=self.timeout_seconds,
+            )
 
             response = self.session.get(url, timeout=self.timeout_seconds)
 
