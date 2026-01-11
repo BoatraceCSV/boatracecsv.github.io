@@ -15,7 +15,8 @@ from boatrace.models import ConversionSession
 from boatrace.downloader import download_boatrace_files, RateLimiter
 from boatrace.extractor import extract_k_file, extract_b_file
 from boatrace.parser import parse_result_file, parse_program_file
-from boatrace.converter import races_to_csv, programs_to_csv
+from boatrace.converter import races_to_csv, programs_to_csv, previews_to_csv
+from boatrace.preview_scraper import PreviewScraper
 from boatrace.storage import write_csv
 from boatrace import git_operations
 
@@ -277,6 +278,71 @@ def process_date(
                 error=str(e),
             )
 
+    # Process Preview data (HTML scraping)
+    if config.get("enable_preview_scraping", True):
+        try:
+            previews = []
+            preview_scraper = PreviewScraper(
+                timeout_seconds=config.get("preview_scraper_timeout", 30),
+                rate_limiter=rate_limiter,
+            )
+
+            # Scrape all stadiums (1-24) and races (1-12)
+            for stadium_code in range(1, 25):
+                for race_number in range(1, 13):
+                    try:
+                        preview = preview_scraper.scrape_race_preview(
+                            date_str, stadium_code, race_number
+                        )
+                        if preview:
+                            previews.append(preview)
+                            session.previews_scraped += 1
+                    except Exception as e:
+                        session.previews_failed += 1
+                        session.add_error(
+                            date=date_str,
+                            error_type="preview_scrape_error",
+                            message=str(e),
+                            file_type="Preview",
+                        )
+                        logging_module.debug(
+                            "preview_scrape_failed",
+                            date=date_str,
+                            stadium=stadium_code,
+                            race=race_number,
+                            error=str(e),
+                        )
+
+            # Convert and save previews if any were scraped
+            if previews:
+                csv_content = previews_to_csv(previews)
+                if csv_content:
+                    # Write
+                    if not session.dry_run:
+                        year, month, day = date_str.split("-")
+                        csv_path = project_root / f"data/previews/{year}/{month}/{day}.csv"
+                        if write_csv(str(csv_path), csv_content, session.force_overwrite):
+                            session.csv_files_created += 1
+                            files_processed = True
+                        else:
+                            session.csv_files_skipped += 1
+                    else:
+                        session.csv_files_created += 1
+                        files_processed = True
+
+        except Exception as e:
+            session.add_error(
+                date=date_str,
+                error_type="preview_processing_error",
+                message=str(e),
+                file_type="Preview",
+            )
+            logging_module.error(
+                "preview_processing_error",
+                date=date_str,
+                error=str(e),
+            )
+
     return files_processed
 
 
@@ -343,14 +409,17 @@ def main():
                 # Collect CSV file paths for git commit (only if they exist)
                 project_root = Path(__file__).parent.parent
                 year, month, day = current_date.split("-")
-                
+
                 results_csv = project_root / f"data/results/{year}/{month}/{day}.csv"
                 programs_csv = project_root / f"data/programs/{year}/{month}/{day}.csv"
-                
+                previews_csv = project_root / f"data/previews/{year}/{month}/{day}.csv"
+
                 if results_csv.exists():
                     csv_files.append(f"data/results/{year}/{month}/{day}.csv")
                 if programs_csv.exists():
                     csv_files.append(f"data/programs/{year}/{month}/{day}.csv")
+                if previews_csv.exists():
+                    csv_files.append(f"data/previews/{year}/{month}/{day}.csv")
 
             current_dt += timedelta(days=1)
 

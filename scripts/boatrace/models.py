@@ -168,6 +168,46 @@ class RaceProgram:
 
 
 @dataclass
+class PreviewBoatInfo:
+    """Preview data for a single boat."""
+
+    boat_number: int
+    course_number: Optional[int] = None
+    weight: Optional[float] = None
+    weight_adjustment: Optional[float] = None
+    exhibition_time: Optional[float] = None
+    tilt_adjustment: Optional[float] = None
+    start_timing: Optional[float] = None
+
+
+@dataclass
+class RacePreview:
+    """Preview data for a single race (直前情報)."""
+
+    date: str  # YYYY-MM-DD
+    stadium: str
+    race_round: str  # e.g., "01R"
+    title: Optional[str] = None
+    race_code: Optional[str] = None
+    stadium_number: Optional[int] = None
+
+    # Weather information
+    wind_speed: Optional[float] = None
+    wind_direction: Optional[int] = None
+    wave_height: Optional[float] = None
+    weather: Optional[int] = None
+    air_temperature: Optional[float] = None
+    water_temperature: Optional[float] = None
+
+    # Boats (always 6)
+    boats: List[PreviewBoatInfo] = field(default_factory=list)
+
+    def is_valid(self) -> bool:
+        """Check if race preview is valid."""
+        return len(self.boats) == 6
+
+
+@dataclass
 class ConversionError:
     """Error during conversion process."""
 
@@ -197,6 +237,10 @@ class ConversionSession:
     files_converted: int = 0
     csv_files_created: int = 0
     csv_files_skipped: int = 0
+
+    # Preview counters
+    previews_scraped: int = 0
+    previews_failed: int = 0
 
     # Error tracking
     errors: List[ConversionError] = field(default_factory=list)
