@@ -496,8 +496,27 @@ def parse_program_file(content: str, date: str = "") -> List[RaceProgram]:
                 # Parse race details from this line
                 # Format: "　１Ｒ  カタメン１予          Ｈ１８００ｍ  電話投票締切予定１１：０３"
                 try:
-                    # Extract race round (positions 1-3)
-                    race_round_raw = line[1:3].translate(trans_asc).replace(' ', '')
+                    # Extract race round - find "Ｒ" and extract digits before it
+                    # Handle both formats: "　１Ｒ" (1-9 races) and "１０Ｒ", "１１Ｒ", "１２Ｒ" (10-12 races)
+                    race_r_idx = line.find("Ｒ")
+                    if race_r_idx >= 1:
+                        # Extract backwards from "Ｒ" to get the race number(s)
+                        # Could be 1 or 2 full-width digits before "Ｒ"
+                        race_digits = ""
+                        j = race_r_idx - 1
+                        while j >= 0 and line[j] in "１２３４５６７８９０":
+                            race_digits = line[j] + race_digits
+                            j -= 1
+                        
+                        if race_digits:
+                            race_round_raw = race_digits + "R"
+                            # Convert to ASCII
+                            race_round_raw = race_round_raw.translate(trans_asc).replace(' ', '')
+                        else:
+                            # Fallback to old method if no digits found
+                            race_round_raw = line[1:3].translate(trans_asc).replace(' ', '')
+                    else:
+                        race_round_raw = ""
                     
                     # Extract race name (positions 5-21)
                     race_name = line[5:21].replace('　', '').strip()

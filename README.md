@@ -140,8 +140,8 @@ bash scripts/backfill-historical.sh \
 
 Once configured, CSV files are published at:
 
-- **Results**: `https://owner.github.io/boatrace-data/data/results/2025/12/01.csv`
-- **Programs**: `https://owner.github.io/boatrace-data/data/programs/2025/12/01.csv`
+- **Results**: `https://BoatraceCSV.github.io/data/data/results/2025/12/01.csv`
+- **Programs**: `https://BoatraceCSV.github.io/data/data/programs/2025/12/01.csv`
 
 ## Testing
 
