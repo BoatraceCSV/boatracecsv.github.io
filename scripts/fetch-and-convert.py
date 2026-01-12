@@ -531,7 +531,7 @@ def main():
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
         current_dt = start_dt
 
-        csv_files = []
+        git_push_results = []  # Track git push results for each date
 
         while current_dt <= end_dt:
             current_date = current_dt.strftime("%Y-%m-%d")
@@ -545,33 +545,41 @@ def main():
                 programs_csv = project_root / f"data/programs/{year}/{month}/{day}.csv"
                 previews_csv = project_root / f"data/previews/{year}/{month}/{day}.csv"
 
+                day_csv_files = []
                 if results_csv.exists():
-                    csv_files.append(f"data/results/{year}/{month}/{day}.csv")
+                    day_csv_files.append(f"data/results/{year}/{month}/{day}.csv")
                 if programs_csv.exists():
-                    csv_files.append(f"data/programs/{year}/{month}/{day}.csv")
+                    day_csv_files.append(f"data/programs/{year}/{month}/{day}.csv")
                 if previews_csv.exists():
-                    csv_files.append(f"data/previews/{year}/{month}/{day}.csv")
+                    day_csv_files.append(f"data/previews/{year}/{month}/{day}.csv")
+
+                # Git operations for this day (if files exist and not dry-run)
+                if day_csv_files and not session.dry_run:
+                    logging_module.info(
+                        "git_commit_start",
+                        date=current_date,
+                        files_count=len(day_csv_files),
+                    )
+
+                    message = f"Update boatrace data: {current_date}"
+                    if git_operations.commit_and_push(day_csv_files, message):
+                        session.git_push_success = True
+                        git_push_results.append(True)
+                        logging_module.info(
+                            "git_success",
+                            date=current_date,
+                        )
+                    else:
+                        session.git_push_success = False
+                        git_push_results.append(False)
+                        logging_module.error(
+                            "git_failed",
+                            date=current_date,
+                        )
 
             current_dt += timedelta(days=1)
 
         session.end_time = datetime.now()
-
-        # Git operations (if files were created and not dry-run)
-        if csv_files and not session.dry_run:
-            logging_module.info(
-                "git_commit_start",
-                files_count=len(csv_files),
-            )
-
-            message = f"Update boatrace data: {start_date} to {end_date}"
-            if git_operations.commit_and_push(csv_files, message):
-                session.git_push_success = True
-                # Extract commit hash from git
-                result = git_operations.get_git_config("user.name")  # Just to get last commit
-                logging_module.info("git_success")
-            else:
-                session.git_push_success = False
-                logging_module.error("git_failed")
 
         # Print summary
         print()
