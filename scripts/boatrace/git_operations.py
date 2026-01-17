@@ -230,6 +230,13 @@ def push(branch: str = "main", force: bool = False) -> bool:
         else:
             # Check for specific errors
             error_output = result.stdout + result.stderr
+            logging_module.error(
+                "push_failed_detail",
+                branch=branch,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                returncode=result.returncode,
+            )
             if "authentication" in error_output.lower():
                 logging_module.error(
                     "push_auth_failed",
