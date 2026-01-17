@@ -208,6 +208,32 @@ def push(branch: str = "main", force: bool = False) -> bool:
         # Get the project root
         project_root = Path(__file__).parent.parent.parent
         
+        # Fetch latest remote changes
+        fetch_result = subprocess.run(
+            ["git", "fetch", "origin", branch],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(project_root),
+        )
+        
+        # Rebase local commits on top of remote
+        rebase_result = subprocess.run(
+            ["git", "rebase", f"origin/{branch}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(project_root),
+        )
+        
+        if rebase_result.returncode != 0:
+            logging_module.error(
+                "rebase_failed",
+                branch=branch,
+                error=rebase_result.stderr,
+            )
+            return False
+        
         args = ["git", "push", "origin", branch]
         if force:
             args.append("-f")
