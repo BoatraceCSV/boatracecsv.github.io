@@ -4,6 +4,7 @@ tmp/
 .serena/
 .specify/
 .venv/
+.pytest_cache
 scripts/__pycache__/
 scripts/boatrace/__pycache__/
 scripts/tests/__pycache__/
