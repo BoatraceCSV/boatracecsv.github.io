@@ -73,6 +73,16 @@ jobs:
           python scripts/fetch-and-convert.py $ARGS
         if: github.event_name == 'workflow_dispatch'
 
+      - name: Estimate Races
+        run: |
+          python scripts/estimate.py
+        if: always()
+
+      - name: Confirm Predictions
+        run: |
+          python scripts/confirm.py
+        if: always()
+
       - name: Check Job Status
         if: always()
         run: |
