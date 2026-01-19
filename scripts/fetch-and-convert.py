@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from boatrace import logger as logging_module
 from boatrace.models import ConversionSession
-from boatrace.downloader import download_boatrace_files, RateLimiter
+from boatrace.downloader import download_file, RateLimiter
 from boatrace.extractor import extract_k_file, extract_b_file
 from boatrace.parser import parse_result_file, parse_program_file
 from boatrace.converter import races_to_csv, programs_to_csv, previews_to_csv
@@ -165,15 +165,61 @@ def process_date(
 
     session.dates_processed += 1
 
-    # Download files
-    k_content, b_content = download_boatrace_files(
-        date_str,
-        rate_limiter=rate_limiter,
+    # Prepare date components for current date
+    date_parts = date_str.split("-")
+    year = date_parts[0]
+    month = date_parts[1]
+    day = date_parts[2]
+    year_short = year[2:]
+    file_date = f"{year_short}{month}{day}"
+    year_month = f"{year}{month}"
+
+    # Prepare next date for Programs download
+    next_date_obj = datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=1)
+    next_date_str = next_date_obj.strftime("%Y-%m-%d")
+    next_date_parts = next_date_str.split("-")
+    next_year = next_date_parts[0]
+    next_month = next_date_parts[1]
+    next_day = next_date_parts[2]
+    next_year_short = next_year[2:]
+    next_file_date = f"{next_year_short}{next_month}{next_day}"
+    next_year_month = f"{next_year}{next_month}"
+
+    # Download K-file (results) for current date
+    base_url = "https://www1.mbrace.or.jp/od2"
+    k_file_url = f"{base_url}/K/{year_month}/k{file_date}.lzh"
+    
+    logging_module.info(
+        "downloading_file",
+        file_type="K",
+        date=date_str,
+        url=k_file_url,
+    )
+    
+    k_content, k_status = download_file(
+        k_file_url,
         max_retries=config.get("max_retries", 3),
+        rate_limiter=rate_limiter,
+    )
+
+    # Download B-file (programs) for next day
+    b_file_url = f"{base_url}/B/{next_year_month}/b{next_file_date}.lzh"
+    
+    logging_module.info(
+        "downloading_file",
+        file_type="B",
+        date=next_date_str,
+        url=b_file_url,
+    )
+    
+    b_content, b_status = download_file(
+        b_file_url,
+        max_retries=config.get("max_retries", 3),
+        rate_limiter=rate_limiter,
     )
 
     # Check if both files are missing (no races scheduled)
-    if k_content is None and b_content is None:
+    if k_status == 404 and b_status == 404:
         logging_module.info(
             "date_skipped",
             date=date_str,
@@ -186,7 +232,7 @@ def process_date(
     # Determine project root (parent of scripts directory)
     project_root = Path(__file__).parent.parent
 
-    # Process K-file (results)
+    # Process K-file (results) - use current date
     if k_content:
         try:
             session.files_downloaded += 1
@@ -208,7 +254,6 @@ def process_date(
 
                         # Write
                         if not session.dry_run:
-                            year, month, day = date_str.split("-")
                             csv_path = project_root / f"data/results/{year}/{month}/{day}.csv"
                             if write_csv(str(csv_path), csv_content, session.force_overwrite):
                                 session.csv_files_created += 1
@@ -232,58 +277,21 @@ def process_date(
                 error=str(e),
             )
 
-    # Process B-file (programs)
+    # Process Preview data (HTML scraping) using current date programs
+    # First, extract actual races from current date programs (from next day's B-file)
+    actual_races = set()  # Set of (stadium_code, race_number) tuples
+    programs = None
+
     if b_content:
         try:
-            session.files_downloaded += 1
-
-            # Extract
+            # Extract next day's B-file for preview scraping reference
             b_text = extract_b_file(b_content)
             if b_text:
-                session.files_decompressed += 1
+                programs = parse_program_file(b_text, date=next_date_str)
+        except Exception:
+            pass
 
-                # Parse
-                programs = parse_program_file(b_text, date=date_str)
-                if programs:
-                    session.files_parsed += 1
-
-                    # Convert
-                    csv_content = programs_to_csv(programs)
-                    if csv_content:
-                        session.files_converted += 1
-
-                        # Write
-                        if not session.dry_run:
-                            year, month, day = date_str.split("-")
-                            csv_path = project_root / f"data/programs/{year}/{month}/{day}.csv"
-                            if write_csv(str(csv_path), csv_content, session.force_overwrite):
-                                session.csv_files_created += 1
-                                files_processed = True
-                            else:
-                                session.csv_files_skipped += 1
-                        else:
-                            session.csv_files_created += 1
-                            files_processed = True
-
-        except Exception as e:
-            session.add_error(
-                date=date_str,
-                error_type="b_file_processing_error",
-                message=str(e),
-                file_type="B",
-            )
-            logging_module.error(
-                "b_file_processing_error",
-                date=date_str,
-                error=str(e),
-            )
-
-    # Process Preview data (HTML scraping)
-    # First, extract actual races from B-file (programs)
-    # Note: We use B-file only because preview data is published before results
-    actual_races = set()  # Set of (stadium_code, race_number) tuples
-
-    if b_content and programs:
+    if programs:
         logging_module.info(
             "preview_races_extraction_start",
             date=date_str,
@@ -429,7 +437,6 @@ def process_date(
                 if csv_content:
                     # Write
                     if not session.dry_run:
-                        year, month, day = date_str.split("-")
                         csv_path = project_root / f"data/previews/{year}/{month}/{day}.csv"
                         logging_module.info(
                             "preview_csv_write_start",
@@ -471,6 +478,51 @@ def process_date(
             logging_module.error(
                 "preview_processing_error",
                 date=date_str,
+                error=str(e),
+            )
+
+    # Process B-file (programs) for next day
+    if b_content:
+        try:
+            session.files_downloaded += 1
+
+            # Extract
+            b_text = extract_b_file(b_content)
+            if b_text:
+                session.files_decompressed += 1
+
+                # Parse
+                programs_tomorrow = parse_program_file(b_text, date=next_date_str)
+                if programs_tomorrow:
+                    session.files_parsed += 1
+
+                    # Convert
+                    csv_content = programs_to_csv(programs_tomorrow)
+                    if csv_content:
+                        session.files_converted += 1
+
+                        # Write to NEXT DAY directory
+                        if not session.dry_run:
+                            csv_path = project_root / f"data/programs/{next_year}/{next_month}/{next_day}.csv"
+                            if write_csv(str(csv_path), csv_content, session.force_overwrite):
+                                session.csv_files_created += 1
+                                files_processed = True
+                            else:
+                                session.csv_files_skipped += 1
+                        else:
+                            session.csv_files_created += 1
+                            files_processed = True
+
+        except Exception as e:
+            session.add_error(
+                date=next_date_str,
+                error_type="b_file_processing_error",
+                message=str(e),
+                file_type="B",
+            )
+            logging_module.error(
+                "b_file_processing_error",
+                date=next_date_str,
                 error=str(e),
             )
 
