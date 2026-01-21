@@ -53,25 +53,20 @@ jobs:
           # Configure git to use token for https authentication
           git config --global url."https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
-      - name: Fetch and Convert Daily Data
+      - name: Process Results (K-file)
         run: |
-          python scripts/fetch-and-convert.py
-        if: github.event_name == 'schedule'
+          python scripts/result.py --force
+        if: always()
 
-      - name: Fetch and Convert (Manual)
+      - name: Process Programs (B-file)
         run: |
-          ARGS=""
-          if [ -n "${{ github.event.inputs.start_date }}" ]; then
-            ARGS="--start-date ${{ github.event.inputs.start_date }}"
-          fi
-          if [ -n "${{ github.event.inputs.end_date }}" ]; then
-            ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
-          fi
-          if [ "${{ github.event.inputs.force_overwrite }}" = "true" ]; then
-            ARGS="$ARGS --force"
-          fi
-          python scripts/fetch-and-convert.py $ARGS
-        if: github.event_name == 'workflow_dispatch'
+          python scripts/program.py --force
+        if: always()
+
+      - name: Process Previews
+        run: |
+          python scripts/preview.py --force
+        if: always()
 
       - name: Estimate Races
         run: |

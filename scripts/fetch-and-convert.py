@@ -12,13 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from boatrace import logger as logging_module
 from boatrace.models import ConversionSession
-from boatrace.downloader import download_file, RateLimiter
-from boatrace.extractor import extract_k_file, extract_b_file
-from boatrace.parser import parse_result_file, parse_program_file
-from boatrace.converter import races_to_csv, programs_to_csv, previews_to_csv
-from boatrace.preview_scraper import PreviewScraper
-from boatrace.storage import write_csv
+from boatrace.downloader import RateLimiter
 from boatrace import git_operations
+from result import process_result
+from program import process_program
+from preview import process_preview
 
 
 def load_config(config_path: str = ".boatrace/config.json") -> dict:
@@ -153,7 +151,7 @@ def process_date(
     config: dict,
     rate_limiter: RateLimiter,
 ) -> bool:
-    """Process a single date.
+    """Process a single date by calling dedicated processing functions.
 
     Returns:
         True if any files were successfully processed, False otherwise
@@ -165,366 +163,77 @@ def process_date(
 
     session.dates_processed += 1
 
-    # Prepare date components for current date
-    date_parts = date_str.split("-")
-    year = date_parts[0]
-    month = date_parts[1]
-    day = date_parts[2]
-    year_short = year[2:]
-    file_date = f"{year_short}{month}{day}"
-    year_month = f"{year}{month}"
-
-    # Prepare next date for Programs download
-    next_date_obj = datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=1)
-    next_date_str = next_date_obj.strftime("%Y-%m-%d")
-    next_date_parts = next_date_str.split("-")
-    next_year = next_date_parts[0]
-    next_month = next_date_parts[1]
-    next_day = next_date_parts[2]
-    next_year_short = next_year[2:]
-    next_file_date = f"{next_year_short}{next_month}{next_day}"
-    next_year_month = f"{next_year}{next_month}"
-
-    # Download K-file (results) for current date
-    base_url = "https://www1.mbrace.or.jp/od2"
-    k_file_url = f"{base_url}/K/{year_month}/k{file_date}.lzh"
-    
-    logging_module.info(
-        "downloading_file",
-        file_type="K",
-        date=date_str,
-        url=k_file_url,
-    )
-    
-    k_content, k_status = download_file(
-        k_file_url,
-        max_retries=config.get("max_retries", 3),
-        rate_limiter=rate_limiter,
-    )
-
-    # Download B-file (programs) for next day
-    b_file_url = f"{base_url}/B/{next_year_month}/b{next_file_date}.lzh"
-    
-    logging_module.info(
-        "downloading_file",
-        file_type="B",
-        date=next_date_str,
-        url=b_file_url,
-    )
-    
-    b_content, b_status = download_file(
-        b_file_url,
-        max_retries=config.get("max_retries", 3),
-        rate_limiter=rate_limiter,
-    )
-
-    # Check if both files are missing (no races scheduled)
-    if k_status == 404 and b_status == 404:
-        logging_module.info(
-            "date_skipped",
-            date=date_str,
-            reason="no_races_scheduled",
-        )
-        return False
-
     files_processed = False
 
-    # Determine project root (parent of scripts directory)
-    project_root = Path(__file__).parent.parent
-
-    # Process K-file (results) - use current date
-    if k_content:
-        try:
-            session.files_downloaded += 1
-
-            # Extract
-            k_text = extract_k_file(k_content)
-            if k_text:
-                session.files_decompressed += 1
-
-                # Parse
-                races = parse_result_file(k_text, date=date_str)
-                if races:
-                    session.files_parsed += 1
-
-                    # Convert
-                    csv_content = races_to_csv(races)
-                    if csv_content:
-                        session.files_converted += 1
-
-                        # Write
-                        if not session.dry_run:
-                            csv_path = project_root / f"data/results/{year}/{month}/{day}.csv"
-                            if write_csv(str(csv_path), csv_content, session.force_overwrite):
-                                session.csv_files_created += 1
-                                files_processed = True
-                            else:
-                                session.csv_files_skipped += 1
-                        else:
-                            session.csv_files_created += 1
-                            files_processed = True
-
-        except Exception as e:
-            session.add_error(
-                date=date_str,
-                error_type="k_file_processing_error",
-                message=str(e),
-                file_type="K",
-            )
-            logging_module.error(
-                "k_file_processing_error",
-                date=date_str,
-                error=str(e),
-            )
-
-    # Process Preview data (HTML scraping) using current date programs
-    # First, extract actual races from current date programs (from next day's B-file)
-    actual_races = set()  # Set of (stadium_code, race_number) tuples
-    programs = None
-
-    if b_content:
-        try:
-            # Extract next day's B-file for preview scraping reference
-            b_text = extract_b_file(b_content)
-            if b_text:
-                programs = parse_program_file(b_text, date=next_date_str)
-        except Exception:
-            pass
-
-    if programs:
-        logging_module.info(
-            "preview_races_extraction_start",
-            date=date_str,
-            program_count=len(programs),
+    # Process results (K-file)
+    result_stats = process_result(
+        date_str,
+        config,
+        rate_limiter,
+        force_overwrite=session.force_overwrite,
+        dry_run=session.dry_run,
+    )
+    session.files_downloaded += result_stats["files_downloaded"]
+    session.files_decompressed += result_stats["files_decompressed"]
+    session.files_parsed += result_stats["files_parsed"]
+    session.files_converted += result_stats["files_converted"]
+    session.csv_files_created += result_stats["csv_files_created"]
+    session.csv_files_skipped += result_stats["csv_files_skipped"]
+    for error in result_stats["errors"]:
+        session.add_error(
+            date=error["date"],
+            error_type=error["error_type"],
+            message=error["message"],
+            file_type="K",
         )
+    if result_stats["csv_files_created"] > 0:
+        files_processed = True
 
-        # Import VENUE_CODES from converter for stadium name -> code mapping
-        from boatrace.converter import VENUE_CODES
-
-        for program in programs:
-            # Extract stadium_code from program.stadium using VENUE_CODES mapping
-            stadium_code = VENUE_CODES.get(program.stadium)
-            if not stadium_code:
-                logging_module.debug(
-                    "preview_stadium_not_found",
-                    date=date_str,
-                    stadium_name=program.stadium,
-                )
-                continue
-
-            # Extract race_number from program.race_round (e.g., "1R" -> 1, "01R" -> 1)
-            try:
-                if not program.race_round:
-                    continue
-
-                # Remove 'R' suffix and convert to int
-                race_round_num = program.race_round.rstrip('R')  # "01R" -> "01", "1R" -> "1"
-                race_number = int(race_round_num)  # "01" or "1" -> 1
-
-                # Validate race number is in valid range (1-12)
-                if race_number < 1 or race_number > 12:
-                    logging_module.debug(
-                        "preview_race_number_invalid",
-                        date=date_str,
-                        race_round=program.race_round,
-                        race_number=race_number,
-                        stadium=program.stadium,
-                    )
-                    continue
-
-                actual_races.add((int(stadium_code), race_number))
-            except (ValueError, IndexError, AttributeError):
-                logging_module.debug(
-                    "preview_race_number_parse_error",
-                    date=date_str,
-                    race_round=program.race_round,
-                    stadium=program.stadium,
-                )
-
-        logging_module.info(
-            "preview_races_extraction_complete",
-            date=date_str,
-            actual_race_count=len(actual_races),
+    # Process programs (B-file)
+    program_stats = process_program(
+        date_str,
+        config,
+        rate_limiter,
+        force_overwrite=session.force_overwrite,
+        dry_run=session.dry_run,
+    )
+    session.files_downloaded += program_stats["files_downloaded"]
+    session.files_decompressed += program_stats["files_decompressed"]
+    session.files_parsed += program_stats["files_parsed"]
+    session.files_converted += program_stats["files_converted"]
+    session.csv_files_created += program_stats["csv_files_created"]
+    session.csv_files_skipped += program_stats["csv_files_skipped"]
+    for error in program_stats["errors"]:
+        session.add_error(
+            date=error["date"],
+            error_type=error["error_type"],
+            message=error["message"],
+            file_type="B",
         )
+    if program_stats["csv_files_created"] > 0:
+        files_processed = True
 
-    # Only scrape if we have actual races from programs
-    if config.get("enable_preview_scraping", True) and actual_races:
-        try:
-            previews = []
-            preview_scraper = PreviewScraper(
-                timeout_seconds=config.get("preview_scraper_timeout", 30),
-                rate_limiter=rate_limiter,
-            )
-
-            logging_module.info(
-                "preview_scraping_start",
-                date=date_str,
-                total_expected=len(actual_races),
-            )
-
-            # Group races by stadium for better logging
-            races_by_stadium = {}
-            for stadium_code, race_number in actual_races:
-                if stadium_code not in races_by_stadium:
-                    races_by_stadium[stadium_code] = []
-                races_by_stadium[stadium_code].append(race_number)
-
-            # Scrape only actual races from stadiums with programs
-            for stadium_code in sorted(races_by_stadium.keys()):
-                race_numbers = sorted(races_by_stadium[stadium_code])
-
-                logging_module.info(
-                    "preview_stadium_start",
-                    date=date_str,
-                    stadium=stadium_code,
-                    races=race_numbers,
-                    race_count=len(race_numbers),
-                )
-
-                for race_number in race_numbers:
-                    try:
-                        preview = preview_scraper.scrape_race_preview(
-                            date_str, stadium_code, race_number
-                        )
-                        if preview:
-                            previews.append(preview)
-                            session.previews_scraped += 1
-                    except Exception as e:
-                        session.previews_failed += 1
-                        session.add_error(
-                            date=date_str,
-                            error_type="preview_scrape_error",
-                            message=str(e),
-                            file_type="Preview",
-                        )
-                        logging_module.debug(
-                            "preview_scrape_failed",
-                            date=date_str,
-                            stadium=stadium_code,
-                            race=race_number,
-                            error=str(e),
-                        )
-
-                logging_module.info(
-                    "preview_stadium_complete",
-                    date=date_str,
-                    stadium=stadium_code,
-                    scraped_count=sum(1 for p in previews if p.stadium_number == stadium_code),
-                )
-
-            # Convert and save previews if any were scraped
-            logging_module.info(
-                "preview_scraping_complete",
-                date=date_str,
-                total_scraped=len(previews),
-            )
-
-            if previews:
-                logging_module.info(
-                    "preview_csv_conversion_start",
-                    date=date_str,
-                    preview_count=len(previews),
-                )
-
-                csv_content = previews_to_csv(previews)
-
-                logging_module.info(
-                    "preview_csv_conversion_complete",
-                    date=date_str,
-                    csv_size_bytes=len(csv_content.encode("utf-8")),
-                )
-
-                if csv_content:
-                    # Write
-                    if not session.dry_run:
-                        csv_path = project_root / f"data/previews/{year}/{month}/{day}.csv"
-                        logging_module.info(
-                            "preview_csv_write_start",
-                            date=date_str,
-                            path=str(csv_path),
-                        )
-
-                        if write_csv(str(csv_path), csv_content, session.force_overwrite):
-                            session.csv_files_created += 1
-                            files_processed = True
-                            logging_module.info(
-                                "preview_csv_write_success",
-                                date=date_str,
-                                path=str(csv_path),
-                            )
-                        else:
-                            session.csv_files_skipped += 1
-                            logging_module.warning(
-                                "preview_csv_write_skipped",
-                                date=date_str,
-                                path=str(csv_path),
-                            )
-                    else:
-                        session.csv_files_created += 1
-                        files_processed = True
-                        logging_module.info(
-                            "preview_csv_write_dry_run",
-                            date=date_str,
-                            preview_count=len(previews),
-                        )
-
-        except Exception as e:
-            session.add_error(
-                date=date_str,
-                error_type="preview_processing_error",
-                message=str(e),
-                file_type="Preview",
-            )
-            logging_module.error(
-                "preview_processing_error",
-                date=date_str,
-                error=str(e),
-            )
-
-    # Process B-file (programs) for next day
-    if b_content:
-        try:
-            session.files_downloaded += 1
-
-            # Extract
-            b_text = extract_b_file(b_content)
-            if b_text:
-                session.files_decompressed += 1
-
-                # Parse
-                programs_tomorrow = parse_program_file(b_text, date=next_date_str)
-                if programs_tomorrow:
-                    session.files_parsed += 1
-
-                    # Convert
-                    csv_content = programs_to_csv(programs_tomorrow)
-                    if csv_content:
-                        session.files_converted += 1
-
-                        # Write to NEXT DAY directory
-                        if not session.dry_run:
-                            csv_path = project_root / f"data/programs/{next_year}/{next_month}/{next_day}.csv"
-                            if write_csv(str(csv_path), csv_content, session.force_overwrite):
-                                session.csv_files_created += 1
-                                files_processed = True
-                            else:
-                                session.csv_files_skipped += 1
-                        else:
-                            session.csv_files_created += 1
-                            files_processed = True
-
-        except Exception as e:
-            session.add_error(
-                date=next_date_str,
-                error_type="b_file_processing_error",
-                message=str(e),
-                file_type="B",
-            )
-            logging_module.error(
-                "b_file_processing_error",
-                date=next_date_str,
-                error=str(e),
-            )
+    # Process previews
+    preview_stats = process_preview(
+        date_str,
+        config,
+        rate_limiter,
+        force_overwrite=session.force_overwrite,
+        dry_run=session.dry_run,
+    )
+    session.previews_scraped += preview_stats["previews_scraped"]
+    session.previews_failed += preview_stats["previews_failed"]
+    session.csv_files_created += preview_stats["csv_files_created"]
+    session.csv_files_skipped += preview_stats["csv_files_skipped"]
+    for error in preview_stats["errors"]:
+        session.add_error(
+            date=error["date"],
+            error_type=error["error_type"],
+            message=error["message"],
+            file_type="Preview",
+        )
+    if preview_stats["csv_files_created"] > 0:
+        files_processed = True
 
     return files_processed
 
