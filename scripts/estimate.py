@@ -2,21 +2,21 @@
 """
 Boat race result estimation script.
 
-This script loads training data from multiple dates and makes predictions
-for a specified date using a Random Forest model based on the PCA notebook.
+This script uses pre-trained stadium-specific models to make predictions
+for a specified date. Models are trained from stadium.ipynb and saved to
+models/stadium_models.pkl.
 
 Usage:
     python estimate.py --date 2022-12-23
 """
 
 import argparse
+import pickle
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
 # Add boatrace package to path
@@ -161,107 +161,51 @@ def merge_data(programs_long, previews_long, results_long=None):
     return merged
 
 
-def get_available_features(final_data):
-    """Get available features for model training."""
-    program_features = [
-        '全国勝率', '全国2連対率', '当地勝率', '当地2連対率',
-        'モーター2連対率', 'ボート2連対率'
-    ]
-    preview_features = [
-        '6日間勝率', '6日間2連対率', '当地勝率', '当地2連対率',
-        'モーター2連対率', 'ボート2連対率', '伸び率', '足踏み率',
-        'スタート率'
-    ]
+def load_models(repo_root):
+    """Load pre-trained stadium models from pickle file."""
+    model_path = repo_root / 'models' / 'stadium_models.pkl'
 
-    available_features = []
-    for feat in program_features + preview_features:
-        if feat in final_data.columns:
-            available_features.append(feat)
+    if not model_path.exists():
+        print(f"Model file not found: {model_path}", file=sys.stderr)
+        return None
 
-    return available_features
+    try:
+        with open(model_path, 'rb') as f:
+            models_dict = pickle.load(f)
+        print(f"Loaded {len(models_dict)} stadium models")
+        return models_dict
+    except Exception as e:
+        print(f"Error loading models: {e}", file=sys.stderr)
+        return None
 
 
-def prepare_features(data, available_features):
+def prepare_features(data, feature_cols):
     """Prepare feature matrix from data."""
-    X = data[available_features].copy()
-    X_numeric = X.apply(pd.to_numeric, errors='coerce')
-    return X_numeric
+    X = pd.DataFrame(index=data.index)
+
+    # 利用可能な特徴量のみを抽出
+    for col in feature_cols:
+        if col in data.columns:
+            X[col] = pd.to_numeric(data[col], errors='coerce')
+        else:
+            # 特徴量が存在しない場合は0で埋める
+            X[col] = 0.0
+
+    # Fill NaN with median or 0 if all values are NaN
+    for col in X.columns:
+        # 非NaNの値が存在するかチェック
+        if X[col].notna().any():
+            median_val = X[col].median()
+            X[col] = X[col].fillna(median_val)
+        else:
+            # すべてNaNの場合は0で埋める
+            X[col] = X[col].fillna(0)
+
+    return X
 
 
-def get_training_dates(predict_date, num_days=30):
-    """Get list of training dates (previous days)."""
-    training_dates = []
-    current_date = predict_date - timedelta(days=1)
-
-    while len(training_dates) < num_days and current_date.year >= 2020:
-        year = current_date.strftime('%Y')
-        month = current_date.strftime('%m')
-        day = current_date.strftime('%d')
-        training_dates.append((year, month, day, current_date))
-        current_date -= timedelta(days=1)
-
-    return training_dates
-
-
-def train_model(training_dates, repo_root):
-    """Train the Random Forest model using training data from multiple dates."""
-    all_data = []
-
-    for year, month, day, _ in training_dates:
-        programs, previews, results = load_data(year, month, day, repo_root)
-
-        if programs is not None and previews is not None and results is not None:
-            programs_long = reshape_programs(programs)
-            previews_long = reshape_previews(previews)
-            results_long = reshape_results(results)
-
-            merged = merge_data(programs_long, previews_long, results_long)
-            if not merged.empty:
-                all_data.append(merged)
-
-    if not all_data:
-        print("No training data found", file=sys.stderr)
-        return None, None, None
-
-    # Combine all training data
-    combined_data = pd.concat(all_data, ignore_index=True)
-
-    # Get available features
-    available_features = get_available_features(combined_data)
-
-    if not available_features:
-        print("No available features in training data", file=sys.stderr)
-        return None, None, None
-
-    # Prepare features and target
-    X_all = prepare_features(combined_data, available_features)
-    y_all = combined_data['着順'].copy()
-
-    # Filter valid rows
-    valid_idx = X_all.notna().all(axis=1) & y_all.notna()
-    X_train = X_all[valid_idx].copy()
-    y_train = y_all[valid_idx].copy()
-
-    if len(X_train) == 0:
-        print("No valid training samples", file=sys.stderr)
-        return None, None, None
-
-    # Train model
-    model = RandomForestRegressor(
-        n_estimators=100,
-        max_depth=15,
-        min_samples_split=5,
-        min_samples_leaf=2,
-        random_state=42,
-        n_jobs=-1
-    )
-    model.fit(X_train, y_train)
-
-    return model, available_features, X_train.columns.tolist()
-
-
-def make_predictions(model, available_features, predict_date, repo_root):
-    """Make predictions for a specific date."""
+def make_predictions(models_dict, predict_date, repo_root):
+    """Make predictions for a specific date using stadium-specific models."""
     year = predict_date.strftime('%Y')
     month = predict_date.strftime('%m')
     day = predict_date.strftime('%d')
@@ -283,17 +227,49 @@ def make_predictions(model, available_features, predict_date, repo_root):
         print(f"No merged data for {year}-{month}-{day}", file=sys.stderr)
         return None
 
-    # Prepare features
-    X_test = prepare_features(merged, available_features)
+    # Make predictions for each boat
+    predictions = []
+    merged_reset = merged.reset_index(drop=True)
 
-    # Make predictions
-    predictions = model.predict(X_test)
+    for idx, row in merged_reset.iterrows():
+        stadium = row['レース場']
+
+        # Skip if no model for this stadium
+        if stadium not in models_dict:
+            predictions.append(None)
+            continue
+
+        model_info = models_dict[stadium]
+        model = model_info['model']
+        scaler = model_info['scaler']
+        feature_cols = model_info['features']
+
+        # Prepare features
+        X_row = prepare_features(merged_reset.iloc[idx:idx+1], feature_cols)
+
+        try:
+            # Get predicted probabilities
+            X_scaled = scaler.transform(X_row)
+            proba = model.predict_proba(X_scaled)[0]
+            classes = model.classes_
+
+            # Get top 3 predictions (finish positions)
+            prob_dict = {cls: prob for cls, prob in zip(classes, proba)}
+            sorted_probs = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
+            top_3 = sorted_probs[:3]
+
+            # Return tuple of top 3 predicted positions
+            predictions.append(tuple(int(pos) for pos, _ in top_3))
+        except Exception as e:
+            print(f"Error predicting for row {idx}: {e}", file=sys.stderr)
+            predictions.append(None)
 
     # Create results dataframe
     results_df = pd.DataFrame({
         'レースコード': merged['レースコード'].values,
         '艇番': merged['艇番'].values,
-        '予想着順': predictions
+        'レース場': merged['レース場'].values,
+        '予想三連単': predictions
     })
 
     return results_df
@@ -306,20 +282,18 @@ def create_ranking_output(predictions_df):
     for race_id in predictions_df['レースコード'].unique():
         race_data = predictions_df[
             predictions_df['レースコード'] == race_id
-        ].copy()
+        ]
 
-        # Sort by predicted position
-        race_data = race_data.sort_values('予想着順')
-
-        # Get predicted 1st, 2nd, 3rd place boats
-        predicted_boats = race_data['艇番'].head(3).values
-
-        ranking_results.append({
-            'レースコード': race_id,
-            '予想1着': predicted_boats[0] if len(predicted_boats) > 0 else None,
-            '予想2着': predicted_boats[1] if len(predicted_boats) > 1 else None,
-            '予想3着': predicted_boats[2] if len(predicted_boats) > 2 else None,
-        })
+        # Get the prediction (should be the same for all boats in the race)
+        if race_data['予想三連単'].notna().any():
+            prediction = race_data['予想三連単'].iloc[0]
+            if prediction is not None and len(prediction) >= 3:
+                ranking_results.append({
+                    'レースコード': race_id,
+                    '予想1着': prediction[0],
+                    '予想2着': prediction[1],
+                    '予想3着': prediction[2],
+                })
 
     return pd.DataFrame(ranking_results)
 
@@ -356,12 +330,6 @@ def main():
         default=None,
         help='Prediction date in YYYY-MM-DD format (default: yesterday)'
     )
-    parser.add_argument(
-        '--training-days',
-        type=int,
-        default=30,
-        help='Number of previous days to use for training (default: 30)'
-    )
 
     args = parser.parse_args()
 
@@ -378,26 +346,19 @@ def main():
     repo_root = get_repo_root()
 
     print(f"Prediction date: {predict_date.strftime('%Y-%m-%d')}")
-    print(f"Training days: {args.training_days}")
     print("-" * 70)
 
-    # Get training dates
-    training_dates = get_training_dates(predict_date, args.training_days)
-    print(f"Using {len(training_dates)} training dates")
+    # Load pre-trained models
+    print("Loading pre-trained models...")
+    models_dict = load_models(repo_root)
 
-    # Train model
-    print("Training model...")
-    model, available_features, feature_cols = train_model(training_dates, repo_root)
-
-    if model is None:
-        print("Failed to train model", file=sys.stderr)
+    if models_dict is None:
+        print("Failed to load models", file=sys.stderr)
         sys.exit(1)
-
-    print(f"Model trained with {len(available_features)} features")
 
     # Make predictions
     print("Making predictions...")
-    predictions_df = make_predictions(model, available_features, predict_date, repo_root)
+    predictions_df = make_predictions(models_dict, predict_date, repo_root)
 
     if predictions_df is None:
         print("Failed to make predictions", file=sys.stderr)
