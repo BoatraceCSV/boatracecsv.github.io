@@ -11,7 +11,7 @@ Usage:
 
 import argparse
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -185,27 +185,28 @@ def print_statistics(stats, date):
 
 
 def main():
+    # Get yesterday's date in JST (UTC+9)
+    jst = timezone(timedelta(hours=9))
+    yesterday_jst = (datetime.now(jst) - timedelta(days=1)).strftime('%Y-%m-%d')
+    
     parser = argparse.ArgumentParser(
         description='Confirm boat race prediction results.'
     )
     parser.add_argument(
         '--date',
         type=str,
-        default=None,
-        help='Confirmation date in YYYY-MM-DD format (default: yesterday)'
+        default=yesterday_jst,
+        help='Confirmation date in YYYY-MM-DD format (default: yesterday JST)'
     )
 
     args = parser.parse_args()
 
     # Parse confirmation date
-    if args.date:
-        try:
-            confirm_date = datetime.strptime(args.date, '%Y-%m-%d')
-        except ValueError:
-            print("Invalid date format. Use YYYY-MM-DD", file=sys.stderr)
-            sys.exit(1)
-    else:
-        confirm_date = datetime.now() - timedelta(days=1)
+    try:
+        confirm_date = datetime.strptime(args.date, '%Y-%m-%d')
+    except ValueError:
+        print("Invalid date format. Use YYYY-MM-DD", file=sys.stderr)
+        sys.exit(1)
 
     repo_root = get_repo_root()
 

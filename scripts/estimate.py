@@ -13,7 +13,7 @@ Usage:
 import argparse
 import pickle
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -323,25 +323,26 @@ def save_results(ranking_df, predict_date, repo_root):
 
 
 def main():
+    # Get today's date in JST (UTC+9)
+    jst = timezone(timedelta(hours=9))
+    today_jst = datetime.now(jst).strftime('%Y-%m-%d')
+    
     parser = argparse.ArgumentParser(description='Estimate boat race results.')
     parser.add_argument(
         '--date',
         type=str,
-        default=None,
-        help='Prediction date in YYYY-MM-DD format (default: yesterday)'
+        default=today_jst,
+        help='Prediction date in YYYY-MM-DD format (default: today JST)'
     )
 
     args = parser.parse_args()
 
     # Parse prediction date
-    if args.date:
-        try:
-            predict_date = datetime.strptime(args.date, '%Y-%m-%d')
-        except ValueError:
-            print("Invalid date format. Use YYYY-MM-DD", file=sys.stderr)
-            sys.exit(1)
-    else:
-        predict_date = datetime.now() - timedelta(days=1)
+    try:
+        predict_date = datetime.strptime(args.date, '%Y-%m-%d')
+    except ValueError:
+        print("Invalid date format. Use YYYY-MM-DD", file=sys.stderr)
+        sys.exit(1)
 
     repo_root = get_repo_root()
 
