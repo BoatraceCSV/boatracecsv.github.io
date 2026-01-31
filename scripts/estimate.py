@@ -3,11 +3,13 @@
 Boat race result estimation script.
 
 This script uses pre-trained stadium-specific models to make predictions
-for a specified date. Models are trained from stadium.ipynb and saved to
-models/stadium_models.pkl.
+for a specified date. Models are trained from program.ipynb and saved to
+models/program_models.pkl.
+
+The models use programs data only (without previews/weather data).
 
 Usage:
-    python estimate.py --date 2022-12-23
+    python estimate.py --date 2026-01-30
 """
 
 import argparse
@@ -31,27 +33,23 @@ def get_repo_root():
 
 
 def load_data(year, month, day, repo_root):
-    """Load Programs, Previews, and Results data for a specific date."""
+    """Load Programs and Results data for a specific date."""
     programs_path = repo_root / 'data' / 'programs' / year / month / f'{day}.csv'
-    previews_path = repo_root / 'data' / 'previews' / year / month / f'{day}.csv'
     results_path = repo_root / 'data' / 'results' / year / month / f'{day}.csv'
 
     programs = None
-    previews = None
     results = None
 
     try:
         if programs_path.exists():
             programs = pd.read_csv(programs_path)
-        if previews_path.exists():
-            previews = pd.read_csv(previews_path)
         if results_path.exists():
             results = pd.read_csv(results_path)
     except Exception as e:
         print(f"Error loading data for {year}-{month}-{day}: {e}", file=sys.stderr)
-        return None, None, None
+        return None, None
 
-    return programs, previews, results
+    return programs, results
 
 
 def reshape_programs(programs):
@@ -78,77 +76,42 @@ def reshape_programs(programs):
     return pd.DataFrame()
 
 
-def reshape_previews(previews):
-    """Reshape Previews data from wide format (艇1～艇6) to long format."""
-    if previews is None or previews.empty:
+def reshape_results(df):
+    """Reshape Results data from wide format (1着～6着) to long format (boat-based)."""
+    if df is None or df.empty:
         return pd.DataFrame()
 
-    race_id_cols = ['レースコード', 'レース日', 'レース場', 'レース回']
-    preview_frames = []
+    result_list = []
 
-    for boat_num in range(1, 7):
-        boat_prefix = f'艇{boat_num}_'
-        boat_cols = [col for col in previews.columns if col.startswith(boat_prefix)]
+    for _, row in df.iterrows():
+        race_code = row['レースコード']
 
-        if boat_cols:
-            tmp = previews[race_id_cols + boat_cols].copy()
-            rename_map = {col: col[len(boat_prefix):] for col in boat_cols}
-            tmp = tmp.rename(columns=rename_map)
-            tmp['艇番'] = boat_num
-            preview_frames.append(tmp)
+        # Extract finish positions from result columns
+        for place in range(1, 7):
+            boat_col = f'{place}着_艇番'
 
-    if preview_frames:
-        return pd.concat(preview_frames, ignore_index=True)
-    return pd.DataFrame()
+            if boat_col in df.columns and pd.notna(row[boat_col]):
+                try:
+                    boat_num = int(row[boat_col])
+                    if 1 <= boat_num <= 6:
+                        result_list.append({
+                            'レースコード': race_code,
+                            '艇番': boat_num,
+                            '着順': place
+                        })
+                except (ValueError, TypeError):
+                    continue
+
+    return pd.DataFrame(result_list) if result_list else pd.DataFrame()
 
 
-def reshape_results(results):
-    """Reshape Results data from wide format (1着～6着) to long format."""
-    if results is None or results.empty:
+def merge_data(programs_long, results_long=None):
+    """Merge Programs with Results data."""
+    if programs_long.empty:
         return pd.DataFrame()
 
-    result_frames = []
-
-    for place in range(1, 7):
-        place_prefix = f'{place}着_'
-        place_cols = [col for col in results.columns if col.startswith(place_prefix)]
-
-        if place_cols:
-            tmp = results[['レースコード'] + place_cols].copy()
-            rename_map = {col: col[len(place_prefix):] for col in place_cols}
-            tmp = tmp.rename(columns=rename_map)
-            tmp['着順'] = place
-            result_frames.append(tmp)
-
-    if result_frames:
-        return pd.concat(result_frames, ignore_index=True)
-    return pd.DataFrame()
-
-
-def merge_data(programs_long, previews_long, results_long=None):
-    """Merge Programs, Previews, and optionally Results data."""
-    if programs_long.empty or previews_long.empty:
-        return pd.DataFrame()
-
-    # Merge programs and previews
-    programs_merge = programs_long.drop(
-        columns=['レース日', 'レース場', 'レース回'],
-        errors='ignore'
-    )
-    programs_merge = programs_merge.rename(columns={'艇番': '艇番_prog'}) \
-        if '艇番' in programs_merge.columns else programs_merge
-
-    merged = previews_long.merge(
-        programs_merge,
-        on='レースコード',
-        how='left',
-        suffixes=('_preview', '_program')
-    )
-
-    # Filter by matching boat numbers
-    if '艇番' in merged.columns and '艇番_prog' in merged.columns:
-        merged = merged[merged['艇番'] == merged['艇番_prog']].copy()
-        merged = merged.drop(columns=['艇番_prog'], errors='ignore')
+    # Use programs as base
+    merged = programs_long.copy()
 
     # Merge with results if available
     if results_long is not None and not results_long.empty:
@@ -162,8 +125,8 @@ def merge_data(programs_long, previews_long, results_long=None):
 
 
 def load_models(repo_root):
-    """Load pre-trained stadium models from pickle file."""
-    model_path = repo_root / 'models' / 'stadium_models.pkl'
+    """Load pre-trained program-based stadium models from pickle file."""
+    model_path = repo_root / 'models' / 'program_models.pkl'
 
     if not model_path.exists():
         print(f"Model file not found: {model_path}", file=sys.stderr)
@@ -172,7 +135,7 @@ def load_models(repo_root):
     try:
         with open(model_path, 'rb') as f:
             models_dict = pickle.load(f)
-        print(f"Loaded {len(models_dict)} stadium models")
+        print(f"Loaded {len(models_dict)} stadium models from {model_path}")
         return models_dict
     except Exception as e:
         print(f"Error loading models: {e}", file=sys.stderr)
@@ -210,18 +173,18 @@ def make_predictions(models_dict, predict_date, repo_root):
     month = predict_date.strftime('%m')
     day = predict_date.strftime('%d')
 
-    programs, previews, _ = load_data(year, month, day, repo_root)
+    programs, results = load_data(year, month, day, repo_root)
 
-    if programs is None or previews is None:
-        print(f"Missing data for {year}-{month}-{day}", file=sys.stderr)
+    if programs is None:
+        print(f"Missing programs data for {year}-{month}-{day}", file=sys.stderr)
         return None
 
     # Reshape data
     programs_long = reshape_programs(programs)
-    previews_long = reshape_previews(previews)
+    results_long = reshape_results(results) if results is not None else None
 
     # Merge data
-    merged = merge_data(programs_long, previews_long)
+    merged = merge_data(programs_long, results_long)
 
     if merged.empty:
         print(f"No merged data for {year}-{month}-{day}", file=sys.stderr)
@@ -258,8 +221,8 @@ def make_predictions(models_dict, predict_date, repo_root):
             sorted_probs = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
             top_3 = sorted_probs[:3]
 
-            # Return tuple of top 3 predicted positions
-            predictions.append(tuple(int(pos) for pos, _ in top_3))
+            # Return tuple of top 3 predicted boat numbers
+            predictions.append(tuple(int(boat) for boat, _ in top_3))
         except Exception as e:
             print(f"Error predicting for row {idx}: {e}", file=sys.stderr)
             predictions.append(None)
