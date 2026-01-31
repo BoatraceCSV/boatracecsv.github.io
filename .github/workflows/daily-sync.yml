@@ -68,6 +68,12 @@ jobs:
           python scripts/preview.py --force
         if: always()
 
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+        if: always()
+
       - name: Estimate Races
         run: |
           python scripts/estimate.py
