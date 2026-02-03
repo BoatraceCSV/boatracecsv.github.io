@@ -26,6 +26,36 @@ sys.path.insert(0, str(Path(__file__).parent))
 from boatrace import git_operations
 
 
+# Stadium name to code mapping (standard boatrace stadium codes 1-24)
+STADIUM_NAME_TO_CODE = {
+    'ボートレース桐生': 1,
+    'ボートレース戸田': 2,
+    'ボートレース江戸川': 3,
+    'ボートレース平和島': 4,
+    'ボートレース多摩川': 5,
+    'ボートレース浜名湖': 6,
+    'ボートレース蒲郡': 7,
+    'ボートレース常滑': 8,
+    'ボートレース津': 9,
+    'ボートレース三国': 10,
+    'ボートレースびわこ': 11,
+    'ボートレース琵琶湖': 11,  # Alternative name for びわこ
+    'ボートレース住之江': 12,
+    'ボートレース尼崎': 13,
+    'ボートレース鳴門': 14,
+    'ボートレース丸亀': 15,
+    'ボートレース児島': 16,
+    'ボートレース宮島': 17,
+    'ボートレース徳山': 18,
+    'ボートレース下関': 19,
+    'ボートレース若松': 20,
+    'ボートレース芦屋': 21,
+    'ボートレース福岡': 22,
+    'ボートレース唐津': 23,
+    'ボートレース大村': 24,
+}
+
+
 def get_repo_root():
     """Get the repository root directory."""
     cwd = Path.cwd()
@@ -195,14 +225,21 @@ def make_predictions(models_dict, predict_date, repo_root):
     merged_reset = merged.reset_index(drop=True)
 
     for idx, row in merged_reset.iterrows():
-        stadium = row['レース場']
+        stadium_name = row['レース場']
 
-        # Skip if no model for this stadium
-        if stadium not in models_dict:
+        # Convert stadium name to stadium code
+        stadium_code = STADIUM_NAME_TO_CODE.get(stadium_name)
+        if stadium_code is None:
+            print(f"Unknown stadium name: {stadium_name}", file=sys.stderr)
             predictions.append(None)
             continue
 
-        model_info = models_dict[stadium]
+        # Skip if no model for this stadium
+        if stadium_code not in models_dict:
+            predictions.append(None)
+            continue
+
+        model_info = models_dict[stadium_code]
         model = model_info['model']
         scaler = model_info['scaler']
         feature_cols = model_info['features']
