@@ -19,7 +19,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 
 # Add boatrace package to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -213,7 +212,7 @@ def load_models(repo_root):
         return None
 
 
-def prepare_features(data, feature_cols, include_interaction=False):
+def prepare_features(data, feature_cols):
     """Prepare feature matrix from data."""
     X = pd.DataFrame(index=data.index)
 
@@ -294,12 +293,8 @@ def make_predictions(models_dict, predict_date, repo_root):
         scaler = model_info['scaler']
         feature_cols = model_info['features']
 
-        # Prepare features with interaction flag
-        X_row = prepare_features(
-            merged_reset.iloc[idx:idx+1],
-            feature_cols,
-            include_interaction=has_previews
-        )
+        # Prepare features
+        X_row = prepare_features(merged_reset.iloc[idx:idx+1], feature_cols)
 
         try:
             # Get predicted probabilities
