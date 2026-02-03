@@ -35,6 +35,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          lfs: true
+
+      - name: Pull LFS Files
+        run: |
+          git lfs pull
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -67,6 +72,12 @@ jobs:
         run: |
           python scripts/preview.py --force
         if: always()
+
+      - name: Generate Preview Predictions
+        run: |
+          python scripts/prediction-preview.py --date $(TZ=Asia/Tokyo date +%Y-%m-%d)
+        if: always()
+        continue-on-error: true
 
       - name: Checkout Code
         uses: actions/checkout@v4
