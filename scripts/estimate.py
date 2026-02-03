@@ -63,23 +63,27 @@ def get_repo_root():
 
 
 def load_data(year, month, day, repo_root):
-    """Load Programs and Results data for a specific date."""
+    """Load Programs, Previews, and Results data for a specific date."""
     programs_path = repo_root / 'data' / 'programs' / year / month / f'{day}.csv'
+    previews_path = repo_root / 'data' / 'prediction-preview' / year / month / f'{day}.csv'
     results_path = repo_root / 'data' / 'results' / year / month / f'{day}.csv'
 
     programs = None
+    previews = None
     results = None
 
     try:
         if programs_path.exists():
             programs = pd.read_csv(programs_path)
+        if previews_path.exists():
+            previews = pd.read_csv(previews_path)
         if results_path.exists():
             results = pd.read_csv(results_path)
     except Exception as e:
         print(f"Error loading data for {year}-{month}-{day}: {e}", file=sys.stderr)
-        return None, None
+        return None, None, None
 
-    return programs, results
+    return programs, previews, results
 
 
 def reshape_programs(programs):
@@ -103,6 +107,30 @@ def reshape_programs(programs):
 
     if program_frames:
         return pd.concat(program_frames, ignore_index=True)
+    return pd.DataFrame()
+
+
+def reshape_previews(previews):
+    """Reshape Previews data from wide format (艇1～艇6) to long format."""
+    if previews is None or previews.empty:
+        return pd.DataFrame()
+
+    race_id_cols = ['レースコード', 'レース日', 'レース場', 'レース回']
+    preview_frames = []
+
+    for boat_num in range(1, 7):
+        boat_prefix = f'艇{boat_num}_'
+        boat_cols = [col for col in previews.columns if col.startswith(boat_prefix)]
+
+        if boat_cols:
+            tmp = previews[race_id_cols + boat_cols].copy()
+            rename_map = {col: col[len(boat_prefix):] for col in boat_cols}
+            tmp = tmp.rename(columns=rename_map)
+            tmp['艇番'] = boat_num
+            preview_frames.append(tmp)
+
+    if preview_frames:
+        return pd.concat(preview_frames, ignore_index=True)
     return pd.DataFrame()
 
 
@@ -135,13 +163,26 @@ def reshape_results(df):
     return pd.DataFrame(result_list) if result_list else pd.DataFrame()
 
 
-def merge_data(programs_long, results_long=None):
-    """Merge Programs with Results data."""
+def merge_data(programs_long, previews_long=None, results_long=None):
+    """Merge Programs with Previews and Results data."""
     if programs_long.empty:
         return pd.DataFrame()
 
     # Use programs as base
     merged = programs_long.copy()
+
+    # Merge with previews if available
+    if previews_long is not None and not previews_long.empty:
+        preview_cols = ['レースコード', '艇番', 'コース', 'スタート展示', 'チルト調整', '展示タイム']
+        # Filter to only columns that exist in previews_long
+        existing_cols = [c for c in preview_cols if c in previews_long.columns]
+        if len(existing_cols) > 2:  # At least レースコード and 艇番
+            merged = merged.merge(
+                previews_long[existing_cols],
+                on=['レースコード', '艇番'],
+                how='left',
+                suffixes=('', '_preview')
+            )
 
     # Merge with results if available
     if results_long is not None and not results_long.empty:
@@ -172,7 +213,7 @@ def load_models(repo_root):
         return None
 
 
-def prepare_features(data, feature_cols):
+def prepare_features(data, feature_cols, include_interaction=False):
     """Prepare feature matrix from data."""
     X = pd.DataFrame(index=data.index)
 
@@ -203,7 +244,7 @@ def make_predictions(models_dict, predict_date, repo_root):
     month = predict_date.strftime('%m')
     day = predict_date.strftime('%d')
 
-    programs, results = load_data(year, month, day, repo_root)
+    programs, previews, results = load_data(year, month, day, repo_root)
 
     if programs is None:
         print(f"Missing programs data for {year}-{month}-{day}", file=sys.stderr)
@@ -211,14 +252,23 @@ def make_predictions(models_dict, predict_date, repo_root):
 
     # Reshape data
     programs_long = reshape_programs(programs)
+    previews_long = reshape_previews(previews) if previews is not None else None
     results_long = reshape_results(results) if results is not None else None
 
     # Merge data
-    merged = merge_data(programs_long, results_long)
+    merged = merge_data(programs_long, previews_long, results_long)
 
     if merged.empty:
         print(f"No merged data for {year}-{month}-{day}", file=sys.stderr)
         return None
+
+    # Determine if interaction features are available
+    has_previews = previews_long is not None and not previews_long.empty
+
+    if has_previews:
+        print("Previews data available, using interaction features")
+    else:
+        print("Warning: Previews data not found, using programs-only prediction")
 
     # Make predictions for each boat
     predictions = []
@@ -244,8 +294,12 @@ def make_predictions(models_dict, predict_date, repo_root):
         scaler = model_info['scaler']
         feature_cols = model_info['features']
 
-        # Prepare features
-        X_row = prepare_features(merged_reset.iloc[idx:idx+1], feature_cols)
+        # Prepare features with interaction flag
+        X_row = prepare_features(
+            merged_reset.iloc[idx:idx+1],
+            feature_cols,
+            include_interaction=has_previews
+        )
 
         try:
             # Get predicted probabilities
