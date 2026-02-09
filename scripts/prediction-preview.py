@@ -7,11 +7,15 @@ for boat race previews (exhibition times, course entries, start timings, tilt ad
 for a specified date. Models are trained from previews.ipynb and saved to
 models/preview_models.pkl.
 
+Output format matches data/previews/ CSV format (53 columns) so that
+the estimate pipeline can consume prediction-preview data directly.
+
 Usage:
     python prediction-preview.py --date 2026-01-30
 """
 
 import argparse
+import json
 import pickle
 import sys
 from datetime import datetime, timedelta, timezone
@@ -61,15 +65,49 @@ def get_repo_root():
     return cwd if (cwd / 'data').exists() else cwd.parent
 
 
+def load_weather_stats(repo_root):
+    """Load pre-computed weather statistics (stadium × month)."""
+    stats_path = repo_root / 'models' / 'weather_stats.json'
+    if not stats_path.exists():
+        print(f"Weather stats not found: {stats_path}", file=sys.stderr)
+        print("Run build_weather_stats.py first.", file=sys.stderr)
+        return {}
+
+    with open(stats_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def get_weather_for_race(weather_stats, stadium_code, month):
+    """Get weather statistics for a stadium and month."""
+    key = f"{stadium_code}_{month}"
+    if key in weather_stats:
+        entry = weather_stats[key]
+        return {
+            '風速(m)': entry.get('風速(m)', 0.0),
+            '風向': entry.get('風向', 1),
+            '波の高さ(cm)': entry.get('波の高さ(cm)', 0.0),
+            '天候': entry.get('天候', 1),
+            '気温(℃)': entry.get('気温(℃)', 20.0),
+            '水温(℃)': entry.get('水温(℃)', 20.0),
+        }
+    # Fallback defaults
+    return {
+        '風速(m)': 3.0,
+        '風向': 1,
+        '波の高さ(cm)': 3.0,
+        '天候': 1,
+        '気温(℃)': 20.0,
+        '水温(℃)': 20.0,
+    }
+
+
 def load_data(year, month, day, repo_root):
     """Load Programs data for a specific date."""
     programs_path = repo_root / 'data' / 'programs' / year / month / f'{day}.csv'
 
-    programs = None
-
     try:
         if programs_path.exists():
-            programs = pd.read_csv(programs_path)
+            return pd.read_csv(programs_path)
         else:
             print(f"Programs file not found: {programs_path}", file=sys.stderr)
             return None
@@ -77,15 +115,15 @@ def load_data(year, month, day, repo_root):
         print(f"Error loading programs data for {year}-{month}-{day}: {e}", file=sys.stderr)
         return None
 
-    return programs
-
 
 def reshape_programs(programs):
     """Reshape Programs data from wide format (1枠～6枠) to long format."""
     if programs is None or programs.empty:
         return pd.DataFrame()
 
-    race_id_cols = ['レースコード', 'レース日', 'レース場', 'レース回']
+    race_id_cols = ['レースコード', 'タイトル', 'レース日', 'レース場', 'レース回']
+    # Use only columns that exist
+    race_id_cols = [c for c in race_id_cols if c in programs.columns]
     program_frames = []
 
     for frame_num in range(1, 7):
@@ -231,36 +269,77 @@ def make_predictions(models, predict_date, repo_root):
     return programs_long
 
 
-def reshape_to_wide_format(predictions_long):
-    """Reshape long format predictions to wide format (boat-based to race-based)."""
+def reshape_to_wide_format(predictions_long, weather_stats, predict_date):
+    """Reshape long format predictions to wide format matching previews CSV format.
+
+    Output columns (53 total):
+        レースコード, タイトル, レース日, レース場, レース回,
+        風速(m), 風向, 波の高さ(cm), 天候, 気温(℃), 水温(℃),
+        艇N_艇番, 艇N_コース, 艇N_体重(kg), 艇N_体重調整(kg),
+        艇N_展示タイム, 艇N_チルト調整, 艇N_スタート展示  (×6)
+    """
     if predictions_long is None or predictions_long.empty:
         return pd.DataFrame()
 
-    race_id_cols = ['レースコード', 'レース日', 'レース場', 'レース回']
+    month = predict_date.month
     wide_data = []
 
     for race_id in predictions_long['レースコード'].unique():
         race_data = predictions_long[predictions_long['レースコード'] == race_id]
+        first = race_data.iloc[0]
+
+        # Convert stadium name to code
+        stadium_name = first['レース場']
+        stadium_code = STADIUM_NAME_TO_CODE.get(stadium_name)
+
+        # Zero-pad race number: "1R" -> "01R"
+        race_num_raw = str(first['レース回'])
+        if race_num_raw.endswith('R') and len(race_num_raw) == 2:
+            race_num = race_num_raw[0].zfill(2) + 'R'
+        else:
+            race_num = race_num_raw
+
+        # Get weather stats for this stadium and month
+        weather = get_weather_for_race(weather_stats, stadium_code, month)
+
+        # Get title from programs (may be a long string with race info)
+        title = first.get('タイトル', '')
+
         row = {
             'レースコード': race_id,
-            'レース日': race_data['レース日'].iloc[0],
-            'レース場': race_data['レース場'].iloc[0],
-            'レース回': race_data['レース回'].iloc[0],
+            'タイトル': title,
+            'レース日': first['レース日'],
+            'レース場': stadium_code if stadium_code is not None else first['レース場'],
+            'レース回': race_num,
+            '風速(m)': weather['風速(m)'],
+            '風向': weather['風向'],
+            '波の高さ(cm)': weather['波の高さ(cm)'],
+            '天候': weather['天候'],
+            '気温(℃)': weather['気温(℃)'],
+            '水温(℃)': weather['水温(℃)'],
         }
 
-        # Add boat-specific predictions
+        # Add boat-specific data
         for boat_num in range(1, 7):
             boat_data = race_data[race_data['艇番'] == boat_num]
             if not boat_data.empty:
-                row[f'艇{boat_num}_コース'] = boat_data['予測コース'].values[0]
-                row[f'艇{boat_num}_スタート展示'] = boat_data['予測スタート展示'].values[0]
-                row[f'艇{boat_num}_チルト調整'] = boat_data['予測チルト調整'].values[0]
-                row[f'艇{boat_num}_展示タイム'] = boat_data['予測展示タイム'].values[0]
+                bd = boat_data.iloc[0]
+                weight = pd.to_numeric(bd.get('体重'), errors='coerce')
+                row[f'艇{boat_num}_艇番'] = boat_num
+                row[f'艇{boat_num}_コース'] = bd['予測コース']
+                row[f'艇{boat_num}_体重(kg)'] = weight if pd.notna(weight) else 0.0
+                row[f'艇{boat_num}_体重調整(kg)'] = 0.0
+                row[f'艇{boat_num}_展示タイム'] = bd['予測展示タイム']
+                row[f'艇{boat_num}_チルト調整'] = bd['予測チルト調整']
+                row[f'艇{boat_num}_スタート展示'] = bd['予測スタート展示']
             else:
+                row[f'艇{boat_num}_艇番'] = boat_num
                 row[f'艇{boat_num}_コース'] = None
-                row[f'艇{boat_num}_スタート展示'] = None
-                row[f'艇{boat_num}_チルト調整'] = None
+                row[f'艇{boat_num}_体重(kg)'] = 0.0
+                row[f'艇{boat_num}_体重調整(kg)'] = 0.0
                 row[f'艇{boat_num}_展示タイム'] = None
+                row[f'艇{boat_num}_チルト調整'] = None
+                row[f'艇{boat_num}_スタート展示'] = None
 
         wide_data.append(row)
 
@@ -318,6 +397,10 @@ def main():
     print(f"Prediction date: {predict_date.strftime('%Y-%m-%d')}")
     print("-" * 70)
 
+    # Load weather statistics
+    print("Loading weather statistics...")
+    weather_stats = load_weather_stats(repo_root)
+
     # Load pre-trained models
     print("Loading pre-trained preview models...")
     models = load_preview_models(repo_root)
@@ -336,8 +419,8 @@ def main():
 
     print(f"Predictions made for {len(predictions_long)} boats")
 
-    # Reshape to wide format
-    predictions_df = reshape_to_wide_format(predictions_long)
+    # Reshape to wide format (matching previews CSV format)
+    predictions_df = reshape_to_wide_format(predictions_long, weather_stats, predict_date)
     print(f"Reshaped predictions to wide format ({len(predictions_df)} races)")
 
     # Save results
@@ -347,11 +430,12 @@ def main():
     # Display sample results
     print("-" * 70)
     print("Sample predictions (first 2 races):")
-    # Show only the first few columns for readability
-    cols = ['レースコード', 'レース場', 'レース回',
-            '艇1_コース', '艇1_展示タイム', '艇2_コース', '艇2_展示タイム']
+    cols = ['レースコード', 'レース場', 'レース回', '風速(m)', '気温(℃)',
+            '艇1_艇番', '艇1_コース', '艇1_体重(kg)', '艇1_展示タイム']
     available_cols = [c for c in cols if c in predictions_df.columns]
     print(predictions_df[available_cols].head(2).to_string(index=False))
+    print(f"\nTotal columns: {len(predictions_df.columns)}")
+    print(f"Columns: {list(predictions_df.columns)}")
 
 
 if __name__ == '__main__':
