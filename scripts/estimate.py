@@ -18,6 +18,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 # Add boatrace package to path
@@ -194,9 +195,85 @@ def merge_data(programs_long, previews_long=None, results_long=None):
     return merged
 
 
+def extract_day_number(day_str):
+    """Extract day number from 日次 string ('第1日' -> 1)."""
+    if pd.isna(day_str):
+        return np.nan
+    day_str = str(day_str)
+    if '第' in day_str and '日' in day_str:
+        try:
+            return int(day_str.replace('第', '').replace('日', ''))
+        except Exception:
+            return np.nan
+    return np.nan
+
+
+def compute_konseki_features(df):
+    """Compute features from 今節成績 columns (着順0 = accident → NaN)."""
+    konseki_cols_2 = [f'今節成績_{i}-2' for i in range(1, 7)]
+    existing_place_cols = [c for c in konseki_cols_2 if c in df.columns]
+
+    if not existing_place_cols:
+        df['今節_平均着順'] = np.nan
+        df['今節_1着回数'] = 0
+        df['今節_3連対率'] = 0.0
+        df['今節_出走回数'] = 0
+        df['今節_最新着順'] = np.nan
+        return df
+
+    place_data = df[existing_place_cols].copy()
+    place_data = place_data.apply(pd.to_numeric, errors='coerce')
+    place_data = place_data.replace(0, np.nan)
+
+    df['今節_平均着順'] = place_data.mean(axis=1)
+    df['今節_1着回数'] = (place_data == 1).sum(axis=1)
+    df['今節_3連対率'] = (place_data <= 3).sum(axis=1) / place_data.notna().sum(axis=1)
+    df['今節_出走回数'] = place_data.notna().sum(axis=1)
+
+    latest = np.full(len(df), np.nan)
+    for col in reversed(existing_place_cols):
+        vals = pd.to_numeric(df[col], errors='coerce').replace(0, np.nan)
+        mask = np.isnan(latest) & vals.notna().values
+        latest[mask] = vals.values[mask]
+    df['今節_最新着順'] = latest
+
+    return df
+
+
+def compute_relative_features(df):
+    """Compute race-relative features."""
+    if '全国勝率' in df.columns:
+        grp = df.groupby('レースコード')['全国勝率']
+        df['全国勝率_偏差'] = df['全国勝率'] - grp.transform('mean')
+        df['全国勝率_最大差'] = df['全国勝率'] - grp.transform('max')
+
+    if 'モーター2連対率' in df.columns:
+        df['モーター2連対率_順位'] = df.groupby('レースコード')['モーター2連対率'].rank(
+            ascending=False, method='min'
+        )
+
+    if '当地勝率' in df.columns:
+        grp = df.groupby('レースコード')['当地勝率']
+        df['当地勝率_偏差'] = df['当地勝率'] - grp.transform('mean')
+
+    return df
+
+
+def compute_course_features(df):
+    """Compute course-related features."""
+    if '全国勝率' in df.columns and '枠' in df.columns:
+        df['枠×全国勝率'] = df['枠'] * df['全国勝率'].fillna(0)
+
+    in_advantage_map = {1: 5, 2: 3, 3: 2, 4: 1, 5: 0, 6: 0}
+    if '枠' in df.columns:
+        df['イン有利度'] = df['枠'].map(in_advantage_map).fillna(0)
+
+    return df
+
+
 def load_models(repo_root):
     """Load pre-trained program-based stadium models from pickle file."""
-    model_path = repo_root / 'models' / 'program_models.pkl'
+    model_path = repo_root / 'models' / 'program_models_v2.pkl'
 
     if not model_path.exists():
         print(f"Model file not found: {model_path}", file=sys.stderr)
@@ -205,7 +282,8 @@ def load_models(repo_root):
     try:
         with open(model_path, 'rb') as f:
             models_dict = pickle.load(f)
-        print(f"Loaded {len(models_dict)} stadium models from {model_path}")
+        stadium_count = sum(1 for k in models_dict if not str(k).startswith('_'))
+        print(f"Loaded {stadium_count} stadium models from {model_path}")
         return models_dict
     except Exception as e:
         print(f"Error loading models: {e}", file=sys.stderr)
@@ -238,7 +316,7 @@ def prepare_features(data, feature_cols):
 
 
 def make_predictions(models_dict, predict_date, repo_root):
-    """Make predictions for a specific date using stadium-specific models."""
+    """Make predictions for a specific date using ensemble of stadium-specific models."""
     year = predict_date.strftime('%Y')
     month = predict_date.strftime('%m')
     day = predict_date.strftime('%d')
@@ -261,67 +339,122 @@ def make_predictions(models_dict, predict_date, repo_root):
         print(f"No merged data for {year}-{month}-{day}", file=sys.stderr)
         return None
 
-    # Determine if interaction features are available
-    has_previews = previews_long is not None and not previews_long.empty
+    # Add 枠 column (= 艇番) for feature compatibility with notebook training
+    merged['枠'] = merged['艇番']
 
-    if has_previews:
-        print("Previews data available, using interaction features")
-    else:
-        print("Warning: Previews data not found, using programs-only prediction")
+    # Extract day number
+    if '日次' in merged.columns:
+        merged['日次数'] = merged['日次'].apply(extract_day_number)
 
-    # Make predictions for each boat
+    # Apply feature engineering
+    merged = compute_konseki_features(merged)
+    merged = compute_relative_features(merged)
+    merged = compute_course_features(merged)
+
+    # Encode grade
+    if '級別' in merged.columns:
+        grade_map = {'A1': 0, 'A2': 1, 'B1': 2, 'B2': 3}
+        merged['級別_encoded'] = merged['級別'].map(grade_map).fillna(3)
+
+    # Map stadium names to numbers for stats merge
+    merged['レース場_num'] = merged['レース場'].apply(
+        lambda x: STADIUM_NAME_TO_CODE.get(str(x).strip()) if pd.notna(x) else np.nan
+    )
+
+    # Merge player/stadium stats from model
+    ensemble_weights = models_dict.get('_ensemble_weights', (0.5, 0.3, 0.2))
+    player_stats = models_dict.get('_player_stats')
+    stadium_player_stats = models_dict.get('_stadium_player_stats')
+
+    if player_stats is not None and '登録番号' in merged.columns:
+        merged['登録番号'] = pd.to_numeric(merged['登録番号'], errors='coerce')
+        merged = merged.merge(player_stats, on='登録番号', how='left')
+
+    if stadium_player_stats is not None and '登録番号' in merged.columns:
+        merged = merged.merge(
+            stadium_player_stats,
+            left_on=['登録番号', 'レース場_num'],
+            right_on=['登録番号', 'レース場'],
+            how='left',
+            suffixes=('', '_stadium_stat')
+        )
+
+    w_rank, w_cls, w_gbc = ensemble_weights
+
+    # Make predictions per race
     predictions = []
     merged_reset = merged.reset_index(drop=True)
 
-    for idx, row in merged_reset.iterrows():
-        stadium_name = row['レース場']
+    for race_code in merged_reset['レースコード'].unique():
+        race_mask = merged_reset['レースコード'] == race_code
+        race_data = merged_reset[race_mask]
 
-        # Convert stadium name to stadium code
-        stadium_code = STADIUM_NAME_TO_CODE.get(stadium_name)
-        if stadium_code is None:
-            print(f"Unknown stadium name: {stadium_name}", file=sys.stderr)
-            predictions.append(None)
-            continue
+        stadium_name = race_data['レース場'].iloc[0]
+        stadium_code = (
+            STADIUM_NAME_TO_CODE.get(str(stadium_name).strip())
+            if pd.notna(stadium_name) else None
+        )
 
-        # Skip if no model for this stadium
-        if stadium_code not in models_dict:
-            predictions.append(None)
+        if stadium_code is None or stadium_code not in models_dict:
             continue
 
         model_info = models_dict[stadium_code]
-        model = model_info['model']
-        scaler = model_info['scaler']
         feature_cols = model_info['features']
 
-        # Prepare features
-        X_row = prepare_features(merged_reset.iloc[idx:idx+1], feature_cols)
+        X_race = prepare_features(race_data, feature_cols)
+        n = len(X_race)
 
-        try:
-            # Get predicted probabilities
-            X_scaled = scaler.transform(X_row)
-            proba = model.predict_proba(X_scaled)[0]
-            classes = model.classes_
+        if n < 2:
+            continue
 
-            # Get top 3 predictions (finish positions)
-            prob_dict = {cls: prob for cls, prob in zip(classes, proba)}
-            sorted_probs = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
-            top_3 = sorted_probs[:3]
+        # LambdaRank scores
+        rank_scores = np.zeros(n)
+        has_rank = 'ranking_model' in model_info
+        if has_rank:
+            rank_scores = model_info['ranking_model'].predict(X_race)
 
-            # Return tuple of top 3 predicted boat numbers
-            predictions.append(tuple(int(boat) for boat, _ in top_3))
-        except Exception as e:
-            print(f"Error predicting for row {idx}: {e}", file=sys.stderr)
-            predictions.append(None)
+        # Classifier scores (expected placement, negated so higher = better)
+        cls_scores = np.zeros(n)
+        has_cls = 'model' in model_info and 'scaler' in model_info
+        if has_cls:
+            try:
+                X_scaled = model_info['scaler'].transform(X_race)
+                proba = model_info['model'].predict_proba(X_scaled)
+                classes = model_info['model'].classes_
+                expected_place = proba @ classes.astype(float)
+                cls_scores = -expected_place
+            except Exception:
+                has_cls = False
 
-    # Create results dataframe
-    results_df = pd.DataFrame({
-        'レースコード': merged['レースコード'].values,
-        '艇番': merged['艇番'].values,
-        'レース場': merged['レース場'].values,
-        '予想三連単': predictions
-    })
+        # Min-max normalize within race
+        for arr in [rank_scores, cls_scores]:
+            vmin, vmax = arr.min(), arr.max()
+            if vmax > vmin:
+                arr[:] = (arr - vmin) / (vmax - vmin)
+            else:
+                arr[:] = 0.5
 
-    return results_df
+        # Ensemble: combine available models
+        # Merge classifier + GBC weights since only classifier is saved
+        if has_rank and has_cls:
+            ensemble = w_rank * rank_scores + (w_cls + w_gbc) * cls_scores
+        elif has_rank:
+            ensemble = rank_scores
+        else:
+            ensemble = cls_scores
+
+        # Get top 3 boats
+        boat_numbers = race_data['艇番'].values
+        top_indices = np.argsort(-ensemble)[:3]
+
+        predictions.append({
+            'レースコード': race_code,
+            '予想1着': int(boat_numbers[top_indices[0]]),
+            '予想2着': int(boat_numbers[top_indices[1]]),
+            '予想3着': int(boat_numbers[top_indices[2]]),
+        })
+
+    return pd.DataFrame(predictions) if predictions else None
 
 
 def create_ranking_output(predictions_df):
@@ -375,7 +508,7 @@ def main():
     # Get today's date in JST (UTC+9)
     jst = timezone(timedelta(hours=9))
     today_jst = datetime.now(jst).strftime('%Y-%m-%d')
-    
+
     parser = argparse.ArgumentParser(description='Estimate boat race results.')
     parser.add_argument(
         '--date',
@@ -406,18 +539,14 @@ def main():
         print("Failed to load models", file=sys.stderr)
         sys.exit(1)
 
-    # Make predictions
+    # Make predictions (returns per-race ranking directly)
     print("Making predictions...")
-    predictions_df = make_predictions(models_dict, predict_date, repo_root)
+    ranking_df = make_predictions(models_dict, predict_date, repo_root)
 
-    if predictions_df is None:
+    if ranking_df is None or ranking_df.empty:
         print("Failed to make predictions", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Predictions made for {len(predictions_df)} boats")
-
-    # Create ranking output
-    ranking_df = create_ranking_output(predictions_df)
     print(f"Rankings created for {len(ranking_df)} races")
 
     # Save results
