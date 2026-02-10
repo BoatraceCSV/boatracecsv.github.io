@@ -17,11 +17,8 @@ from pathlib import Path
 
 import pandas as pd
 
-
-def get_repo_root():
-    """Get the repository root directory."""
-    cwd = Path.cwd()
-    return cwd if (cwd / 'data').exists() else cwd.parent
+sys.path.insert(0, str(Path(__file__).parent))
+from boatrace.common import get_repo_root
 
 
 def build_weather_stats(repo_root):

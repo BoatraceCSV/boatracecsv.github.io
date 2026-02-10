@@ -19,12 +19,7 @@ import pandas as pd
 # Add boatrace package to path
 sys.path.insert(0, str(Path(__file__).parent))
 from boatrace import git_operations
-
-
-def get_repo_root():
-    """Get the repository root directory."""
-    cwd = Path.cwd()
-    return cwd if (cwd / 'data').exists() else cwd.parent
+from boatrace.common import get_repo_root
 
 
 def load_estimate(date, repo_root):

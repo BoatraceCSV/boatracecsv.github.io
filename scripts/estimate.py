@@ -22,42 +22,20 @@ import pandas as pd
 # Add boatrace package to path
 sys.path.insert(0, str(Path(__file__).parent))
 from boatrace import git_operations
-
-
-# Stadium name to code mapping (standard boatrace stadium codes 1-24)
-STADIUM_NAME_TO_CODE = {
-    'ボートレース桐生': 1,
-    'ボートレース戸田': 2,
-    'ボートレース江戸川': 3,
-    'ボートレース平和島': 4,
-    'ボートレース多摩川': 5,
-    'ボートレース浜名湖': 6,
-    'ボートレース蒲郡': 7,
-    'ボートレース常滑': 8,
-    'ボートレース津': 9,
-    'ボートレース三国': 10,
-    'ボートレースびわこ': 11,
-    'ボートレース琵琶湖': 11,  # Alternative name for びわこ
-    'ボートレース住之江': 12,
-    'ボートレース尼崎': 13,
-    'ボートレース鳴門': 14,
-    'ボートレース丸亀': 15,
-    'ボートレース児島': 16,
-    'ボートレース宮島': 17,
-    'ボートレース徳山': 18,
-    'ボートレース下関': 19,
-    'ボートレース若松': 20,
-    'ボートレース芦屋': 21,
-    'ボートレース福岡': 22,
-    'ボートレース唐津': 23,
-    'ボートレース大村': 24,
-}
-
-
-def get_repo_root():
-    """Get the repository root directory."""
-    cwd = Path.cwd()
-    return cwd if (cwd / 'data').exists() else cwd.parent
+from boatrace.constants import (
+    STADIUM_NAME_TO_CODE,
+    STADIUM_ADVANTAGE_MAP,
+    DEFAULT_ADVANTAGE_MAP,
+    PLACE_COLS as _PLACE_COLS,
+    RATE_COLS as _RATE_COLS,
+)
+from boatrace.common import (
+    get_repo_root,
+    reshape_programs,
+    reshape_previews,
+    reshape_results,
+    prepare_features,
+)
 
 
 def load_data(year, month, day, repo_root):
@@ -84,83 +62,6 @@ def load_data(year, month, day, repo_root):
         return None, None, None
 
     return programs, previews, results
-
-
-def reshape_programs(programs):
-    """Reshape Programs data from wide format (1枠～6枠) to long format."""
-    if programs is None or programs.empty:
-        return pd.DataFrame()
-
-    race_id_cols = ['レースコード', 'レース日', 'レース場', 'レース回']
-    program_frames = []
-
-    for frame_num in range(1, 7):
-        frame_prefix = f'{frame_num}枠_'
-        frame_cols = [col for col in programs.columns if col.startswith(frame_prefix)]
-
-        if frame_cols:
-            tmp = programs[race_id_cols + frame_cols].copy()
-            rename_map = {col: col[len(frame_prefix):] for col in frame_cols}
-            tmp = tmp.rename(columns=rename_map)
-            tmp['艇番'] = frame_num
-            program_frames.append(tmp)
-
-    if program_frames:
-        return pd.concat(program_frames, ignore_index=True)
-    return pd.DataFrame()
-
-
-def reshape_previews(previews):
-    """Reshape Previews data from wide format (艇1～艇6) to long format."""
-    if previews is None or previews.empty:
-        return pd.DataFrame()
-
-    race_id_cols = ['レースコード', 'レース日', 'レース場', 'レース回']
-    preview_frames = []
-
-    for boat_num in range(1, 7):
-        boat_prefix = f'艇{boat_num}_'
-        boat_cols = [col for col in previews.columns if col.startswith(boat_prefix)]
-
-        if boat_cols:
-            tmp = previews[race_id_cols + boat_cols].copy()
-            rename_map = {col: col[len(boat_prefix):] for col in boat_cols}
-            tmp = tmp.rename(columns=rename_map)
-            tmp['艇番'] = boat_num
-            preview_frames.append(tmp)
-
-    if preview_frames:
-        return pd.concat(preview_frames, ignore_index=True)
-    return pd.DataFrame()
-
-
-def reshape_results(df):
-    """Reshape Results data from wide format (1着～6着) to long format (boat-based)."""
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    result_list = []
-
-    for _, row in df.iterrows():
-        race_code = row['レースコード']
-
-        # Extract finish positions from result columns
-        for place in range(1, 7):
-            boat_col = f'{place}着_艇番'
-
-            if boat_col in df.columns and pd.notna(row[boat_col]):
-                try:
-                    boat_num = int(row[boat_col])
-                    if 1 <= boat_num <= 6:
-                        result_list.append({
-                            'レースコード': race_code,
-                            '艇番': boat_num,
-                            '着順': place
-                        })
-                except (ValueError, TypeError):
-                    continue
-
-    return pd.DataFrame(result_list) if result_list else pd.DataFrame()
 
 
 def merge_data(programs_long, previews_long=None, results_long=None):
@@ -260,37 +161,6 @@ def compute_relative_features(df):
 
 
 
-# Data-driven advantage maps per stadium (derived from historical 1st-place rates)
-STADIUM_ADVANTAGE_MAP = {
-    1:  {1: 5.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 0.4, 6: 0.0},  # 桐生
-    2:  {1: 5.0, 2: 1.7, 3: 1.5, 4: 1.2, 5: 0.3, 6: 0.0},  # 戸田
-    3:  {1: 5.0, 2: 1.7, 3: 1.2, 4: 1.0, 5: 0.4, 6: 0.0},  # 江戸川
-    4:  {1: 5.0, 2: 1.5, 3: 1.2, 4: 0.9, 5: 0.3, 6: 0.0},  # 平和島
-    5:  {1: 5.0, 2: 1.2, 3: 1.0, 4: 0.8, 5: 0.4, 6: 0.0},  # 多摩川
-    6:  {1: 5.0, 2: 1.1, 3: 1.1, 4: 0.6, 5: 0.3, 6: 0.0},  # 浜名湖
-    7:  {1: 5.0, 2: 0.9, 3: 0.8, 4: 0.7, 5: 0.2, 6: 0.0},  # 蒲郡
-    8:  {1: 5.0, 2: 0.8, 3: 0.6, 4: 0.6, 5: 0.2, 6: 0.0},  # 常滑
-    9:  {1: 5.0, 2: 1.1, 3: 0.9, 4: 0.7, 5: 0.3, 6: 0.0},  # 津
-    10: {1: 5.0, 2: 1.3, 3: 1.1, 4: 0.6, 5: 0.2, 6: 0.0},  # 三国
-    11: {1: 5.0, 2: 1.2, 3: 1.1, 4: 0.8, 5: 0.5, 6: 0.0},  # びわこ
-    12: {1: 5.0, 2: 1.0, 3: 0.8, 4: 0.6, 5: 0.3, 6: 0.0},  # 住之江
-    13: {1: 5.0, 2: 0.8, 3: 0.9, 4: 0.6, 5: 0.2, 6: 0.0},  # 尼崎
-    14: {1: 5.0, 2: 1.3, 3: 1.3, 4: 0.9, 5: 0.4, 6: 0.0},  # 鳴門
-    15: {1: 5.0, 2: 1.0, 3: 0.9, 4: 0.6, 5: 0.3, 6: 0.0},  # 丸亀
-    16: {1: 5.0, 2: 1.0, 3: 0.8, 4: 0.5, 5: 0.2, 6: 0.0},  # 児島
-    17: {1: 5.0, 2: 1.0, 3: 0.9, 4: 0.7, 5: 0.3, 6: 0.0},  # 宮島
-    18: {1: 5.0, 2: 1.0, 3: 0.6, 4: 0.5, 5: 0.1, 6: 0.0},  # 徳山
-    19: {1: 5.0, 2: 0.8, 3: 0.7, 4: 0.5, 5: 0.1, 6: 0.0},  # 下関
-    20: {1: 5.0, 2: 0.7, 3: 0.8, 4: 0.6, 5: 0.2, 6: 0.0},  # 若松
-    21: {1: 5.0, 2: 0.6, 3: 0.6, 4: 0.6, 5: 0.2, 6: 0.0},  # 芦屋
-    22: {1: 5.0, 2: 1.1, 3: 1.2, 4: 0.6, 5: 0.2, 6: 0.0},  # 福岡
-    23: {1: 5.0, 2: 1.3, 3: 0.9, 4: 0.7, 5: 0.3, 6: 0.0},  # 唐津
-    24: {1: 5.0, 2: 0.8, 3: 0.7, 4: 0.5, 5: 0.2, 6: 0.0},  # 大村
-}
-
-DEFAULT_ADVANTAGE_MAP = {1: 5, 2: 3, 3: 2, 4: 1, 5: 0, 6: 0}
-
-
 def compute_course_features(df):
     """Compute course-related features with data-driven per-stadium advantage maps."""
     if '全国勝率' in df.columns and '枠' in df.columns:
@@ -306,6 +176,14 @@ def compute_course_features(df):
             )
         else:
             df['イン有利度'] = df['枠'].map(DEFAULT_ADVANTAGE_MAP).fillna(0)
+
+    # Wind speed interaction features
+    if '風速(m)' in df.columns and 'イン有利度' in df.columns:
+        wind = pd.to_numeric(df['風速(m)'], errors='coerce').fillna(3.0)
+        df['風速×イン有利度'] = wind * df['イン有利度']
+        df['強風フラグ'] = (wind >= 5).astype(int)
+        if '枠' in df.columns:
+            df['強風×枠'] = df['強風フラグ'] * df['枠']
 
     return df
 
@@ -329,45 +207,6 @@ def load_models(repo_root):
         return None
 
 
-
-# Columns that represent placement averages (1-6 range, midpoint = 3.5)
-_PLACE_COLS = {'今節_平均着順', '今節_最新着順', '履歴_平均着順', '当場_平均着順'}
-
-# Columns that represent rates/percentages (fill with median, not 0)
-_RATE_COLS = {
-    '全国勝率', '全国2連対率', '当地勝率', '当地2連対率',
-    'モーター2連対率', 'ボート2連対率', '今節_3連対率',
-    '履歴_1着率', 'イン1着率', '当場_1着率',
-}
-
-
-def prepare_features(data, feature_cols):
-    """Prepare feature matrix from data."""
-    X = pd.DataFrame(index=data.index)
-
-    # 利用可能な特徴量のみを抽出
-    for col in feature_cols:
-        if col in data.columns:
-            X[col] = pd.to_numeric(data[col], errors='coerce')
-        else:
-            # 特徴量が存在しない場合は0で埋める
-            X[col] = 0.0
-
-    # Improved NaN handling by column category
-    for col in X.columns:
-        if col in _PLACE_COLS:
-            X[col] = X[col].fillna(3.5)
-        elif col in _RATE_COLS:
-            median_val = X[col].median()
-            X[col] = X[col].fillna(median_val if pd.notna(median_val) else 0)
-        else:
-            if X[col].notna().any():
-                median_val = X[col].median()
-                X[col] = X[col].fillna(median_val)
-            else:
-                X[col] = X[col].fillna(0)
-
-    return X
 
 
 def make_predictions(models_dict, predict_date, repo_root):
@@ -443,6 +282,22 @@ def make_predictions(models_dict, predict_date, repo_root):
             suffixes=('', '_stadium_stat')
         )
 
+    # Merge player ST stats if available in model
+    player_st_stats = models_dict.get('_player_st_stats')
+    if player_st_stats is not None and '登録番号' in merged.columns:
+        player_st_stats = player_st_stats.copy()
+        player_st_stats['登録番号'] = pd.to_numeric(
+            player_st_stats['登録番号'], errors='coerce'
+        )
+        merged = merged.merge(player_st_stats, on='登録番号', how='left')
+        # Fill NaN with median defaults
+        if 'ST_mean' in merged.columns:
+            merged['ST_mean'] = merged['ST_mean'].fillna(0.167)
+        if 'ST_std' in merged.columns:
+            merged['ST_std'] = merged['ST_std'].fillna(0.068)
+        if 'ST_min' in merged.columns:
+            merged['ST_min'] = merged['ST_min'].fillna(0.167)
+
     w_rank, w_cls, w_gbc = ensemble_weights
 
     # Make predictions per race
@@ -482,7 +337,7 @@ def make_predictions(models_dict, predict_date, repo_root):
         has_cls = 'model' in model_info and 'scaler' in model_info
         if has_cls:
             try:
-                X_scaled = model_info['scaler'].transform(X_race)
+                X_scaled = pd.DataFrame(model_info['scaler'].transform(X_race), columns=X_race.columns, index=X_race.index)
                 proba = model_info['model'].predict_proba(X_scaled)
                 classes = model_info['model'].classes_
                 expected_place = proba @ classes.astype(float)

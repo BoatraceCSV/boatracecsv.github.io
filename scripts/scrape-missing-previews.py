@@ -32,6 +32,7 @@ from boatrace.preview_scraper import PreviewScraper
 from boatrace.converter import previews_to_csv, VENUE_CODES
 from boatrace.storage import write_csv
 from boatrace import git_operations
+from boatrace.common import get_repo_root
 
 
 def load_config(config_path: str = ".boatrace/config.json") -> dict:
@@ -75,12 +76,6 @@ def load_missing_previews(csv_path):
         return None
 
     return races_by_date
-
-
-def get_repo_root():
-    """Get the repository root directory."""
-    cwd = Path.cwd()
-    return cwd if (cwd / 'data').exists() else cwd.parent
 
 
 def scrape_race_preview(date_str, stadium_code, race_number, config, rate_limiter):

@@ -17,11 +17,8 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
-
-def get_repo_root():
-    """Get the repository root directory."""
-    cwd = Path.cwd()
-    return cwd if (cwd / 'data').exists() else cwd.parent
+sys.path.insert(0, str(Path(__file__).parent))
+from boatrace.common import get_repo_root
 
 
 def load_race_codes_from_csv(csv_path):
