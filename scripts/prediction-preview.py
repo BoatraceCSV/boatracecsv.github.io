@@ -319,14 +319,28 @@ def reshape_to_wide_format(predictions_long, weather_stats, predict_date):
             '水温(℃)': weather['水温(℃)'],
         }
 
+        # Collect predicted courses to check for degenerate predictions
+        predicted_courses = []
+        for boat_num in range(1, 7):
+            boat_data = race_data[race_data['艇番'] == boat_num]
+            if not boat_data.empty:
+                predicted_courses.append(boat_data.iloc[0]['予測コース'])
+            else:
+                predicted_courses.append(None)
+
+        # If all predicted courses are identical, fall back to frame number = course
+        valid_courses = [c for c in predicted_courses if c is not None]
+        use_fallback = len(set(valid_courses)) <= 1 and len(valid_courses) > 1
+
         # Add boat-specific data
         for boat_num in range(1, 7):
             boat_data = race_data[race_data['艇番'] == boat_num]
             if not boat_data.empty:
                 bd = boat_data.iloc[0]
                 weight = pd.to_numeric(bd.get('体重'), errors='coerce')
+                course = boat_num if use_fallback else bd['予測コース']
                 row[f'艇{boat_num}_艇番'] = boat_num
-                row[f'艇{boat_num}_コース'] = bd['予測コース']
+                row[f'艇{boat_num}_コース'] = course
                 row[f'艇{boat_num}_体重(kg)'] = weight if pd.notna(weight) else 0.0
                 row[f'艇{boat_num}_体重調整(kg)'] = 0.0
                 row[f'艇{boat_num}_展示タイム'] = bd['予測展示タイム']
@@ -334,7 +348,7 @@ def reshape_to_wide_format(predictions_long, weather_stats, predict_date):
                 row[f'艇{boat_num}_スタート展示'] = bd['予測スタート展示']
             else:
                 row[f'艇{boat_num}_艇番'] = boat_num
-                row[f'艇{boat_num}_コース'] = None
+                row[f'艇{boat_num}_コース'] = boat_num if use_fallback else None
                 row[f'艇{boat_num}_体重(kg)'] = 0.0
                 row[f'艇{boat_num}_体重調整(kg)'] = 0.0
                 row[f'艇{boat_num}_展示タイム'] = None

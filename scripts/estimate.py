@@ -3,10 +3,8 @@
 Boat race result estimation script.
 
 This script uses pre-trained stadium-specific models to make predictions
-for a specified date. Models are trained from program.ipynb and saved to
-models/program_models.pkl.
-
-The models use programs data only (without previews/weather data).
+for a specified date. Models are trained from program_v2.ipynb and saved to
+models/program_models_v2.pkl.
 
 Usage:
     python estimate.py --date 2026-01-30
@@ -65,7 +63,9 @@ def get_repo_root():
 def load_data(year, month, day, repo_root):
     """Load Programs, Previews, and Results data for a specific date."""
     programs_path = repo_root / 'data' / 'programs' / year / month / f'{day}.csv'
-    previews_path = repo_root / 'data' / 'prediction-preview' / year / month / f'{day}.csv'
+    actual_previews_path = repo_root / 'data' / 'previews' / year / month / f'{day}.csv'
+    prediction_previews_path = repo_root / 'data' / 'prediction-preview' / year / month / f'{day}.csv'
+    previews_path = actual_previews_path if actual_previews_path.exists() else prediction_previews_path
     results_path = repo_root / 'data' / 'results' / year / month / f'{day}.csv'
 
     programs = None
@@ -259,14 +259,53 @@ def compute_relative_features(df):
     return df
 
 
+
+# Data-driven advantage maps per stadium (derived from historical 1st-place rates)
+STADIUM_ADVANTAGE_MAP = {
+    1:  {1: 5.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 0.4, 6: 0.0},  # 桐生
+    2:  {1: 5.0, 2: 1.7, 3: 1.5, 4: 1.2, 5: 0.3, 6: 0.0},  # 戸田
+    3:  {1: 5.0, 2: 1.7, 3: 1.2, 4: 1.0, 5: 0.4, 6: 0.0},  # 江戸川
+    4:  {1: 5.0, 2: 1.5, 3: 1.2, 4: 0.9, 5: 0.3, 6: 0.0},  # 平和島
+    5:  {1: 5.0, 2: 1.2, 3: 1.0, 4: 0.8, 5: 0.4, 6: 0.0},  # 多摩川
+    6:  {1: 5.0, 2: 1.1, 3: 1.1, 4: 0.6, 5: 0.3, 6: 0.0},  # 浜名湖
+    7:  {1: 5.0, 2: 0.9, 3: 0.8, 4: 0.7, 5: 0.2, 6: 0.0},  # 蒲郡
+    8:  {1: 5.0, 2: 0.8, 3: 0.6, 4: 0.6, 5: 0.2, 6: 0.0},  # 常滑
+    9:  {1: 5.0, 2: 1.1, 3: 0.9, 4: 0.7, 5: 0.3, 6: 0.0},  # 津
+    10: {1: 5.0, 2: 1.3, 3: 1.1, 4: 0.6, 5: 0.2, 6: 0.0},  # 三国
+    11: {1: 5.0, 2: 1.2, 3: 1.1, 4: 0.8, 5: 0.5, 6: 0.0},  # びわこ
+    12: {1: 5.0, 2: 1.0, 3: 0.8, 4: 0.6, 5: 0.3, 6: 0.0},  # 住之江
+    13: {1: 5.0, 2: 0.8, 3: 0.9, 4: 0.6, 5: 0.2, 6: 0.0},  # 尼崎
+    14: {1: 5.0, 2: 1.3, 3: 1.3, 4: 0.9, 5: 0.4, 6: 0.0},  # 鳴門
+    15: {1: 5.0, 2: 1.0, 3: 0.9, 4: 0.6, 5: 0.3, 6: 0.0},  # 丸亀
+    16: {1: 5.0, 2: 1.0, 3: 0.8, 4: 0.5, 5: 0.2, 6: 0.0},  # 児島
+    17: {1: 5.0, 2: 1.0, 3: 0.9, 4: 0.7, 5: 0.3, 6: 0.0},  # 宮島
+    18: {1: 5.0, 2: 1.0, 3: 0.6, 4: 0.5, 5: 0.1, 6: 0.0},  # 徳山
+    19: {1: 5.0, 2: 0.8, 3: 0.7, 4: 0.5, 5: 0.1, 6: 0.0},  # 下関
+    20: {1: 5.0, 2: 0.7, 3: 0.8, 4: 0.6, 5: 0.2, 6: 0.0},  # 若松
+    21: {1: 5.0, 2: 0.6, 3: 0.6, 4: 0.6, 5: 0.2, 6: 0.0},  # 芦屋
+    22: {1: 5.0, 2: 1.1, 3: 1.2, 4: 0.6, 5: 0.2, 6: 0.0},  # 福岡
+    23: {1: 5.0, 2: 1.3, 3: 0.9, 4: 0.7, 5: 0.3, 6: 0.0},  # 唐津
+    24: {1: 5.0, 2: 0.8, 3: 0.7, 4: 0.5, 5: 0.2, 6: 0.0},  # 大村
+}
+
+DEFAULT_ADVANTAGE_MAP = {1: 5, 2: 3, 3: 2, 4: 1, 5: 0, 6: 0}
+
+
 def compute_course_features(df):
-    """Compute course-related features."""
+    """Compute course-related features with data-driven per-stadium advantage maps."""
     if '全国勝率' in df.columns and '枠' in df.columns:
         df['枠×全国勝率'] = df['枠'] * df['全国勝率'].fillna(0)
 
-    in_advantage_map = {1: 5, 2: 3, 3: 2, 4: 1, 5: 0, 6: 0}
     if '枠' in df.columns:
-        df['イン有利度'] = df['枠'].map(in_advantage_map).fillna(0)
+        if 'レース場_num' in df.columns:
+            df['イン有利度'] = df.apply(
+                lambda row: STADIUM_ADVANTAGE_MAP.get(
+                    row['レース場_num'], DEFAULT_ADVANTAGE_MAP
+                ).get(row['枠'], 0),
+                axis=1,
+            )
+        else:
+            df['イン有利度'] = df['枠'].map(DEFAULT_ADVANTAGE_MAP).fillna(0)
 
     return df
 
@@ -290,6 +329,18 @@ def load_models(repo_root):
         return None
 
 
+
+# Columns that represent placement averages (1-6 range, midpoint = 3.5)
+_PLACE_COLS = {'今節_平均着順', '今節_最新着順', '履歴_平均着順', '当場_平均着順'}
+
+# Columns that represent rates/percentages (fill with median, not 0)
+_RATE_COLS = {
+    '全国勝率', '全国2連対率', '当地勝率', '当地2連対率',
+    'モーター2連対率', 'ボート2連対率', '今節_3連対率',
+    '履歴_1着率', 'イン1着率', '当場_1着率',
+}
+
+
 def prepare_features(data, feature_cols):
     """Prepare feature matrix from data."""
     X = pd.DataFrame(index=data.index)
@@ -302,15 +353,19 @@ def prepare_features(data, feature_cols):
             # 特徴量が存在しない場合は0で埋める
             X[col] = 0.0
 
-    # Fill NaN with median or 0 if all values are NaN
+    # Improved NaN handling by column category
     for col in X.columns:
-        # 非NaNの値が存在するかチェック
-        if X[col].notna().any():
+        if col in _PLACE_COLS:
+            X[col] = X[col].fillna(3.5)
+        elif col in _RATE_COLS:
             median_val = X[col].median()
-            X[col] = X[col].fillna(median_val)
+            X[col] = X[col].fillna(median_val if pd.notna(median_val) else 0)
         else:
-            # すべてNaNの場合は0で埋める
-            X[col] = X[col].fillna(0)
+            if X[col].notna().any():
+                median_val = X[col].median()
+                X[col] = X[col].fillna(median_val)
+            else:
+                X[col] = X[col].fillna(0)
 
     return X
 
@@ -339,12 +394,26 @@ def make_predictions(models_dict, predict_date, repo_root):
         print(f"No merged data for {year}-{month}-{day}", file=sys.stderr)
         return None
 
+    # Supplement 体重(kg) from programs' 体重 when previews lack weight data
+    if '体重(kg)' in merged.columns and '体重' in merged.columns:
+        weight_kg_missing = merged['体重(kg)'].isna()
+        weight_available = merged['体重'].notna()
+        fill_mask = weight_kg_missing & weight_available
+        merged.loc[fill_mask, '体重(kg)'] = pd.to_numeric(
+            merged.loc[fill_mask, '体重'], errors='coerce'
+        )
+
     # Add 枠 column (= 艇番) for feature compatibility with notebook training
     merged['枠'] = merged['艇番']
 
     # Extract day number
     if '日次' in merged.columns:
         merged['日次数'] = merged['日次'].apply(extract_day_number)
+
+    # Map stadium names to numbers (needed before compute_course_features)
+    merged['レース場_num'] = merged['レース場'].apply(
+        lambda x: STADIUM_NAME_TO_CODE.get(str(x).strip()) if pd.notna(x) else np.nan
+    )
 
     # Apply feature engineering
     merged = compute_konseki_features(merged)
@@ -355,11 +424,6 @@ def make_predictions(models_dict, predict_date, repo_root):
     if '級別' in merged.columns:
         grade_map = {'A1': 0, 'A2': 1, 'B1': 2, 'B2': 3}
         merged['級別_encoded'] = merged['級別'].map(grade_map).fillna(3)
-
-    # Map stadium names to numbers for stats merge
-    merged['レース場_num'] = merged['レース場'].apply(
-        lambda x: STADIUM_NAME_TO_CODE.get(str(x).strip()) if pd.notna(x) else np.nan
-    )
 
     # Merge player/stadium stats from model
     ensemble_weights = models_dict.get('_ensemble_weights', (0.5, 0.3, 0.2))
