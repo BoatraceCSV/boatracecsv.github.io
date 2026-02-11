@@ -120,6 +120,8 @@ def compute_konseki_features(df):
         df['今節_3連対率'] = 0.0
         df['今節_出走回数'] = 0
         df['今節_最新着順'] = np.nan
+        df['今節_平均コース'] = np.nan
+        df['今節_イン回数'] = 0
         return df
 
     place_data = df[existing_place_cols].copy()
@@ -137,6 +139,19 @@ def compute_konseki_features(df):
         mask = np.isnan(latest) & vals.notna().values
         latest[mask] = vals.values[mask]
     df['今節_最新着順'] = latest
+
+    # 今節コース傾向特徴量
+    konseki_cols_1 = [f'今節成績_{i}-1' for i in range(1, 7)]
+    existing_course = [c for c in konseki_cols_1 if c in df.columns]
+    if existing_course:
+        course_data = df[existing_course].apply(pd.to_numeric, errors='coerce')
+        valid_mask = place_data.notna()
+        course_valid = course_data.where(valid_mask.values)
+        df['今節_平均コース'] = course_valid.mean(axis=1)
+        df['今節_イン回数'] = (course_valid == 1).sum(axis=1)
+    else:
+        df['今節_平均コース'] = np.nan
+        df['今節_イン回数'] = 0
 
     return df
 
@@ -297,6 +312,21 @@ def make_predictions(models_dict, predict_date, repo_root):
             merged['ST_std'] = merged['ST_std'].fillna(0.068)
         if 'ST_min' in merged.columns:
             merged['ST_min'] = merged['ST_min'].fillna(0.167)
+
+    # Merge recent race stats if available in model
+    recent_race_stats = models_dict.get('_recent_race_stats')
+    if recent_race_stats is not None and '登録番号' in merged.columns:
+        recent_race_stats = recent_race_stats.copy()
+        recent_race_stats['登録番号'] = pd.to_numeric(
+            recent_race_stats['登録番号'], errors='coerce'
+        )
+        merged = merged.merge(recent_race_stats, on='登録番号', how='left')
+        if '直近5走_平均着順' in merged.columns:
+            merged['直近5走_平均着順'] = merged['直近5走_平均着順'].fillna(3.5)
+        if '直近10走_平均着順' in merged.columns:
+            merged['直近10走_平均着順'] = merged['直近10走_平均着順'].fillna(3.5)
+        if '直近5走_1着率' in merged.columns:
+            merged['直近5走_1着率'] = merged['直近5走_1着率'].fillna(0.167)
 
     w_rank, w_cls, w_gbc = ensemble_weights
 

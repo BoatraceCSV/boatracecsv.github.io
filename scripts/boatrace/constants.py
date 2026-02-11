@@ -64,11 +64,15 @@ STADIUM_ADVANTAGE_MAP = {
 DEFAULT_ADVANTAGE_MAP = {1: 5, 2: 3, 3: 2, 4: 1, 5: 0, 6: 0}
 
 # Columns that represent placement averages (1-6 range, midpoint = 3.5)
-PLACE_COLS = {'今節_平均着順', '今節_最新着順', '履歴_平均着順', '当場_平均着順'}
+PLACE_COLS = {
+    '今節_平均着順', '今節_最新着順', '履歴_平均着順', '当場_平均着順',
+    '今節_平均コース', '直近5走_平均着順', '直近10走_平均着順',
+}
 
 # Columns that represent rates/percentages (fill with median, not 0)
 RATE_COLS = {
     '全国勝率', '全国2連対率', '当地勝率', '当地2連対率',
     'モーター2連対率', 'ボート2連対率', '今節_3連対率',
     '履歴_1着率', 'イン1着率', '当場_1着率',
+    '直近5走_1着率',
 }
