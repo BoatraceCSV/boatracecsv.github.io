@@ -2,9 +2,12 @@
   "date": "2026-02-08",
   "total_races": 108,
   "hit_1st": 64,
-  "hit_2nd": 24,
-  "hit_3rd": 21,
+  "hit_2nd": 22,
+  "hit_3rd": 20,
   "all_hits": 7,
   "rate_1st": 0.5926,
-  "rate_all": 0.0648
+  "rate_all": 0.0648,
+  "hit_kimarite": 67,
+  "total_kimarite": 98,
+  "rate_kimarite": 0.6837
 }

@@ -6,5 +6,8 @@
   "hit_3rd": 20,
   "all_hits": 3,
   "rate_1st": 0.4842,
-  "rate_all": 0.0316
+  "rate_all": 0.0316,
+  "hit_kimarite": 48,
+  "total_kimarite": 86,
+  "rate_kimarite": 0.5581
 }

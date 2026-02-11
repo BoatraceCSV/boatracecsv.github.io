@@ -21,3 +21,21 @@
 {"date": "2026-02-07", "total_races": 144, "hit_1st": 66, "hit_2nd": 30, "hit_3rd": 30, "all_hits": 6, "rate_1st": 0.4583, "rate_all": 0.0417}
 {"date": "2026-02-08", "total_races": 108, "hit_1st": 56, "hit_2nd": 22, "hit_3rd": 18, "all_hits": 4, "rate_1st": 0.5185, "rate_all": 0.037}
 {"date": "2026-02-10", "total_races": 106, "hit_1st": 60, "hit_2nd": 30, "hit_3rd": 22, "all_hits": 8, "rate_1st": 0.566, "rate_all": 0.0755}
+{"date": "2026-01-02", "total_races": 178, "hit_1st": 110, "hit_2nd": 54, "hit_3rd": 42, "all_hits": 18, "rate_1st": 0.618, "rate_all": 0.1011, "hit_kimarite": 105, "total_kimarite": 166, "rate_kimarite": 0.6325}
+{"date": "2026-01-03", "total_races": 188, "hit_1st": 103, "hit_2nd": 55, "hit_3rd": 38, "all_hits": 18, "rate_1st": 0.5479, "rate_all": 0.0957, "hit_kimarite": 105, "total_kimarite": 169, "rate_kimarite": 0.6213}
+{"date": "2026-01-04", "total_races": 202, "hit_1st": 111, "hit_2nd": 57, "hit_3rd": 39, "all_hits": 11, "rate_1st": 0.5495, "rate_all": 0.0545, "hit_kimarite": 109, "total_kimarite": 190, "rate_kimarite": 0.5737}
+{"date": "2026-01-05", "total_races": 155, "hit_1st": 77, "hit_2nd": 31, "hit_3rd": 36, "all_hits": 9, "rate_1st": 0.4968, "rate_all": 0.0581, "hit_kimarite": 74, "total_kimarite": 139, "rate_kimarite": 0.5324}
+{"date": "2026-01-06", "total_races": 143, "hit_1st": 80, "hit_2nd": 41, "hit_3rd": 33, "all_hits": 13, "rate_1st": 0.5594, "rate_all": 0.0909, "hit_kimarite": 78, "total_kimarite": 135, "rate_kimarite": 0.5778}
+{"date": "2026-01-07", "total_races": 143, "hit_1st": 81, "hit_2nd": 39, "hit_3rd": 33, "all_hits": 10, "rate_1st": 0.5664, "rate_all": 0.0699, "hit_kimarite": 82, "total_kimarite": 135, "rate_kimarite": 0.6074}
+{"date": "2026-01-08", "total_races": 107, "hit_1st": 51, "hit_2nd": 28, "hit_3rd": 30, "all_hits": 9, "rate_1st": 0.4766, "rate_all": 0.0841, "hit_kimarite": 55, "total_kimarite": 100, "rate_kimarite": 0.55}
+{"date": "2026-01-09", "total_races": 106, "hit_1st": 52, "hit_2nd": 27, "hit_3rd": 22, "all_hits": 11, "rate_1st": 0.4906, "rate_all": 0.1038, "hit_kimarite": 54, "total_kimarite": 101, "rate_kimarite": 0.5347}
+{"date": "2026-01-10", "total_races": 84, "hit_1st": 46, "hit_2nd": 19, "hit_3rd": 15, "all_hits": 5, "rate_1st": 0.5476, "rate_all": 0.0595, "hit_kimarite": 42, "total_kimarite": 76, "rate_kimarite": 0.5526}
+{"date": "2026-01-11", "total_races": 118, "hit_1st": 66, "hit_2nd": 28, "hit_3rd": 17, "all_hits": 6, "rate_1st": 0.5593, "rate_all": 0.0508, "hit_kimarite": 61, "total_kimarite": 107, "rate_kimarite": 0.5701}
+{"date": "2026-01-12", "total_races": 155, "hit_1st": 87, "hit_2nd": 40, "hit_3rd": 32, "all_hits": 11, "rate_1st": 0.5613, "rate_all": 0.071, "hit_kimarite": 91, "total_kimarite": 151, "rate_kimarite": 0.6026}
+{"date": "2026-01-13", "total_races": 125, "hit_1st": 69, "hit_2nd": 34, "hit_3rd": 28, "all_hits": 11, "rate_1st": 0.552, "rate_all": 0.088, "hit_kimarite": 61, "total_kimarite": 112, "rate_kimarite": 0.5446}
+{"date": "2026-01-14", "total_races": 141, "hit_1st": 69, "hit_2nd": 40, "hit_3rd": 34, "all_hits": 12, "rate_1st": 0.4894, "rate_all": 0.0851, "hit_kimarite": 65, "total_kimarite": 132, "rate_kimarite": 0.4924}
+{"date": "2026-01-15", "total_races": 129, "hit_1st": 69, "hit_2nd": 32, "hit_3rd": 24, "all_hits": 8, "rate_1st": 0.5349, "rate_all": 0.062, "hit_kimarite": 65, "total_kimarite": 119, "rate_kimarite": 0.5462}
+{"date": "2026-01-16", "total_races": 116, "hit_1st": 66, "hit_2nd": 38, "hit_3rd": 21, "all_hits": 6, "rate_1st": 0.569, "rate_all": 0.0517, "hit_kimarite": 64, "total_kimarite": 110, "rate_kimarite": 0.5818}
+{"date": "2026-01-17", "total_races": 23, "hit_1st": 9, "hit_2nd": 3, "hit_3rd": 3, "all_hits": 0, "rate_1st": 0.3913, "rate_all": 0.0, "hit_kimarite": 9, "total_kimarite": 21, "rate_kimarite": 0.4286}
+{"date": "2026-01-18", "total_races": 142, "hit_1st": 76, "hit_2nd": 45, "hit_3rd": 38, "all_hits": 12, "rate_1st": 0.5352, "rate_all": 0.0845, "hit_kimarite": 76, "total_kimarite": 135, "rate_kimarite": 0.563}
+{"date": "2026-01-19", "total_races": 11, "hit_1st": 6, "hit_2nd": 3, "hit_3rd": 1, "all_hits": 1, "rate_1st": 0.5455, "rate_all": 0.0909, "hit_kimarite": 6, "total_kimarite": 11, "rate_kimarite": 0.5455}

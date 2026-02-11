@@ -3,8 +3,11 @@
   "total_races": 106,
   "hit_1st": 60,
   "hit_2nd": 30,
-  "hit_3rd": 22,
-  "all_hits": 8,
+  "hit_3rd": 20,
+  "all_hits": 7,
   "rate_1st": 0.566,
-  "rate_all": 0.0755
+  "rate_all": 0.066,
+  "hit_kimarite": 61,
+  "total_kimarite": 98,
+  "rate_kimarite": 0.6224
 }

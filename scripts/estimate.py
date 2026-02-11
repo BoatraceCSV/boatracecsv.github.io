@@ -378,7 +378,8 @@ def make_predictions(models_dict, predict_date, repo_root):
         except Exception as e:
             print(f"Warning: Failed to load external stats: {e}", file=sys.stderr)
 
-    # Kimarite prediction: compute P(逃げ) per race
+    # Kimarite prediction: compute P(逃げ) per race and store predictions for CSV
+    kimarite_predictions = {}
     kimarite_info = models_dict.get('_kimarite_model')
     if kimarite_info is not None:
         kim_model = kimarite_info['model']
@@ -423,6 +424,13 @@ def make_predictions(models_dict, predict_date, repo_root):
                 on='レースコード', how='left'
             )
             merged['P_逃げ'] = merged['P_逃げ'].fillna(0.6)
+
+            # Store per-race kimarite predictions for CSV output
+            predicted_classes = kim_le.classes_[proba.argmax(axis=1)]
+            for idx, rc in enumerate(race_first['レースコード'].values):
+                kimarite_predictions[rc] = {
+                    '予想決まり手': predicted_classes[idx],
+                }
         except Exception as e:
             print(f"Kimarite prediction failed: {e}", file=sys.stderr)
             merged['P_逃げ'] = 0.6
@@ -495,12 +503,15 @@ def make_predictions(models_dict, predict_date, repo_root):
         boat_numbers = race_data['艇番'].values
         top_indices = np.argsort(-ensemble)[:3]
 
-        predictions.append({
+        pred = {
             'レースコード': race_code,
             '予想1着': int(boat_numbers[top_indices[0]]),
             '予想2着': int(boat_numbers[top_indices[1]]),
             '予想3着': int(boat_numbers[top_indices[2]]),
-        })
+        }
+        if race_code in kimarite_predictions:
+            pred.update(kimarite_predictions[race_code])
+        predictions.append(pred)
 
     return pd.DataFrame(predictions) if predictions else None
 

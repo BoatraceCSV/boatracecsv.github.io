@@ -62,17 +62,32 @@ def load_results(date, repo_root):
         return None
 
 
+def _normalize_kimarite(k):
+    """Normalize kimarite to 3 classes: 逃げ, 差し, まくり."""
+    if pd.isna(k) or str(k).strip() == '':
+        return None
+    k = str(k).strip()
+    if 'まくり差し' in k:
+        return 'まくり'
+    if k in ('逃げ', '差し', 'まくり'):
+        return k
+    return None  # 恵まれ, 抜き, ツケマイ etc.
+
+
 def compare_predictions(estimate_df, results_df):
     """Compare predictions with actual results."""
     if estimate_df is None or results_df is None:
         return None, None
 
     # Select required columns from results
-    results_cols = results_df[['レースコード', '1着_艇番', '2着_艇番', '3着_艇番']].copy()
+    result_col_list = ['レースコード', '1着_艇番', '2着_艇番', '3着_艇番']
+    if '決まり手' in results_df.columns:
+        result_col_list.append('決まり手')
+    results_cols = results_df[result_col_list].copy()
     results_cols = results_cols.rename(columns={
         '1着_艇番': '実際1着',
         '2着_艇番': '実際2着',
-        '3着_艇番': '実際3着'
+        '3着_艇番': '実際3着',
     })
 
     # Merge predictions with actual results
@@ -121,6 +136,19 @@ def compare_predictions(estimate_df, results_df):
         'all_hits': all_hits,
     }
 
+    # Kimarite comparison (if both predicted and actual are available)
+    has_kimarite = '予想決まり手' in merged.columns and '決まり手' in merged.columns
+    if has_kimarite:
+        merged['実際決まり手'] = merged['決まり手'].apply(_normalize_kimarite)
+        comparable = merged['実際決まり手'].notna() & merged['予想決まり手'].notna()
+        merged['決まり手的中'] = '-'
+        merged.loc[comparable, '決まり手的中'] = merged.loc[comparable].apply(
+            lambda row: '○' if row['予想決まり手'] == row['実際決まり手'] else '×',
+            axis=1,
+        )
+        stats['total_kimarite'] = int(comparable.sum())
+        stats['hit_kimarite'] = int((merged['決まり手的中'] == '○').sum())
+
     return merged, stats
 
 
@@ -140,8 +168,12 @@ def save_confirmation(confirmation_df, date, repo_root, commit=True):
         'レースコード',
         '予想1着', '予想2着', '予想3着',
         '実際1着', '実際2着', '実際3着',
-        '1着的中', '2着的中', '3着的中', '全的中'
+        '1着的中', '2着的中', '3着的中', '全的中',
     ]
+    # Add kimarite columns if available
+    for col in ['予想決まり手', '決まり手', '決まり手的中']:
+        if col in confirmation_df.columns:
+            output_cols.append(col)
 
     confirmation_df[output_cols].to_csv(
         output_path,
@@ -177,6 +209,12 @@ def print_statistics(stats, date):
           f"({100*stats['hit_3rd']/stats['total_races']:.1f}%)")
     print(f"  All 3 places: {stats['all_hits']}/{stats['total_races']} "
           f"({100*stats['all_hits']/stats['total_races']:.1f}%)")
+    if 'hit_kimarite' in stats:
+        total_k = stats['total_kimarite']
+        hit_k = stats['hit_kimarite']
+        if total_k > 0:
+            print(f"  Kimarite: {hit_k}/{total_k} "
+                  f"({100*hit_k/total_k:.1f}%)")
     print("-" * 70)
 
 
@@ -198,6 +236,11 @@ def save_metrics_json(stats, date, repo_root):
         'rate_1st': round(stats['hit_1st'] / total, 4) if total > 0 else 0,
         'rate_all': round(stats['all_hits'] / total, 4) if total > 0 else 0,
     }
+    if 'hit_kimarite' in stats:
+        total_k = stats['total_kimarite']
+        metrics['hit_kimarite'] = int(stats['hit_kimarite'])
+        metrics['total_kimarite'] = total_k
+        metrics['rate_kimarite'] = round(stats['hit_kimarite'] / total_k, 4) if total_k > 0 else 0
 
     # Daily JSON
     daily_path = metrics_dir / f'{date_str}.json'
@@ -373,11 +416,16 @@ def main():
                 git_paths.append(
                     f'data/confirm/{year}/{month}/{day}.csv'
                 )
+                kim_str = ""
+                if 'hit_kimarite' in stats and stats['total_kimarite'] > 0:
+                    kim_str = (f" kim={stats['hit_kimarite']}/{stats['total_kimarite']} "
+                               f"({100*stats['hit_kimarite']/stats['total_kimarite']:.1f}%)")
                 print(f"  {current.strftime('%Y-%m-%d')}: "
                       f"1st={stats['hit_1st']}/{stats['total_races']} "
                       f"({100*stats['hit_1st']/stats['total_races']:.1f}%) "
                       f"all={stats['all_hits']}/{stats['total_races']} "
-                      f"({100*stats['all_hits']/stats['total_races']:.1f}%)")
+                      f"({100*stats['all_hits']/stats['total_races']:.1f}%)"
+                      f"{kim_str}")
             else:
                 skipped += 1
             current += timedelta(days=1)
@@ -416,8 +464,11 @@ def main():
             display_cols = [
                 'レースコード', '予想1着', '予想2着', '予想3着',
                 '実際1着', '実際2着', '実際3着',
-                '1着的中', '2着的中', '3着的中', '全的中'
+                '1着的中', '2着的中', '3着的中', '全的中',
             ]
+            for col in ['予想決まり手', '決まり手', '決まり手的中']:
+                if col in confirmation_df.columns:
+                    display_cols.append(col)
             print(confirmation_df[display_cols].head(10).to_string(index=False))
 
 
