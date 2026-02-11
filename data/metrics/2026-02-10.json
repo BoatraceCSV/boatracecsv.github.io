@@ -3,11 +3,16 @@
   "total_races": 106,
   "hit_1st": 60,
   "hit_2nd": 30,
-  "hit_3rd": 20,
+  "hit_3rd": 19,
   "all_hits": 7,
   "rate_1st": 0.566,
   "rate_all": 0.066,
-  "hit_kimarite": 61,
+  "hit_kimarite": 60,
   "total_kimarite": 98,
-  "rate_kimarite": 0.6224
+  "rate_kimarite": 0.6122,
+  "hit_course_all": 69,
+  "total_course": 106,
+  "rate_course_all": 0.6509,
+  "avg_course_hits": 4.42,
+  "st_mae": 0.1144
 }

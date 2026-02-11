@@ -9,5 +9,10 @@
   "rate_all": 0.0417,
   "hit_kimarite": 51,
   "total_kimarite": 90,
-  "rate_kimarite": 0.5667
+  "rate_kimarite": 0.5667,
+  "hit_course_all": 79,
+  "total_course": 96,
+  "rate_course_all": 0.8229,
+  "avg_course_hits": 5.66,
+  "st_mae": 0.1151
 }
