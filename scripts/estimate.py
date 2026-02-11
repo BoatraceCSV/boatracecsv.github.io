@@ -28,6 +28,7 @@ from boatrace.constants import (
     DEFAULT_ADVANTAGE_MAP,
     PLACE_COLS as _PLACE_COLS,
     RATE_COLS as _RATE_COLS,
+    WIND_DIRECTION_TO_ANGLE,
 )
 from boatrace.common import (
     get_repo_root,
@@ -74,7 +75,10 @@ def merge_data(programs_long, previews_long=None, results_long=None):
 
     # Merge with previews if available
     if previews_long is not None and not previews_long.empty:
-        preview_cols = ['レースコード', '艇番', 'コース', 'スタート展示', 'チルト調整', '展示タイム']
+        preview_cols = [
+            'レースコード', '艇番', 'コース', 'スタート展示', 'チルト調整', '展示タイム',
+            '風速(m)', '風向', '波の高さ(cm)', '気温(℃)', '水温(℃)',
+        ]
         # Filter to only columns that exist in previews_long
         existing_cols = [c for c in preview_cols if c in previews_long.columns]
         if len(existing_cols) > 2:  # At least レースコード and 艇番
@@ -216,6 +220,11 @@ def load_models(repo_root):
             models_dict = pickle.load(f)
         stadium_count = sum(1 for k in models_dict if not str(k).startswith('_'))
         print(f"Loaded {stadium_count} stadium models from {model_path}")
+        metadata = models_dict.get('_metadata')
+        if metadata:
+            print(f"Model v{metadata.get('model_version', '?')}, "
+                  f"trained {metadata.get('training_date', '?')[:10]}, "
+                  f"{metadata.get('feature_count', '?')} features")
         return models_dict
     except Exception as e:
         print(f"Error loading models: {e}", file=sys.stderr)
@@ -238,7 +247,7 @@ def make_predictions(models_dict, predict_date, repo_root):
 
     # Reshape data
     programs_long = reshape_programs(programs)
-    previews_long = reshape_previews(previews) if previews is not None else None
+    previews_long = reshape_previews(previews, include_weather=True) if previews is not None else None
     results_long = reshape_results(results) if results is not None else None
 
     # Merge data
@@ -273,6 +282,12 @@ def make_predictions(models_dict, predict_date, repo_root):
     merged = compute_konseki_features(merged)
     merged = compute_relative_features(merged)
     merged = compute_course_features(merged)
+
+    # Wind direction circular encoding
+    if '風向' in merged.columns:
+        angles = merged['風向'].map(WIND_DIRECTION_TO_ANGLE)
+        merged['風向sin'] = np.sin(np.radians(angles)).fillna(0)
+        merged['風向cos'] = np.cos(np.radians(angles)).fillna(0)
 
     # Encode grade
     if '級別' in merged.columns:
@@ -327,6 +342,90 @@ def make_predictions(models_dict, predict_date, repo_root):
             merged['直近10走_平均着順'] = merged['直近10走_平均着順'].fillna(3.5)
         if '直近5走_1着率' in merged.columns:
             merged['直近5走_1着率'] = merged['直近5走_1着率'].fillna(0.167)
+
+    # Override with external player stats if available (fresher data)
+    external_stats_path = repo_root / 'models' / 'player_stats_latest.json'
+    if external_stats_path.exists() and '登録番号' in merged.columns:
+        try:
+            import json
+            with open(external_stats_path) as f:
+                ext_data = json.load(f)
+            ext_stats = ext_data.get('stats', {})
+            # Convert to DataFrame for vectorized merge
+            ext_records = []
+            for reg_str, stats in ext_stats.items():
+                row = {'登録番号': int(reg_str)}
+                row.update(stats)
+                ext_records.append(row)
+            if ext_records:
+                ext_df = pd.DataFrame(ext_records)
+                stat_cols = [c for c in ext_df.columns if c != '登録番号']
+                # Rename to avoid conflicts, then override
+                rename_map = {c: f'{c}_ext' for c in stat_cols}
+                ext_df = ext_df.rename(columns=rename_map)
+                merged = merged.merge(ext_df, on='登録番号', how='left')
+                override_count = 0
+                for col in stat_cols:
+                    ext_col = f'{col}_ext'
+                    if ext_col in merged.columns:
+                        mask = merged[ext_col].notna()
+                        if col not in merged.columns:
+                            merged[col] = np.nan
+                        merged.loc[mask, col] = merged.loc[mask, ext_col]
+                        override_count += mask.sum()
+                        merged = merged.drop(columns=[ext_col])
+                print(f"Applied external stats ({len(ext_records)} players) from {external_stats_path}")
+        except Exception as e:
+            print(f"Warning: Failed to load external stats: {e}", file=sys.stderr)
+
+    # Kimarite prediction: compute P(逃げ) per race
+    kimarite_info = models_dict.get('_kimarite_model')
+    if kimarite_info is not None:
+        kim_model = kimarite_info['model']
+        kim_features = kimarite_info['feature_cols']
+        kim_le = kimarite_info['label_encoder']
+        nige_idx = list(kim_le.classes_).index('逃げ') if '逃げ' in kim_le.classes_ else 0
+
+        race_first = merged.groupby('レースコード').first().reset_index()
+        kim_X = pd.DataFrame(index=race_first.index)
+        for c in kim_features:
+            if c == '場コード' and 'レース場_num' in race_first.columns:
+                kim_X[c] = race_first['レース場_num']
+            elif c == '風速' and '風速(m)' in race_first.columns:
+                kim_X[c] = pd.to_numeric(race_first['風速(m)'], errors='coerce').fillna(3.0)
+            elif c in ('風向sin', '風向cos') and c in race_first.columns:
+                kim_X[c] = race_first[c].fillna(0)
+            elif c == '波高' and '波の高さ(cm)' in race_first.columns:
+                kim_X[c] = pd.to_numeric(race_first['波の高さ(cm)'], errors='coerce').fillna(3.0)
+            elif c == 'イン有利度' and 'イン有利度' in race_first.columns:
+                kim_X[c] = race_first['イン有利度']
+            elif c.startswith('1枠_'):
+                col_name = c[3:]
+                boat1 = merged[merged['枠'] == 1][['レースコード', col_name]].drop_duplicates('レースコード')
+                boat1 = boat1.rename(columns={col_name: c})
+                merged_tmp = race_first[['レースコード']].merge(boat1, on='レースコード', how='left')
+                kim_X[c] = merged_tmp[c].fillna(0).values
+            elif c == '他艇_最大勝率' and '全国勝率' in merged.columns:
+                others = merged[merged['枠'].isin([2, 3, 4, 5, 6])].groupby('レースコード')['全国勝率'].max().reset_index()
+                others = others.rename(columns={'全国勝率': '他艇_最大勝率'})
+                merged_tmp = race_first[['レースコード']].merge(others, on='レースコード', how='left')
+                kim_X[c] = merged_tmp['他艇_最大勝率'].fillna(0).values
+            else:
+                kim_X[c] = 0
+        for c in kim_X.columns:
+            kim_X[c] = pd.to_numeric(kim_X[c], errors='coerce').fillna(0)
+
+        try:
+            proba = kim_model.predict_proba(kim_X.values)
+            race_first['P_逃げ'] = proba[:, nige_idx]
+            merged = merged.merge(
+                race_first[['レースコード', 'P_逃げ']],
+                on='レースコード', how='left'
+            )
+            merged['P_逃げ'] = merged['P_逃げ'].fillna(0.6)
+        except Exception as e:
+            print(f"Kimarite prediction failed: {e}", file=sys.stderr)
+            merged['P_逃げ'] = 0.6
 
     w_rank, w_cls, w_gbc = ensemble_weights
 

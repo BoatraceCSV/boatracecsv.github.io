@@ -76,3 +76,11 @@ RATE_COLS = {
     '履歴_1着率', 'イン1着率', '当場_1着率',
     '直近5走_1着率',
 }
+
+# Wind direction circular encoding (text/code → angle in degrees)
+WIND_DIRECTION_TO_ANGLE = {
+    '北': 0, '北東': 45, '東': 90, '南東': 135,
+    '南': 180, '南西': 225, '西': 270, '北西': 315,
+    1: 0, 2: 45, 3: 90, 4: 135,
+    5: 180, 6: 225, 7: 270, 8: 315,
+}

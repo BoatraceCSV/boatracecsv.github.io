@@ -1,0 +1,8 @@
+{
+  "current_model": "program_models_v2.pkl",
+  "model_version": "2.1.0",
+  "training_date": "2026-02-09",
+  "feature_count": 49,
+  "eval_metric": "ndcg@1",
+  "note": "Will be updated to v2.2.0 after notebook re-execution with wind direction sin/cos + kimarite features"
+}

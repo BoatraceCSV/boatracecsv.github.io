@@ -1,0 +1,78 @@
+name: Retrain Models
+
+on:
+  workflow_dispatch:
+    inputs:
+      train_years:
+        description: 'Training year range (e.g., 2016-2025)'
+        required: false
+        default: '2016-2025'
+  schedule:
+    # Quarterly: 1st of Jan, Apr, Jul, Oct at 12:00 UTC
+    - cron: '0 12 1 1,4,7,10 *'
+
+env:
+  PYTHONUNBUFFERED: 1
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Pull LFS Files
+        run: |
+          git lfs pull
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r scripts/requirements.txt
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git config --global url."https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Train Models
+        run: |
+          python scripts/train.py --train-years ${{ github.event.inputs.train_years || '2016-2025' }}
+
+      - name: Validate Model
+        run: |
+          python scripts/estimate.py --date $(TZ=Asia/Tokyo date -d 'yesterday' +%Y-%m-%d 2>/dev/null || TZ=Asia/Tokyo date -v-1d +%Y-%m-%d)
+        continue-on-error: true
+
+      - name: Commit Model
+        run: |
+          git add models/program_models_v2.pkl models/manifest.json
+          if git diff --staged --quiet; then
+            echo "No model changes to commit"
+          else
+            git commit -m "Retrain models: $(date +%Y-%m-%d)"
+            git pull --rebase
+            git push
+          fi
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrain-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
+          if-no-files-found: ignore

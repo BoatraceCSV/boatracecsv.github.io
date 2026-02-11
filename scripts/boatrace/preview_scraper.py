@@ -761,16 +761,16 @@ class PreviewScraper:
             wind_text: Wind direction text
 
         Returns:
-            Wind direction code (1-4) or None
+            Wind direction code (1-8) or None
         """
         if not wind_text:
             return None
 
+        # Match longer strings first to avoid partial matches
+        # (e.g., "北西" before "北")
         direction_map = {
-            "北": 1,
-            "東": 2,
-            "南": 3,
-            "西": 4,
+            "北西": 8, "北東": 2, "南西": 6, "南東": 4,
+            "北": 1, "東": 3, "南": 5, "西": 7,
         }
 
         for key, code in direction_map.items():
@@ -810,30 +810,34 @@ class PreviewScraper:
     def _extract_wind_code_from_class(img_class: str) -> Optional[int]:
         """Extract wind direction code from image class.
 
-        HTML structure uses is-wind1/2/3/4/5 to indicate wind direction:
+        HTML structure uses is-wind1..8 to indicate wind direction:
         - is-wind1: 北 (north)
         - is-wind2: 北東 (northeast)
         - is-wind3: 東 (east)
         - is-wind4: 南東 (southeast)
         - is-wind5: 南 (south)
+        - is-wind6: 南西 (southwest)
+        - is-wind7: 西 (west)
+        - is-wind8: 北西 (northwest)
 
         Args:
             img_class: Image element class string
 
         Returns:
-            Wind direction code (1-4) or None
+            Wind direction code (1-8) or None
         """
         if not img_class:
             return None
 
-        # Map is-wind1..5 to wind direction codes 1-4
-        # Note: is-wind5 seems to indicate special cases
         wind_map = {
             "is-wind1": 1,  # 北
             "is-wind2": 2,  # 北東
-            "is-wind3": 2,  # 東
-            "is-wind4": 3,  # 南東
-            "is-wind5": 4,  # 南
+            "is-wind3": 3,  # 東
+            "is-wind4": 4,  # 南東
+            "is-wind5": 5,  # 南
+            "is-wind6": 6,  # 南西
+            "is-wind7": 7,  # 西
+            "is-wind8": 8,  # 北西
         }
 
         for wind_class, code in wind_map.items():

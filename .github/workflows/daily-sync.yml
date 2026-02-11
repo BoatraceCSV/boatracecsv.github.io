@@ -79,6 +79,12 @@ jobs:
         if: always()
         continue-on-error: true
 
+      - name: Update Player Stats
+        run: |
+          python scripts/update_player_stats.py
+        if: always()
+        continue-on-error: true
+
       - name: Estimate Races
         run: |
           python scripts/estimate.py
