@@ -16,6 +16,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 # Add boatrace package to path
@@ -149,6 +150,66 @@ def compare_predictions(estimate_df, results_df):
         stats['total_kimarite'] = int(comparable.sum())
         stats['hit_kimarite'] = int((merged['決まり手的中'] == '○').sum())
 
+    # 進入コース・STの的中判定
+    has_course_st = any(f'艇{i}_予想コース' in estimate_df.columns for i in range(1, 7))
+
+    if has_course_st:
+        # results の着順ベースデータを艇番ベースに変換
+        course_st_records = []
+        for _, row in results_df.iterrows():
+            rc = row['レースコード']
+            record = {'レースコード': rc}
+            for place in range(1, 7):
+                boat_col = f'{place}着_艇番'
+                course_col = f'{place}着_進入コース'
+                st_col = f'{place}着_スタートタイミング'
+                if boat_col in results_df.columns and pd.notna(row.get(boat_col)):
+                    boat_num = int(row[boat_col])
+                    if course_col in results_df.columns and pd.notna(row.get(course_col)):
+                        record[f'艇{boat_num}_実際コース'] = row[course_col]
+                    if st_col in results_df.columns and pd.notna(row.get(st_col)):
+                        record[f'艇{boat_num}_実際ST'] = row[st_col]
+            course_st_records.append(record)
+
+        if course_st_records:
+            course_st_df = pd.DataFrame(course_st_records)
+            merged = merged.merge(course_st_df, on='レースコード', how='left')
+
+        # 進入コース的中判定（ベクトル化）
+        course_hits = 0
+        for i in range(1, 7):
+            pred_col = f'艇{i}_予想コース'
+            actual_col = f'艇{i}_実際コース'
+            if pred_col in merged.columns and actual_col in merged.columns:
+                both_valid = merged[pred_col].notna() & merged[actual_col].notna()
+                match = both_valid & (merged[pred_col].astype(float) == merged[actual_col].astype(float))
+                course_hits += match.astype(int)
+
+        merged['コース一致数'] = course_hits
+        merged['進入完全一致'] = np.where(merged['コース一致数'] == 6, '○', '×')
+
+        # ST MAE 計算（ベクトル化）
+        st_errors = []
+        for i in range(1, 7):
+            pred_col = f'艇{i}_予想ST'
+            actual_col = f'艇{i}_実際ST'
+            if pred_col in merged.columns and actual_col in merged.columns:
+                err = (merged[pred_col].astype(float) - merged[actual_col].astype(float)).abs()
+                st_errors.append(err)
+
+        if st_errors:
+            merged['ST_MAE'] = pd.concat(st_errors, axis=1).mean(axis=1)
+
+        # 統計情報に追加
+        comparable_course = merged['コース一致数'].notna()
+        if comparable_course.any():
+            stats['total_course'] = int(comparable_course.sum())
+            stats['hit_course_all'] = int((merged['進入完全一致'] == '○').sum())
+            stats['avg_course_hits'] = float(merged.loc[comparable_course, 'コース一致数'].mean())
+
+        if 'ST_MAE' in merged.columns and merged['ST_MAE'].notna().any():
+            stats['st_mae'] = float(merged['ST_MAE'].mean())
+
     return merged, stats
 
 
@@ -174,6 +235,23 @@ def save_confirmation(confirmation_df, date, repo_root, commit=True):
     for col in ['予想決まり手', '決まり手', '決まり手的中']:
         if col in confirmation_df.columns:
             output_cols.append(col)
+
+    # 進入・ST関連カラムの追加
+    course_st_cols = []
+    for i in range(1, 7):
+        for col_name in [f'艇{i}_予想コース', f'艇{i}_実際コース']:
+            if col_name in confirmation_df.columns:
+                course_st_cols.append(col_name)
+    for summary_col in ['コース一致数', '進入完全一致']:
+        if summary_col in confirmation_df.columns:
+            course_st_cols.append(summary_col)
+    for i in range(1, 7):
+        for col_name in [f'艇{i}_予想ST', f'艇{i}_実際ST']:
+            if col_name in confirmation_df.columns:
+                course_st_cols.append(col_name)
+    if 'ST_MAE' in confirmation_df.columns:
+        course_st_cols.append('ST_MAE')
+    output_cols.extend(course_st_cols)
 
     confirmation_df[output_cols].to_csv(
         output_path,
@@ -215,6 +293,15 @@ def print_statistics(stats, date):
         if total_k > 0:
             print(f"  Kimarite: {hit_k}/{total_k} "
                   f"({100*hit_k/total_k:.1f}%)")
+    if 'hit_course_all' in stats:
+        total_c = stats['total_course']
+        hit_c = stats['hit_course_all']
+        avg_match = stats['avg_course_hits']
+        if total_c > 0:
+            print(f"  Course (all 6 match): {hit_c}/{total_c} ({100*hit_c/total_c:.1f}%)")
+            print(f"  Avg course match: {avg_match:.2f}/6")
+    if 'st_mae' in stats:
+        print(f"  Avg ST error (MAE): {stats['st_mae']:.4f}s")
     print("-" * 70)
 
 
@@ -241,6 +328,13 @@ def save_metrics_json(stats, date, repo_root):
         metrics['hit_kimarite'] = int(stats['hit_kimarite'])
         metrics['total_kimarite'] = total_k
         metrics['rate_kimarite'] = round(stats['hit_kimarite'] / total_k, 4) if total_k > 0 else 0
+    if 'hit_course_all' in stats:
+        metrics['hit_course_all'] = stats['hit_course_all']
+        metrics['total_course'] = stats['total_course']
+        metrics['rate_course_all'] = round(stats['hit_course_all'] / stats['total_course'], 4) if stats['total_course'] > 0 else 0
+        metrics['avg_course_hits'] = round(stats['avg_course_hits'], 2)
+    if 'st_mae' in stats:
+        metrics['st_mae'] = round(stats['st_mae'], 4)
 
     # Daily JSON
     daily_path = metrics_dir / f'{date_str}.json'

@@ -511,6 +511,23 @@ def make_predictions(models_dict, predict_date, repo_root):
         }
         if race_code in kimarite_predictions:
             pred.update(kimarite_predictions[race_code])
+
+        # 進入コース予想: 各艇番の予測コースを追加
+        if 'コース' in race_data.columns:
+            for _, boat_row in race_data.iterrows():
+                boat_num = int(boat_row['艇番'])
+                course = boat_row.get('コース')
+                if pd.notna(course):
+                    pred[f'艇{boat_num}_予想コース'] = int(course)
+
+        # スタートタイミング予想: 各艇番の予測STを追加
+        if 'スタート展示' in race_data.columns:
+            for _, boat_row in race_data.iterrows():
+                boat_num = int(boat_row['艇番'])
+                st = boat_row.get('スタート展示')
+                if pd.notna(st):
+                    pred[f'艇{boat_num}_予想ST'] = round(float(st), 3)
+
         predictions.append(pred)
 
     return pd.DataFrame(predictions) if predictions else None
@@ -549,6 +566,17 @@ def save_results(ranking_df, predict_date, repo_root):
 
     day = predict_date.strftime('%d')
     output_path = output_dir / f'{day}.csv'
+
+    # カラム存在保証（進入・STカラムが存在しない場合はNAで埋める）
+    expected_cols = ['レースコード', '予想1着', '予想2着', '予想3着', '予想決まり手']
+    for i in range(1, 7):
+        expected_cols.append(f'艇{i}_予想コース')
+    for i in range(1, 7):
+        expected_cols.append(f'艇{i}_予想ST')
+    for col in expected_cols:
+        if col not in ranking_df.columns:
+            ranking_df[col] = pd.NA
+    ranking_df = ranking_df[expected_cols]
 
     ranking_df.to_csv(output_path, index=False, encoding='utf-8-sig')
 
