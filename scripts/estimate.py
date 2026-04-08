@@ -512,13 +512,10 @@ def make_predictions(models_dict, predict_date, repo_root):
         if race_code in kimarite_predictions:
             pred.update(kimarite_predictions[race_code])
 
-        # 進入コース予想: 各艇番の予測コースを追加
-        if 'コース' in race_data.columns:
-            for _, boat_row in race_data.iterrows():
-                boat_num = int(boat_row['艇番'])
-                course = boat_row.get('コース')
-                if pd.notna(course):
-                    pred[f'艇{boat_num}_予想コース'] = int(course)
+        # 進入コース予想: 枠番=コース（全艇で枠番通りに進入すると予測）
+        for _, boat_row in race_data.iterrows():
+            boat_num = int(boat_row['艇番'])
+            pred[f'艇{boat_num}_予想コース'] = boat_num
 
         # スタートタイミング予想: 各艇番の予測STを追加
         if 'スタート展示' in race_data.columns:

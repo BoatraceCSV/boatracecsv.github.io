@@ -23,8 +23,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import linear_sum_assignment
-from sklearn.preprocessing import StandardScaler
 
 # Add boatrace package to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -127,11 +125,10 @@ def make_predictions(models, predict_date, repo_root):
         return None
 
     # Prepare predictions for each task
-    # Tasks: exhibition_time, course_entry, start_timing, tilt_adjustment
+    # Tasks: exhibition_time, start_timing, tilt_adjustment
+    # Note: course_entry is always frame number = course (枠番=コース)
     task_predictions = {
         'exhibition_time': [],
-        'course_entry': [],
-        'course_entry_proba': [],
         'start_timing': [],
         'tilt_adjustment': [],
     }
@@ -151,21 +148,13 @@ def make_predictions(models, predict_date, repo_root):
 
         # Make predictions for each task
         for task in task_predictions:
-            # course_entry_proba is populated alongside course_entry
-            if task == 'course_entry_proba':
-                continue
-
             if task not in models:
                 print(f"Task {task} not found in models", file=sys.stderr)
                 task_predictions[task].append(None)
-                if task == 'course_entry':
-                    task_predictions['course_entry_proba'].append(None)
                 continue
 
             if stadium_code not in models[task]:
                 task_predictions[task].append(None)
-                if task == 'course_entry':
-                    task_predictions['course_entry_proba'].append(None)
                 continue
 
             model_info = models[task][stadium_code]
@@ -178,21 +167,8 @@ def make_predictions(models, predict_date, repo_root):
                 X_row = prepare_features(programs_reset.iloc[idx:idx+1], feature_cols)
                 X_scaled = pd.DataFrame(scaler.transform(X_row), columns=X_row.columns)
 
-                # Make prediction based on task type
-                if task == 'course_entry':
-                    # Classification task: predict course (1-6)
-                    prediction = model.predict(X_scaled)[0]
-                    # Also collect predict_proba for Hungarian assignment
-                    try:
-                        proba = model.predict_proba(X_scaled)[0]
-                        classes = model.classes_
-                        proba_dict = {int(c): float(p) for c, p in zip(classes, proba)}
-                    except Exception:
-                        proba_dict = None
-                    task_predictions['course_entry_proba'].append(proba_dict)
-                else:
-                    # Regression task: predict value (time, timing, tilt)
-                    prediction = model.predict(X_scaled)[0]
+                # Regression task: predict value (time, timing, tilt)
+                prediction = model.predict(X_scaled)[0]
 
                 # Restore exhibition_time variance compressed by model averaging
                 # Actual std=0.114, predicted std=0.064 → noise σ=sqrt(0.114²-0.064²)≈0.094
@@ -203,43 +179,15 @@ def make_predictions(models, predict_date, repo_root):
             except Exception as e:
                 print(f"Error predicting {task} for row {idx}: {e}", file=sys.stderr)
                 task_predictions[task].append(None)
-                if task == 'course_entry':
-                    task_predictions['course_entry_proba'].append(None)
 
     # Add predictions to programs_long
-    programs_long['予測コース'] = task_predictions['course_entry']
-    programs_long['予測コース_proba'] = task_predictions['course_entry_proba']
+    # Course entry: always frame number = course (枠番=コース)
+    programs_long['予測コース'] = programs_long['艇番']
     programs_long['予測スタート展示'] = task_predictions['start_timing']
     programs_long['予測チルト調整'] = task_predictions['tilt_adjustment']
     programs_long['予測展示タイム'] = task_predictions['exhibition_time']
 
     return programs_long
-
-
-def _hungarian_course_assignment(probas):
-    """Assign courses to boats using Hungarian algorithm on predict_proba results.
-
-    Args:
-        probas: list of 6 dicts mapping course (int 1-6) -> probability, one per boat.
-
-    Returns:
-        dict mapping boat_num (1-6) -> assigned course (1-6), or None on failure.
-    """
-    if len(probas) != 6 or any(p is None for p in probas):
-        return None
-
-    try:
-        courses = list(range(1, 7))
-        # Build 6x6 cost matrix (negative probability for minimization)
-        cost = np.zeros((6, 6))
-        for boat_idx in range(6):
-            for course_idx, course in enumerate(courses):
-                cost[boat_idx, course_idx] = -probas[boat_idx].get(course, 0.0)
-
-        row_ind, col_ind = linear_sum_assignment(cost)
-        return {boat_idx + 1: courses[col] for boat_idx, col in zip(row_ind, col_ind)}
-    except Exception:
-        return None
 
 
 def reshape_to_wide_format(predictions_long, weather_stats, predict_date):
@@ -292,30 +240,15 @@ def reshape_to_wide_format(predictions_long, weather_stats, predict_date):
             '水温(℃)': weather['水温(℃)'],
         }
 
-        # Try Hungarian assignment using predict_proba
-        probas = []
-        for boat_num in range(1, 7):
-            boat_data = race_data[race_data['艇番'] == boat_num]
-            if not boat_data.empty:
-                probas.append(boat_data.iloc[0].get('予測コース_proba'))
-            else:
-                probas.append(None)
-
-        hungarian_result = _hungarian_course_assignment(probas)
-
         # Add boat-specific data
+        # Course entry: always frame number = course (枠番=コース)
         for boat_num in range(1, 7):
             boat_data = race_data[race_data['艇番'] == boat_num]
             if not boat_data.empty:
                 bd = boat_data.iloc[0]
                 weight = pd.to_numeric(bd.get('体重'), errors='coerce')
-                if hungarian_result is not None:
-                    course = hungarian_result[boat_num]
-                else:
-                    # Fallback: frame number = course
-                    course = boat_num
                 row[f'艇{boat_num}_艇番'] = boat_num
-                row[f'艇{boat_num}_コース'] = course
+                row[f'艇{boat_num}_コース'] = boat_num
                 row[f'艇{boat_num}_体重(kg)'] = weight if pd.notna(weight) else 0.0
                 row[f'艇{boat_num}_体重調整(kg)'] = 0.0
                 row[f'艇{boat_num}_展示タイム'] = bd['予測展示タイム']
@@ -323,7 +256,7 @@ def reshape_to_wide_format(predictions_long, weather_stats, predict_date):
                 row[f'艇{boat_num}_スタート展示'] = bd['予測スタート展示']
             else:
                 row[f'艇{boat_num}_艇番'] = boat_num
-                row[f'艇{boat_num}_コース'] = boat_num  # Fallback
+                row[f'艇{boat_num}_コース'] = boat_num
                 row[f'艇{boat_num}_体重(kg)'] = 0.0
                 row[f'艇{boat_num}_体重調整(kg)'] = 0.0
                 row[f'艇{boat_num}_展示タイム'] = None
