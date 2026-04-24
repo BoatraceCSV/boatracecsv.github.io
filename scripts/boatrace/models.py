@@ -208,6 +208,55 @@ class RacePreview:
 
 
 @dataclass
+class OriginalExhibitionBoat:
+    """Original exhibition data for a single boat (race.boatcast.jp)."""
+
+    boat_number: int
+    racer_name: Optional[str] = None
+    # Up to 3 measurement values. The meaning of each column depends on
+    # the stadium (see OriginalExhibitionData.measure_labels).
+    value1: Optional[float] = None
+    value2: Optional[float] = None
+    value3: Optional[float] = None
+
+
+@dataclass
+class OriginalExhibitionData:
+    """Original exhibition data (オリジナル展示データ) for a single race.
+
+    Source: https://race.boatcast.jp/txt/{jo}/bc_oriten_{YYYYMMDD}_{jo}_{race}.txt
+    """
+
+    date: str  # YYYY-MM-DD
+    stadium_number: int  # 1..24
+    race_number: int  # 1..12
+    race_code: str  # YYYYMMDDCCNN
+
+    # Status field from line 2, column 1 of source TSV.
+    # "1" = normal / measured, "2" = could not be measured,
+    # "0" = measuring (previous race not finished), None = no data yet.
+    status: Optional[str] = None
+
+    # Number of measurement columns (from line 2, column 2 of source TSV).
+    # 2 or 3 in practice.
+    measure_count: Optional[int] = None
+
+    # Measurement column labels (e.g., "一周", "まわり足", "直線").
+    measure_labels: List[str] = field(default_factory=list)
+
+    # Boats (always 6 when valid).
+    boats: List[OriginalExhibitionBoat] = field(default_factory=list)
+
+    def is_valid(self) -> bool:
+        """Check if the race data has all 6 boats."""
+        return len(self.boats) == 6
+
+    def is_measurable(self) -> bool:
+        """Return False when the stadium could not measure this race."""
+        return self.status not in ("2",)
+
+
+@dataclass
 class ConversionError:
     """Error during conversion process."""
 

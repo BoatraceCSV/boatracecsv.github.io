@@ -3,7 +3,12 @@
 import csv
 from io import StringIO
 from typing import List
-from .models import RaceResult, RaceProgram, RacePreview
+from .models import (
+    OriginalExhibitionData,
+    RacePreview,
+    RaceProgram,
+    RaceResult,
+)
 from . import logger as logging_module
 
 
@@ -515,6 +520,127 @@ def previews_to_csv(previews: List[RacePreview]) -> str:
         logging_module.error(
             "csv_generation_failed",
             file_type="previews",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Original exhibition data (オリジナル展示データ) from race.boatcast.jp
+# ---------------------------------------------------------------------------
+
+# One CSV row per race.
+# Column layout (fixed width; stadiums with only 2 measurements leave the
+# third measurement label and each 艇N_値3 column blank):
+#   レースコード, レース日, レース場, レース回, ステータス, 計測数,
+#   計測項目1, 計測項目2, 計測項目3,
+#   艇1_選手名, 艇1_値1, 艇1_値2, 艇1_値3,
+#   ...
+#   艇6_選手名, 艇6_値1, 艇6_値2, 艇6_値3
+ORIGINAL_EXHIBITION_HEADERS: List[str] = [
+    "レースコード",
+    "レース日",
+    "レース場",
+    "レース回",
+    "ステータス",
+    "計測数",
+    "計測項目1",
+    "計測項目2",
+    "計測項目3",
+]
+for _boat_num in range(1, 7):
+    ORIGINAL_EXHIBITION_HEADERS.extend(
+        [
+            f"艇{_boat_num}_選手名",
+            f"艇{_boat_num}_値1",
+            f"艇{_boat_num}_値2",
+            f"艇{_boat_num}_値3",
+        ]
+    )
+
+
+def _fmt_optional(value) -> str:
+    """Format an optional value for CSV: None -> ''."""
+    if value is None:
+        return ""
+    return str(value)
+
+
+def original_exhibition_to_row(data: OriginalExhibitionData) -> List[str]:
+    """Convert a single OriginalExhibitionData to a CSV row."""
+    labels = list(data.measure_labels) + [""] * 3
+    row: List[str] = [
+        data.race_code,
+        data.date,
+        str(data.stadium_number),
+        f"{data.race_number:02d}R",
+        _fmt_optional(data.status),
+        _fmt_optional(data.measure_count),
+        labels[0],
+        labels[1],
+        labels[2],
+    ]
+
+    # Index boats by number for stable ordering.
+    boats_by_number = {b.boat_number: b for b in data.boats}
+    for boat_num in range(1, 7):
+        boat = boats_by_number.get(boat_num)
+        if boat is None:
+            row.extend(["", "", "", ""])
+            continue
+        row.extend(
+            [
+                boat.racer_name or "",
+                _fmt_optional(boat.value1),
+                _fmt_optional(boat.value2),
+                _fmt_optional(boat.value3),
+            ]
+        )
+
+    return row
+
+
+def original_exhibition_to_csv(
+    items: List[OriginalExhibitionData],
+) -> str:
+    """Convert a list of OriginalExhibitionData to CSV content.
+
+    Args:
+        items: List of OriginalExhibitionData objects.
+
+    Returns:
+        CSV content as string (header + rows). Returns "" on failure.
+    """
+    try:
+        output = StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+
+        writer.writerow(ORIGINAL_EXHIBITION_HEADERS)
+
+        # Stable sort: by stadium then race number.
+        ordered = sorted(
+            items, key=lambda d: (d.stadium_number, d.race_number)
+        )
+        for item in ordered:
+            writer.writerow(original_exhibition_to_row(item))
+
+        csv_content = output.getvalue()
+        output.close()
+
+        logging_module.info(
+            "csv_generated",
+            file_type="original_exhibition",
+            rows=len(ordered) + 1,
+            size_bytes=len(csv_content.encode("utf-8")),
+        )
+
+        return csv_content
+
+    except Exception as e:
+        logging_module.error(
+            "csv_generation_failed",
+            file_type="original_exhibition",
             error=str(e),
             error_type=type(e).__name__,
         )
