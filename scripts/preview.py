@@ -16,6 +16,7 @@ from boatrace.extractor import extract_b_file
 from boatrace.parser import parse_program_file
 from boatrace.converter import previews_to_csv, VENUE_CODES
 from boatrace.preview_scraper import PreviewScraper
+from boatrace.preview_tsv_scraper import PreviewTsvScraper
 from boatrace.storage import write_csv
 from boatrace import git_operations
 
@@ -26,6 +27,7 @@ def process_preview(
     rate_limiter: RateLimiter,
     force_overwrite: bool = False,
     dry_run: bool = False,
+    source: str = "tsv",
 ) -> dict:
     """Process preview data via web scraping.
 
@@ -38,6 +40,9 @@ def process_preview(
         rate_limiter: Rate limiter instance
         force_overwrite: Whether to overwrite existing files
         dry_run: If True, don't write files
+        source: Data source to use. ``"tsv"`` (default) reads boatcast.jp
+            TSV files; ``"html"`` falls back to the legacy
+            ``www.boatrace.jp`` HTML scraper.
 
     Returns:
         Dictionary with processing statistics:
@@ -97,6 +102,9 @@ def process_preview(
 
     # Extract actual races from current date programs
     actual_races = set()  # Set of (stadium_code, race_number) tuples
+    # race_code -> program title, used to post-fill RacePreview.title when
+    # the chosen source (TSV) doesn't carry the race title itself.
+    title_by_code: dict = {}
     programs = None
 
     if b_content:
@@ -147,6 +155,14 @@ def process_preview(
                     continue
 
                 actual_races.add((int(stadium_code), race_number))
+                # Build race_code -> title lookup (used by the TSV source
+                # which has no title field of its own).
+                race_code = (
+                    f"{date_str.replace('-', '')}"
+                    f"{int(stadium_code):02d}{race_number:02d}"
+                )
+                if program.title:
+                    title_by_code[race_code] = program.title
             except (ValueError, IndexError, AttributeError):
                 logging_module.debug(
                     "preview_race_number_parse_error",
@@ -165,14 +181,21 @@ def process_preview(
     if config.get("enable_preview_scraping", True) and actual_races:
         try:
             previews = []
-            preview_scraper = PreviewScraper(
-                timeout_seconds=config.get("preview_scraper_timeout", 30),
-                rate_limiter=rate_limiter,
-            )
+            if source == "html":
+                preview_scraper = PreviewScraper(
+                    timeout_seconds=config.get("preview_scraper_timeout", 30),
+                    rate_limiter=rate_limiter,
+                )
+            else:
+                preview_scraper = PreviewTsvScraper(
+                    timeout_seconds=config.get("preview_scraper_timeout", 30),
+                    rate_limiter=rate_limiter,
+                )
 
             logging_module.info(
                 "preview_scraping_start",
                 date=date_str,
+                source=source,
                 total_expected=len(actual_races),
             )
 
@@ -201,6 +224,12 @@ def process_preview(
                             date_str, stadium_code, race_number
                         )
                         if preview:
+                            # The TSV source doesn't carry race titles; fill
+                            # from the program (B-file) lookup if available.
+                            if source != "html" and not preview.title:
+                                preview.title = title_by_code.get(
+                                    preview.race_code or "", None
+                                )
                             previews.append(preview)
                             stats["previews_scraped"] += 1
                     except Exception as e:
@@ -364,9 +393,20 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--source",
+        choices=["tsv", "html"],
+        default="tsv",
+        help=(
+            "Where to read preview data from. 'tsv' (default) reads "
+            "boatcast.jp TSV files; 'html' uses the legacy "
+            "www.boatrace.jp HTML scraper."
+        ),
+    )
+
+    parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 1.0.0",
+        version="%(prog)s 2.0.0",
     )
 
     return parser.parse_args()
@@ -403,6 +443,7 @@ def main():
         date=args.date,
         dry_run=args.dry_run,
         force=args.force,
+        source=args.source,
     )
 
     try:
@@ -418,6 +459,7 @@ def main():
             rate_limiter,
             force_overwrite=args.force,
             dry_run=args.dry_run,
+            source=args.source,
         )
 
         # Print summary
