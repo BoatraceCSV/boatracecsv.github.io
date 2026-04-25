@@ -424,7 +424,8 @@ scripts/
     └── conftest.py
 
 .github/workflows/
-└── daily-sync.yml               # GitHub Actions workflow (00:10 JST daily)
+├── daily-sync.yml                          # Daily data sync (00:10 JST)
+└── retrain.yml                             # Quarterly model retraining
 
 data/                            # Published data (created at runtime)
 ├── programs/
@@ -562,6 +563,13 @@ pytest --cov=boatrace tests/unit/
    - Settings → Pages → Source: Deploy from a branch
    - Branch: `main`
    - Folder: `/ (root)`
+
+### Workflows
+
+- **`daily-sync.yml`** — Runs every day at 00:10 JST. Processes Results, Programs, Previews, **Original Exhibition Data**, Predictions, Estimates, and Confirmations for the previous day. The Original Exhibition step is wrapped with `continue-on-error: true` so a third-party outage on `race.boatcast.jp` will not break the rest of the pipeline.
+- **`retrain.yml`** — Quarterly model retraining.
+
+For one-off historical backfills, run `scripts/backfill-original-exhibition.py` locally (see [Backfill Original Exhibition Data](#backfill-original-exhibition-data) above).
 
 ## Configuration
 

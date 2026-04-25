@@ -73,6 +73,12 @@ jobs:
           python scripts/preview.py --force
         if: always()
 
+      - name: Process Original Exhibition Data
+        run: |
+          python scripts/original-exhibition.py --force
+        if: always()
+        continue-on-error: true
+
       - name: Generate Preview Predictions
         run: |
           python scripts/prediction-preview.py --date $(TZ=Asia/Tokyo date +%Y-%m-%d)
