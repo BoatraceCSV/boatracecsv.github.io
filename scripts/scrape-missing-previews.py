@@ -28,11 +28,33 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from boatrace import logger as logging_module
 from boatrace.downloader import RateLimiter
-from boatrace.preview_scraper import PreviewScraper
+from boatrace.preview_tsv_scraper import PreviewTsvScraper
 from boatrace.converter import previews_to_csv, VENUE_CODES
 from boatrace.storage import write_csv
 from boatrace import git_operations
 from boatrace.common import get_repo_root
+
+
+def _lookup_title_in_csv(csv_path: Path, stadium_code: int) -> str:
+    """Return a title from any row in ``csv_path`` matching ``stadium_code``.
+
+    The TSV source has no race-title field, so when scraping a missing
+    race we copy the title from a sibling row at the same stadium on the
+    same day. Returns ``""`` when no match is found.
+    """
+    if not csv_path.exists():
+        return ""
+    try:
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if str(row.get("レース場", "")).strip() == str(stadium_code):
+                    title = row.get("タイトル") or ""
+                    if title:
+                        return title
+    except Exception:
+        pass
+    return ""
 
 
 def load_config(config_path: str = ".boatrace/config.json") -> dict:
@@ -78,10 +100,15 @@ def load_missing_previews(csv_path):
     return races_by_date
 
 
-def scrape_race_preview(date_str, stadium_code, race_number, config, rate_limiter):
-    """Scrape preview data for a single race."""
+def scrape_race_preview(date_str, stadium_code, race_number, config, rate_limiter, title=""):
+    """Scrape preview data for a single race.
+
+    Args:
+        title: Optional race title to inject (the TSV source doesn't carry
+            titles; pass one looked up from sibling rows in the day's CSV).
+    """
     try:
-        preview_scraper = PreviewScraper(
+        preview_scraper = PreviewTsvScraper(
             timeout_seconds=config.get("preview_scraper_timeout", 30),
             rate_limiter=rate_limiter,
         )
@@ -92,6 +119,9 @@ def scrape_race_preview(date_str, stadium_code, race_number, config, rate_limite
 
         if not preview:
             return None
+
+        if title and not preview.title:
+            preview.title = title
 
         csv_content = previews_to_csv([preview])
         return csv_content if csv_content else None
@@ -164,12 +194,17 @@ def process_date(date_str, races, config, rate_limiter, repo_root):
     for idx, race_info in enumerate(races, 1):
         print(f"  [{idx}/{len(races)}] Stadium {race_info['stadium']:2d} Race {race_info['race']:2d}... ", end='', file=sys.stderr, flush=True)
 
+        # Look up title from any same-stadium row in the existing CSV
+        # (TSV source has no race-title field).
+        title = _lookup_title_in_csv(csv_path, race_info['stadium'])
+
         csv_content = scrape_race_preview(
             date_str,
             race_info['stadium'],
             race_info['race'],
             config,
-            rate_limiter
+            rate_limiter,
+            title=title,
         )
 
         if csv_content:

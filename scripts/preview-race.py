@@ -24,10 +24,33 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from boatrace import logger as logging_module
 from boatrace.downloader import RateLimiter
-from boatrace.preview_scraper import PreviewScraper
+from boatrace.preview_tsv_scraper import PreviewTsvScraper
 from boatrace.converter import previews_to_csv, VENUE_CODES
 from boatrace.storage import write_csv
 from boatrace import git_operations
+
+
+def _lookup_title_in_csv(csv_path: Path, stadium_code: int) -> str:
+    """Return a title from any row in ``csv_path`` matching ``stadium_code``.
+
+    The TSV source has no race-title field, so when appending a single
+    race we copy the title from a sibling row at the same stadium on the
+    same day (which always shares the title). Returns ``""`` if no match
+    is found or the file doesn't yet exist.
+    """
+    if not csv_path.exists():
+        return ""
+    try:
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if str(row.get("レース場", "")).strip() == str(stadium_code):
+                    title = row.get("タイトル") or ""
+                    if title:
+                        return title
+    except Exception:
+        pass
+    return ""
 
 
 def parse_race_code(race_code: str) -> tuple:
@@ -212,15 +235,20 @@ def scrape_single_race(
     race_number: int,
     config: dict,
     rate_limiter: RateLimiter,
+    title: str = "",
 ) -> str:
     """
     Scrape preview data for a single race.
+
+    Args:
+        title: Optional race title to inject (the TSV source doesn't carry
+            titles; pass one looked up from sibling rows in the day's CSV).
 
     Returns:
         CSV content string, or empty string if scraping failed
     """
     try:
-        preview_scraper = PreviewScraper(
+        preview_scraper = PreviewTsvScraper(
             timeout_seconds=config.get("preview_scraper_timeout", 30),
             rate_limiter=rate_limiter,
         )
@@ -244,6 +272,9 @@ def scrape_single_race(
                 race=race_number,
             )
             return ""
+
+        if title and not preview.title:
+            preview.title = title
 
         # Convert to CSV
         csv_content = previews_to_csv([preview])
@@ -366,21 +397,27 @@ def main():
             interval_seconds=config.get("rate_limit_interval_seconds", 3)
         )
 
+        # Determine output path early — we use it both to look up a
+        # sibling row's title (TSV has no title field) and to write to.
+        year, month, day = date_str.split("-")
+        project_root = Path(__file__).parent.parent
+        csv_path = project_root / f"data/previews/{year}/{month}/{day}.csv"
+
+        # Pull a title from any same-stadium row in the existing CSV.
+        title = _lookup_title_in_csv(csv_path, stadium_code)
+
         # Scrape preview data
         csv_content = scrape_single_race(
-            date_str, stadium_code, race_number, config, rate_limiter
+            date_str, stadium_code, race_number, config, rate_limiter, title=title
         )
 
         if not csv_content:
             print("Error: Failed to scrape preview data")
             sys.exit(1)
 
-        # Determine output path
-        year, month, day = date_str.split("-")
-        project_root = Path(__file__).parent.parent
-        csv_path = project_root / f"data/previews/{year}/{month}/{day}.csv"
-
         print(f"Appending to: {csv_path}")
+        if title:
+            print(f"Title (from sibling row): {title}")
 
         # Append or overwrite preview data
         if append_preview_to_csv(csv_path, csv_content, overwrite=args.overwrite):

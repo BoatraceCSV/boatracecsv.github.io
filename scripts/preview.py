@@ -15,7 +15,6 @@ from boatrace.downloader import download_file, RateLimiter
 from boatrace.extractor import extract_b_file
 from boatrace.parser import parse_program_file
 from boatrace.converter import previews_to_csv, VENUE_CODES
-from boatrace.preview_scraper import PreviewScraper
 from boatrace.preview_tsv_scraper import PreviewTsvScraper
 from boatrace.storage import write_csv
 from boatrace import git_operations
@@ -27,12 +26,12 @@ def process_preview(
     rate_limiter: RateLimiter,
     force_overwrite: bool = False,
     dry_run: bool = False,
-    source: str = "tsv",
 ) -> dict:
-    """Process preview data via web scraping.
+    """Process preview data via TSV scraping.
 
-    Preview data is scraped for the given date. Programs are obtained from
-    the next day's B-file to determine which races exist.
+    Preview data is scraped from race.boatcast.jp's TSV endpoints for the
+    given date. Programs are obtained from the next day's B-file to
+    determine which races exist (and to source race titles).
 
     Args:
         date_str: Date in YYYY-MM-DD format
@@ -40,9 +39,6 @@ def process_preview(
         rate_limiter: Rate limiter instance
         force_overwrite: Whether to overwrite existing files
         dry_run: If True, don't write files
-        source: Data source to use. ``"tsv"`` (default) reads boatcast.jp
-            TSV files; ``"html"`` falls back to the legacy
-            ``www.boatrace.jp`` HTML scraper.
 
     Returns:
         Dictionary with processing statistics:
@@ -181,21 +177,14 @@ def process_preview(
     if config.get("enable_preview_scraping", True) and actual_races:
         try:
             previews = []
-            if source == "html":
-                preview_scraper = PreviewScraper(
-                    timeout_seconds=config.get("preview_scraper_timeout", 30),
-                    rate_limiter=rate_limiter,
-                )
-            else:
-                preview_scraper = PreviewTsvScraper(
-                    timeout_seconds=config.get("preview_scraper_timeout", 30),
-                    rate_limiter=rate_limiter,
-                )
+            preview_scraper = PreviewTsvScraper(
+                timeout_seconds=config.get("preview_scraper_timeout", 30),
+                rate_limiter=rate_limiter,
+            )
 
             logging_module.info(
                 "preview_scraping_start",
                 date=date_str,
-                source=source,
                 total_expected=len(actual_races),
             )
 
@@ -226,7 +215,7 @@ def process_preview(
                         if preview:
                             # The TSV source doesn't carry race titles; fill
                             # from the program (B-file) lookup if available.
-                            if source != "html" and not preview.title:
+                            if not preview.title:
                                 preview.title = title_by_code.get(
                                     preview.race_code or "", None
                                 )
@@ -393,17 +382,6 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        "--source",
-        choices=["tsv", "html"],
-        default="tsv",
-        help=(
-            "Where to read preview data from. 'tsv' (default) reads "
-            "boatcast.jp TSV files; 'html' uses the legacy "
-            "www.boatrace.jp HTML scraper."
-        ),
-    )
-
-    parser.add_argument(
         "--version",
         action="version",
         version="%(prog)s 2.0.0",
@@ -443,7 +421,6 @@ def main():
         date=args.date,
         dry_run=args.dry_run,
         force=args.force,
-        source=args.source,
     )
 
     try:
@@ -459,7 +436,6 @@ def main():
             rate_limiter,
             force_overwrite=args.force,
             dry_run=args.dry_run,
-            source=args.source,
         )
 
         # Print summary
