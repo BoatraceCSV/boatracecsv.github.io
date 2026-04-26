@@ -791,6 +791,71 @@ The script fetches `bc_mst` (motor period start date) and `bc_mdc` (per-motor st
 
 **Backfill is not possible** — race.boatcast.jp only exposes the current motor period for each stadium, so historical periods are lost. Run this script daily going forward to accumulate time-series snapshots.
 
+### Backfill Race Card Data
+
+`race.boatcast.jp` carries `bc_j_str3` from **2025-05-03** onwards. Use `backfill-race-card.py` to fetch a date range at once.
+
+```bash
+# Default: from 2025-05-03 to yesterday, skipping dates whose CSV already exists
+python scripts/backfill-race-card.py
+
+# Narrower range (inclusive)
+python scripts/backfill-race-card.py \
+  --start-date 2025-05-03 --end-date 2025-05-31
+
+# Overwrite existing CSVs
+python scripts/backfill-race-card.py \
+  --start-date 2025-05-03 --end-date 2025-05-31 --force
+
+# Dry run (fetch/parse but do not write files or push git)
+python scripts/backfill-race-card.py --dry-run
+
+# Commit & push each day as it completes (default OFF — backfills stay local)
+python scripts/backfill-race-card.py --push
+
+# Print a progress line every day (default: every 10 days)
+python scripts/backfill-race-card.py --progress-every 1
+```
+
+Characteristics:
+
+- **Resumable**: by default, any date whose CSV already exists under `data/race_cards/YYYY/MM/DD.csv` is skipped. Re-running after an interruption picks up where it left off.
+- **Rate-limited**: respects `rate_limit_interval_seconds` in `.boatrace/config.json`. With ~288 race-level requests per peak day, a full backfill (~12 months ≒ 360 days) takes several hours at the default 1s interval.
+- **No automatic git push**: default does not push anything. Use `--push` for per-day pushes, or run `git add data/race_cards && git commit && git push` manually once the run is complete.
+- **Earliest-date guard**: starting earlier than 2025-05-03 is allowed but the script warns, and those days are recorded as "no_races".
+
+### Backfill Recent Form Data
+
+`race.boatcast.jp` carries `bc_zensou` and `bc_zensou_touchi` from **2024-03-12** onwards. Use `backfill-recent-form.py` to populate both `data/recent_national/` and `data/recent_local/` for a date range.
+
+```bash
+# Default: from 2024-03-12 to yesterday, skipping dates whose national CSV exists
+python scripts/backfill-recent-form.py
+
+# Narrower range
+python scripts/backfill-recent-form.py \
+  --start-date 2024-03-12 --end-date 2024-03-31
+
+# Overwrite both CSVs
+python scripts/backfill-recent-form.py \
+  --start-date 2024-03-12 --end-date 2024-03-31 --force
+
+# Dry run
+python scripts/backfill-recent-form.py --dry-run
+
+# Per-day push (commits both national + local CSVs per day)
+python scripts/backfill-recent-form.py --push
+
+# More frequent progress
+python scripts/backfill-recent-form.py --progress-every 1
+```
+
+Characteristics:
+
+- **Resumable**: skip-if-exists is keyed off `data/recent_national/YYYY/MM/DD.csv`. If only `recent_local` is missing on a particular day, run with `--force` to regenerate both.
+- **Fast**: only 2 boatcast requests per stadium per day (one bc_zensou + one bc_zensou_touchi). Even a 24-stadium peak day is ~48 requests, so a full ~25-month backfill completes in well under an hour at the default rate-limit.
+- **Earliest-date guard**: starts before 2024-03-12 are allowed but the script warns, and those days record "no_races".
+
 ### Backfill Original Exhibition Data
 
 `race.boatcast.jp` has original exhibition data from **2024-03-11** onwards (earlier dates return HTTP 403). Use `backfill-original-exhibition.py` to fetch a date range at once.
