@@ -5,9 +5,13 @@ Aggregates daily CSV files into monthly Parquet files for faster I/O.
 Original CSVs are preserved; Parquet files are written to parallel directories.
 
 Directory structure:
-    data/programs/2025/01/01.csv  →  data/programs_parquet/2025/01.parquet
-    data/results/2025/01/01.csv   →  data/results_parquet/2025/01.parquet
-    data/previews/2025/01/01.csv  →  data/previews_parquet/2025/01.parquet
+    data/programs/2025/01/01.csv          →  data/programs_parquet/2025/01.parquet
+    data/results/2025/01/01.csv           →  data/results_parquet/2025/01.parquet
+    data/previews/2025/01/01.csv          →  data/previews_parquet/2025/01.parquet
+    data/race_cards/2026/04/25.csv        →  data/race_cards_parquet/2026/04.parquet
+    data/recent_national/2026/04/25.csv   →  data/recent_national_parquet/2026/04.parquet
+    data/recent_local/2026/04/25.csv      →  data/recent_local_parquet/2026/04.parquet
+    data/motor_stats/2026/04/25.csv       →  data/motor_stats_parquet/2026/04.parquet
 
 Usage:
     python scripts/convert_to_parquet.py
@@ -25,7 +29,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 from boatrace.common import get_repo_root
 
 
-DATA_TYPES = ['programs', 'results', 'previews']
+# Order matters for the default behaviour: legacy types first, then the
+# boatcast-derived datasets added in PR-1/2/3.
+DATA_TYPES = [
+    'programs',
+    'results',
+    'previews',
+    'race_cards',
+    'recent_national',
+    'recent_local',
+    'motor_stats',
+]
 
 
 def convert_month_to_parquet(repo_root, data_type, year, month):

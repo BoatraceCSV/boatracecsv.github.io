@@ -199,6 +199,148 @@ class ConversionError:
 
 ---
 
+## Entity: RaceCard
+
+**Source**: `bc_j_str3` TSV from race.boatcast.jp (per race; 39 columns)
+**Output**: CSV with 574 columns at `data/race_cards/YYYY/MM/DD.csv`
+
+Parallel to `RaceProgram` (which is sourced from the mbrace B-file). Adds
+fields not present in `programs.csv`: 全国/当地3連対率, 全国平均ST,
+F/L counts, モーター/ボート3連対率, and 14 explicit 節間 slots with
+race-number / entry-course / 枠 / ST / finish position. See README's
+*Race Cards* section for the full column list.
+
+```python
+@dataclass
+class RaceCardSession:
+    race_number: Optional[int]       # R番号 (1..12)
+    entry_course: Optional[int]      # 進入 (1..6)
+    waku: Optional[int]              # 枠 (1..6)
+    start_timing: Optional[float]    # ST (negative = フライング)
+    finish_position: Optional[str]   # "1"-"6" / "F" / "L" / "欠" / "転" / "妨" / "落"
+
+@dataclass
+class RaceCardBoat:
+    boat_number: int                          # 1..6 lane
+    registration_number: Optional[str]
+    racer_name: Optional[str]                 # 全角space normalised
+    period: Optional[str]                     # 期別
+    branch: Optional[str]; birthplace: Optional[str]
+    age: Optional[int]; grade: Optional[str]  # A1/A2/B1/B2
+    f_count: Optional[int]; l_count: Optional[int]
+    national_avg_st: Optional[float]
+    national_win_rate: Optional[float]
+    national_double_rate: Optional[float]
+    national_triple_rate: Optional[float]
+    local_win_rate: Optional[float]
+    local_double_rate: Optional[float]
+    local_triple_rate: Optional[float]
+    motor_flag: Optional[int]; motor_number: Optional[int]
+    motor_double_rate: Optional[float]; motor_triple_rate: Optional[float]
+    boat_flag: Optional[int]; boat_id: Optional[int]
+    boat_double_rate: Optional[float]; boat_triple_rate: Optional[float]
+    hayami: Optional[int]                     # 早見 (other R when 2 出場)
+    sessions: List[RaceCardSession]           # exactly 14 (7 days × 2 races/day)
+
+@dataclass
+class RaceCard:
+    date: str; stadium_number: int; race_number: int
+    race_code: str                            # YYYYMMDDCCNN
+    status: Optional[str]                     # "1" normal, "2" not held
+    ncols: Optional[int]                      # 通常 6
+    boats: List[RaceCardBoat]                 # 6 when valid
+```
+
+**Availability**: `bc_j_str3` is exposed by race.boatcast.jp from
+approximately **2025-05-02 onwards**. Programs continues to be the
+historical-baseline source.
+
+---
+
+## Entity: RecentForm
+
+**Source**: `bc_zensou` (national) / `bc_zensou_touchi` (local) TSVs from
+race.boatcast.jp (per stadium per day; 32 columns × ~50 racers)
+**Output**: CSV with 196 columns at:
+- `data/recent_national/YYYY/MM/DD.csv`
+- `data/recent_local/YYYY/MM/DD.csv`
+
+Both files share the **same dataclass and CSV schema** — only the
+underlying TSV (which determines the meaning of `finish_sequence`)
+differs. Each row carries 5 most-recent 節 (race series) per boat.
+
+```python
+@dataclass
+class RecentFormSession:
+    start_date: Optional[str]        # YYYY-MM-DD
+    end_date: Optional[str]          # YYYY-MM-DD
+    stadium_code: Optional[str]      # "01"-"24"
+    stadium_name: Optional[str]      # full-width spaces collapsed
+    grade: Optional[str]             # "一般" / "ＧⅢ" / ... / "ＳＧ"
+    finish_sequence: Optional[str]   # raw 全角 string with day separators
+
+@dataclass
+class RecentFormBoat:
+    boat_number: int                 # 1..6
+    registration_number: Optional[str]
+    racer_name: Optional[str]
+    sessions: List[RecentFormSession]  # exactly 5; index 0 = 前1節 (most recent)
+
+@dataclass
+class RecentForm:
+    date: str; stadium_number: int; race_number: int
+    race_code: str
+    boats: List[RecentFormBoat]      # 6 when valid
+```
+
+**Join strategy**: scrape one TSV per stadium per day (2 requests for
+both variants), index by `登録番号`, then join with the B-file's
+`(entry_number, registration_number)` pairs to expand into per-race
+rows. Newcomers with fewer than 5 prior 節 leave the trailing slots
+fully blank.
+
+---
+
+## Entity: MotorStat
+
+**Source**: `bc_mst` (motor period start date) + `bc_mdc` (per-motor
+detail; 33 columns) from race.boatcast.jp
+**Output**: CSV with 34 columns at `data/motor_stats/YYYY/MM/DD.csv`
+(one row per motor at each open stadium)
+
+Confidence labels (★★★ JS-confirmed or distribution-verified, ★★
+strong situational evidence, ★ hypothesis only) are documented in the
+README's *Motor Stats* section. ★ columns are kept as `raw_col_NN`
+fields so future semantic naming does not require schema migration.
+
+```python
+@dataclass
+class MotorStat:
+    record_date: str                            # YYYY-MM-DD (snapshot date)
+    motor_period_start: Optional[str]           # YYYY-MM-DD
+    stadium_code: Optional[str]                 # "01"-"24"
+    motor_number: Optional[int]
+    win_rate: Optional[float]; win_rate_rank: Optional[int]
+    double_rate: Optional[float]; double_rate_rank: Optional[int]
+    triple_rate: Optional[float]; triple_rate_rank: Optional[int]
+    first_count: Optional[int]; first_rank: Optional[int]
+    second_count: Optional[int]; second_rank: Optional[int]
+    third_count: Optional[int]; third_rank: Optional[int]
+    raw_col_15: Optional[int]; raw_col_16: Optional[int]   # ★
+    championship_count: Optional[int]; championship_rank: Optional[int]  # 優勝
+    final_count: Optional[int]; final_rank: Optional[int]                # 優出
+    raw_col_21: Optional[int]; raw_col_22: Optional[int]   # ★
+    avg_lap_seconds: Optional[float]; avg_lap_rank: Optional[int]
+    first_use_date: Optional[str]
+    maintenance_type1_count..6_count: Optional[int]        # 6 categories
+    last_maintenance_date: Optional[str]
+```
+
+**Backfill**: not possible — race.boatcast.jp returns only the current
+motor period. Forward-only daily snapshots accumulate the time-series.
+
+---
+
 ## Relationships
 
 ```
@@ -207,18 +349,36 @@ ConversionSession
 │   └── RacerResult (6 per race)
 ├── RaceProgram (multiple per date if multiple stadiums)
 │   └── RacerFrame (6 per program)
+├── RaceCard (parallel to RaceProgram; same race_code)
+│   └── RaceCardBoat (6 per card)
+│       └── RaceCardSession (14 per boat)
+├── RecentForm × 2 (national + local; per race)
+│   └── RecentFormBoat (6 per form)
+│       └── RecentFormSession (5 per boat, most recent first)
+├── MotorStat (1 per motor at each open stadium per day)
 └── ConversionError (0 or more)
 ```
+
+Race-level join key: `race_code` (YYYYMMDDCCNN) for `RaceProgram` /
+`RaceCard` / `RecentForm` / `RaceResult` / `RacePreview` /
+`OriginalExhibitionData`.
+Motor-level join key: `(record_date, stadium_code, motor_number)` for
+`MotorStat` ↔ `RaceCardBoat.motor_number`.
 
 ---
 
 ## Storage Strategy
 
-**In-Memory**: RaceResult, RaceProgram, RacerResult, RacerFrame (no persistence needed - generated per run)
+**In-Memory**: RaceResult, RaceProgram, RacerResult, RacerFrame,
+RaceCard / RecentForm / MotorStat (no persistence needed - generated per run)
 
 **File-Based**:
 - Results CSV: `data/results/YYYY/MM/DD.csv`
 - Program CSV: `data/programs/YYYY/MM/DD.csv`
+- Race Card CSV: `data/race_cards/YYYY/MM/DD.csv`
+- Recent National Form CSV: `data/recent_national/YYYY/MM/DD.csv`
+- Recent Local Form CSV: `data/recent_local/YYYY/MM/DD.csv`
+- Motor Stats CSV: `data/motor_stats/YYYY/MM/DD.csv`
 - Error logs: `logs/boatrace-YYYY-MM-DD.json`
 
 **Git**:

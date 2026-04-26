@@ -79,6 +79,24 @@ jobs:
         if: always()
         continue-on-error: true
 
+      - name: Process Race Cards (boatcast bc_j_str3)
+        run: |
+          python scripts/race-card.py --force
+        if: always()
+        continue-on-error: true
+
+      - name: Process Recent Form (boatcast bc_zensou + bc_zensou_touchi)
+        run: |
+          python scripts/recent-form.py --force
+        if: always()
+        continue-on-error: true
+
+      - name: Process Motor Stats (boatcast bc_mst + bc_mdc)
+        run: |
+          python scripts/motor-stats.py --force
+        if: always()
+        continue-on-error: true
+
       - name: Generate Preview Predictions
         run: |
           python scripts/prediction-preview.py --date $(TZ=Asia/Tokyo date +%Y-%m-%d)
