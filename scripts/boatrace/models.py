@@ -257,6 +257,100 @@ class OriginalExhibitionData:
 
 
 @dataclass
+class RaceCardSession:
+    """One slot of 節間成績 (in-series race-by-race breakdown).
+
+    A racer can race up to twice per day. ``bc_j_str3`` carries 7 day x 2 slot =
+    14 quintuples (col[25]..col[38]). Each quintuple is encoded as
+    ``"{R番号},{進入},{枠},{ST},{着順}"`` where:
+
+    - Empty placeholder rows look like ``"-,-,-,-,-"`` (no race in that slot).
+    - ``ST`` may have a leading dot (``".10"`` -> ``0.10``).
+    - ``着順`` is a single-character token: full-width digit ``"１"-"６"`` for
+      finishing position, or one of the special tokens ``"F"`` フライング /
+      ``"L"`` 出遅れ / ``"欠"`` 欠場 / ``"転"`` 転覆 / ``"妨"`` 妨害失格 /
+      ``"落"`` 落水. Stored as half-width string so consumers can compare with
+      ``"1"-"6"`` directly.
+    """
+
+    race_number: Optional[int] = None  # R番号 (1..12)
+    entry_course: Optional[int] = None  # 進入 (1..6)
+    waku: Optional[int] = None  # 枠 (1..6)
+    start_timing: Optional[float] = None  # ST (.10 -> 0.10; F flag is captured in finish_position)
+    finish_position: Optional[str] = None  # 着順 ("1"-"6" / "F" / "L" / "欠" / "転" / "妨" / "落")
+
+
+@dataclass
+class RaceCardBoat:
+    """One boat's row in bc_j_str3 (出走表詳細, parallel to programs)."""
+
+    boat_number: int  # 1..6 (= line number after "data=" / header)
+
+    # Identity
+    registration_number: Optional[str] = None  # 登録番号
+    racer_name: Optional[str] = None  # 選手名 (full-width spaces collapsed to single half-width)
+    period: Optional[str] = None  # 期別 (e.g. "81期")
+    branch: Optional[str] = None  # 支部 (e.g. "愛知")
+    birthplace: Optional[str] = None  # 出身地
+    age: Optional[int] = None
+    grade: Optional[str] = None  # 級別 ("A1" / "A2" / "B1" / "B2")
+
+    # Penalty / late counts
+    f_count: Optional[int] = None  # F本数
+    l_count: Optional[int] = None  # L本数
+
+    # National stats (past 6 months excl. current series)
+    national_avg_st: Optional[float] = None  # 全国平均ST
+    national_win_rate: Optional[float] = None  # 全国勝率
+    national_double_rate: Optional[float] = None  # 全国2連対率 (%)
+    national_triple_rate: Optional[float] = None  # 全国3連対率 (%)
+
+    # Local stats (past 3 years at this stadium)
+    local_win_rate: Optional[float] = None  # 当地勝率
+    local_double_rate: Optional[float] = None  # 当地2連対率
+    local_triple_rate: Optional[float] = None  # 当地3連対率
+
+    # Motor / boat
+    motor_flag: Optional[int] = None  # モーターフラグ ("1" = special state)
+    motor_number: Optional[int] = None  # 物理モーター番号 (from col[17])
+    motor_double_rate: Optional[float] = None
+    motor_triple_rate: Optional[float] = None
+    boat_flag: Optional[int] = None
+    # 物理ボート番号 (from col[21]). Renamed to avoid collision with the
+    # ``boat_number`` slot/lane field above (1..6).
+    boat_id: Optional[int] = None
+    boat_double_rate: Optional[float] = None
+    boat_triple_rate: Optional[float] = None
+
+    # 早見 (other race number same day; blank when only one race)
+    hayami: Optional[int] = None
+
+    # 14 session slots (index 0 = day1 race1, 1 = day1 race2, ..., 13 = day7 race2)
+    sessions: List[RaceCardSession] = field(default_factory=list)
+
+
+@dataclass
+class RaceCard:
+    """Race card detail (出走表詳細) for one race, sourced from bc_j_str3."""
+
+    date: str  # YYYY-MM-DD
+    stadium_number: int  # 1..24
+    race_number: int  # 1..12
+    race_code: str  # YYYYMMDDCCNN
+
+    # Header fields from line 2 of TSV: "{status}\t{ncols}".
+    # status "1" = normal, "2" = race could not be held / data unavailable.
+    status: Optional[str] = None
+    ncols: Optional[int] = None  # second meta column (typically "6" = number of boats)
+
+    # Always 6 boats when valid.
+    boats: List[RaceCardBoat] = field(default_factory=list)
+
+    def is_valid(self) -> bool:
+        return len(self.boats) == 6
+
+
+@dataclass
 class ConversionError:
     """Error during conversion process."""
 

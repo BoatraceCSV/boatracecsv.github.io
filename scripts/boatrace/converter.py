@@ -2,9 +2,12 @@
 
 import csv
 from io import StringIO
-from typing import List
+from typing import List, Optional
 from .models import (
     OriginalExhibitionData,
+    RaceCard,
+    RaceCardBoat,
+    RaceCardSession,
     RacePreview,
     RaceProgram,
     RaceResult,
@@ -641,6 +644,182 @@ def original_exhibition_to_csv(
         logging_module.error(
             "csv_generation_failed",
             file_type="original_exhibition",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Race cards (出走表詳細) from race.boatcast.jp's bc_j_str3
+# ---------------------------------------------------------------------------
+
+# One CSV row per race. Schema: 4 race-meta columns + 6 boats x 95 columns
+# (25 boat profile + 14 session slots x 5 sub-columns) = 574 columns total.
+# The session slots are emitted in source order (col[25]..col[38] of bc_j_str3),
+# i.e. day1-race1, day1-race2, day2-race1, ..., day7-race2.
+
+RACE_CARD_HEADERS: List[str] = [
+    "レースコード",
+    "レース日",
+    "レース場コード",
+    "レース回",
+]
+
+# Per-boat profile columns. Order matches RaceCardBoat field declaration.
+_RACE_CARD_BOAT_PROFILE_FIELDS: List[str] = [
+    "登録番号",
+    "選手名",
+    "期別",
+    "支部",
+    "出身地",
+    "年齢",
+    "級別",
+    "F本数",
+    "L本数",
+    "全国平均ST",
+    "全国勝率",
+    "全国2連対率",
+    "全国3連対率",
+    "当地勝率",
+    "当地2連対率",
+    "当地3連対率",
+    "モーターフラグ",
+    "モーター番号",
+    "モーター2連対率",
+    "モーター3連対率",
+    "ボートフラグ",
+    "ボート番号",
+    "ボート2連対率",
+    "ボート3連対率",
+    "早見",
+]
+
+# Per-session sub-columns.
+_RACE_CARD_SESSION_FIELDS: List[str] = [
+    "R番号",
+    "進入",
+    "枠",
+    "ST",
+    "着順",
+]
+
+for _boat_num in range(1, 7):
+    for _profile_field in _RACE_CARD_BOAT_PROFILE_FIELDS:
+        RACE_CARD_HEADERS.append(f"艇{_boat_num}_{_profile_field}")
+    # 14 slots: indexed by (day, race_in_day). Column naming follows
+    # ``艇N_節D{D}走{S}_*`` so day=1..7, race_in_day=1..2.
+    for _day in range(1, 8):
+        for _race_in_day in range(1, 3):
+            for _session_field in _RACE_CARD_SESSION_FIELDS:
+                RACE_CARD_HEADERS.append(
+                    f"艇{_boat_num}_節D{_day}走{_race_in_day}_{_session_field}"
+                )
+
+
+def _race_card_session_cells(session: Optional[RaceCardSession]) -> List[str]:
+    """Render a single session quintuple as 5 CSV cells. Empty session -> 5 blanks."""
+    if session is None:
+        return ["", "", "", "", ""]
+    return [
+        _fmt_optional(session.race_number),
+        _fmt_optional(session.entry_course),
+        _fmt_optional(session.waku),
+        _fmt_optional(session.start_timing),
+        _fmt_optional(session.finish_position),
+    ]
+
+
+def _race_card_boat_cells(boat: Optional[RaceCardBoat]) -> List[str]:
+    """Render a single boat (profile + 14 sessions) as 95 CSV cells.
+
+    Missing boat (欠場 / not held) -> 95 blanks.
+    """
+    if boat is None:
+        return [""] * (len(_RACE_CARD_BOAT_PROFILE_FIELDS) + 14 * len(_RACE_CARD_SESSION_FIELDS))
+
+    cells: List[str] = [
+        _fmt_optional(boat.registration_number),
+        boat.racer_name or "",
+        boat.period or "",
+        boat.branch or "",
+        boat.birthplace or "",
+        _fmt_optional(boat.age),
+        boat.grade or "",
+        _fmt_optional(boat.f_count),
+        _fmt_optional(boat.l_count),
+        _fmt_optional(boat.national_avg_st),
+        _fmt_optional(boat.national_win_rate),
+        _fmt_optional(boat.national_double_rate),
+        _fmt_optional(boat.national_triple_rate),
+        _fmt_optional(boat.local_win_rate),
+        _fmt_optional(boat.local_double_rate),
+        _fmt_optional(boat.local_triple_rate),
+        _fmt_optional(boat.motor_flag),
+        _fmt_optional(boat.motor_number),
+        _fmt_optional(boat.motor_double_rate),
+        _fmt_optional(boat.motor_triple_rate),
+        _fmt_optional(boat.boat_flag),
+        _fmt_optional(boat.boat_id),
+        _fmt_optional(boat.boat_double_rate),
+        _fmt_optional(boat.boat_triple_rate),
+        _fmt_optional(boat.hayami),
+    ]
+
+    # Always emit 14 session slots; pad with empty sessions if the source
+    # gave fewer (defensive — RaceCardScraper always produces 14).
+    sessions = list(boat.sessions) + [None] * (14 - len(boat.sessions))
+    for slot in sessions[:14]:
+        cells.extend(_race_card_session_cells(slot))
+
+    return cells
+
+
+def race_card_to_row(card: RaceCard) -> List[str]:
+    """Convert a single :class:`RaceCard` to a CSV row (574 cells)."""
+    row: List[str] = [
+        card.race_code,
+        card.date,
+        f"{card.stadium_number:02d}",
+        f"{card.race_number:02d}R",
+    ]
+
+    boats_by_number = {b.boat_number: b for b in card.boats}
+    for boat_num in range(1, 7):
+        row.extend(_race_card_boat_cells(boats_by_number.get(boat_num)))
+
+    return row
+
+
+def race_cards_to_csv(items: List[RaceCard]) -> str:
+    """Serialise a list of :class:`RaceCard` to CSV content (header + rows).
+
+    Returns ``""`` on failure.
+    """
+    try:
+        output = StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow(RACE_CARD_HEADERS)
+
+        ordered = sorted(items, key=lambda c: (c.stadium_number, c.race_number))
+        for item in ordered:
+            writer.writerow(race_card_to_row(item))
+
+        csv_content = output.getvalue()
+        output.close()
+
+        logging_module.info(
+            "csv_generated",
+            file_type="race_cards",
+            rows=len(ordered) + 1,
+            size_bytes=len(csv_content.encode("utf-8")),
+        )
+        return csv_content
+
+    except Exception as e:
+        logging_module.error(
+            "csv_generation_failed",
+            file_type="race_cards",
             error=str(e),
             error_type=type(e).__name__,
         )
