@@ -4,6 +4,7 @@ import csv
 from io import StringIO
 from typing import List, Optional
 from .models import (
+    MotorStat,
     OriginalExhibitionData,
     RaceCard,
     RaceCardBoat,
@@ -946,6 +947,134 @@ def recent_forms_to_csv(items: List[RecentForm], variant: str = "national") -> s
         logging_module.error(
             "csv_generation_failed",
             file_type=f"recent_form_{variant}",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Motor stats (モーター期成績) — bc_mst + bc_mdc
+# ---------------------------------------------------------------------------
+
+# One CSV row per motor (per stadium per record_date). 34 columns total —
+# named columns for confidence ★★★/★★ fields, ``raw_col_NN`` columns for
+# confidence ★ fields whose meaning is still unconfirmed.
+
+MOTOR_STATS_HEADERS: List[str] = [
+    "記録日",
+    "モーター期起算日",
+    "場コード",
+    "モーター番号",
+    "勝率",
+    "勝率順位",
+    "2連対率",
+    "2連対率順位",
+    "3連対率",
+    "3連対率順位",
+    "1着回数",
+    "1着順位",
+    "2着回数",
+    "2着順位",
+    "3着回数",
+    "3着順位",
+    "raw_col_15",
+    "raw_col_16",
+    "優勝回数",
+    "優勝順位",
+    "優出回数",
+    "優出順位",
+    "raw_col_21",
+    "raw_col_22",
+    "平均ラップ秒",
+    "平均ラップ順位",
+    "期内初使用日",
+    "整備種別1回数",
+    "整備種別2回数",
+    "整備種別3回数",
+    "整備種別4回数",
+    "整備種別5回数",
+    "整備種別6回数",
+    "直近メンテ日",
+]
+
+
+def motor_stat_to_row(stat: MotorStat) -> List[str]:
+    """Convert a single :class:`MotorStat` to a CSV row (34 cells)."""
+    return [
+        stat.record_date,
+        _fmt_optional(stat.motor_period_start),
+        _fmt_optional(stat.stadium_code),
+        _fmt_optional(stat.motor_number),
+        _fmt_optional(stat.win_rate),
+        _fmt_optional(stat.win_rate_rank),
+        _fmt_optional(stat.double_rate),
+        _fmt_optional(stat.double_rate_rank),
+        _fmt_optional(stat.triple_rate),
+        _fmt_optional(stat.triple_rate_rank),
+        _fmt_optional(stat.first_count),
+        _fmt_optional(stat.first_rank),
+        _fmt_optional(stat.second_count),
+        _fmt_optional(stat.second_rank),
+        _fmt_optional(stat.third_count),
+        _fmt_optional(stat.third_rank),
+        _fmt_optional(stat.raw_col_15),
+        _fmt_optional(stat.raw_col_16),
+        _fmt_optional(stat.championship_count),
+        _fmt_optional(stat.championship_rank),
+        _fmt_optional(stat.final_count),
+        _fmt_optional(stat.final_rank),
+        _fmt_optional(stat.raw_col_21),
+        _fmt_optional(stat.raw_col_22),
+        _fmt_optional(stat.avg_lap_seconds),
+        _fmt_optional(stat.avg_lap_rank),
+        _fmt_optional(stat.first_use_date),
+        _fmt_optional(stat.maintenance_type1_count),
+        _fmt_optional(stat.maintenance_type2_count),
+        _fmt_optional(stat.maintenance_type3_count),
+        _fmt_optional(stat.maintenance_type4_count),
+        _fmt_optional(stat.maintenance_type5_count),
+        _fmt_optional(stat.maintenance_type6_count),
+        _fmt_optional(stat.last_maintenance_date),
+    ]
+
+
+def motor_stats_to_csv(items: List[MotorStat]) -> str:
+    """Serialise a list of :class:`MotorStat` to CSV content (header + rows).
+
+    Rows are ordered by ``(stadium_code, motor_number)``. Returns ``""`` on
+    failure.
+    """
+    try:
+        output = StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow(MOTOR_STATS_HEADERS)
+
+        ordered = sorted(
+            items,
+            key=lambda s: (
+                s.stadium_code or "",
+                s.motor_number if s.motor_number is not None else 0,
+            ),
+        )
+        for item in ordered:
+            writer.writerow(motor_stat_to_row(item))
+
+        csv_content = output.getvalue()
+        output.close()
+
+        logging_module.info(
+            "csv_generated",
+            file_type="motor_stats",
+            rows=len(ordered) + 1,
+            size_bytes=len(csv_content.encode("utf-8")),
+        )
+        return csv_content
+
+    except Exception as e:
+        logging_module.error(
+            "csv_generation_failed",
+            file_type="motor_stats",
             error=str(e),
             error_type=type(e).__name__,
         )

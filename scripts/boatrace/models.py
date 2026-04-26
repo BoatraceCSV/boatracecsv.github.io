@@ -413,6 +413,78 @@ class RecentForm:
 
 
 @dataclass
+class MotorStat:
+    """Per-motor period statistics from race.boatcast.jp's ``bc_mdc``.
+
+    Schema reflects the empirical decoding of the 33-column TSV row:
+
+    * Confidence ★★★ (verified by JS or distribution): col[0,1,2,17,19] →
+      named fields. Plus the rate/rank pairs col[3..14] and col[18,20]
+      verified via "rank-1 motor has max value" check across 5 stadiums.
+    * Confidence ★★ (strong situational evidence): col[23,24] (avg lap),
+      col[25,32] (dates), col[26..31] (maintenance category counts).
+    * Confidence ★ (hypothesis only): col[15,16,21,22] kept as raw fields
+      without semantic naming.
+
+    See README's *Motor Stats* section for the full provenance table.
+    """
+
+    record_date: str  # YYYY-MM-DD (snapshot date = B-file fetch date)
+    motor_period_start: Optional[str] = None  # YYYY-MM-DD (col[0])
+    stadium_code: Optional[str] = None  # "01"-"24" (col[1])
+    motor_number: Optional[int] = None  # col[2]
+
+    # Rate / rank pairs (col[3..8]).
+    win_rate: Optional[float] = None  # col[3] / 100
+    win_rate_rank: Optional[int] = None  # col[4]
+    double_rate: Optional[float] = None  # col[5] / 100, percent
+    double_rate_rank: Optional[int] = None  # col[6]
+    triple_rate: Optional[float] = None  # col[7] / 100, percent
+    triple_rate_rank: Optional[int] = None  # col[8]
+
+    # Finish counts + ranks (col[9..14]).
+    first_count: Optional[int] = None  # col[9]
+    first_rank: Optional[int] = None  # col[10]
+    second_count: Optional[int] = None  # col[11]
+    second_rank: Optional[int] = None  # col[12]
+    third_count: Optional[int] = None  # col[13]
+    third_rank: Optional[int] = None  # col[14]
+
+    # Confidence ★ — kept raw pending verification (col[15,16]).
+    raw_col_15: Optional[int] = None
+    raw_col_16: Optional[int] = None
+
+    # 優勝・優出 (col[17..20]).
+    championship_count: Optional[int] = None  # col[17]
+    championship_rank: Optional[int] = None  # col[18]
+    final_count: Optional[int] = None  # col[19] - 優出 (made grand final)
+    final_rank: Optional[int] = None  # col[20]
+
+    # Confidence ★ — kept raw (col[21,22]).
+    raw_col_21: Optional[int] = None
+    raw_col_22: Optional[int] = None
+
+    # 平均ラップ + rank (col[23,24]).
+    avg_lap_seconds: Optional[float] = None  # col[23] / 100
+    avg_lap_rank: Optional[int] = None  # col[24]
+
+    # Dates (col[25] / col[32]).
+    first_use_date: Optional[str] = None  # YYYY-MM-DD
+    last_maintenance_date: Optional[str] = None  # YYYY-MM-DD
+
+    # Maintenance counts by category (col[26..31]). Category names are
+    # currently unknown — typical boatrace categories are piston / ring /
+    # cylinder / lower / carburetor / other, but we have not confirmed
+    # the mapping for boatcast's specific encoding.
+    maintenance_type1_count: Optional[int] = None  # col[26]
+    maintenance_type2_count: Optional[int] = None  # col[27]
+    maintenance_type3_count: Optional[int] = None  # col[28]
+    maintenance_type4_count: Optional[int] = None  # col[29]
+    maintenance_type5_count: Optional[int] = None  # col[30]
+    maintenance_type6_count: Optional[int] = None  # col[31]
+
+
+@dataclass
 class ConversionError:
     """Error during conversion process."""
 
