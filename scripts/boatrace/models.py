@@ -351,6 +351,68 @@ class RaceCard:
 
 
 @dataclass
+class RecentFormSession:
+    """One ``節`` (race series) record of recent results.
+
+    Used for both the national variant (``bc_zensou``) and the local variant
+    (``bc_zensou_touchi``). Layout matches a contiguous 6-column block in the
+    source TSV: ``開始日 / 終了日 / 場コード / 場名 / グレード / 着順列``.
+    """
+
+    start_date: Optional[str] = None  # 開始日 (YYYY-MM-DD)
+    end_date: Optional[str] = None  # 終了日 (YYYY-MM-DD)
+    stadium_code: Optional[str] = None  # 場コード (zero-padded "01"-"24")
+    stadium_name: Optional[str] = None  # 場名 (full-width spaces collapsed)
+    grade: Optional[str] = None  # グレード ("一般" / "ＧⅢ" / "ＧⅡ" / "ＧⅠ" / "ＳＧ" / etc.)
+    # Raw 着順列 string. Tokens (single full-width char each):
+    #   "１"-"６" 着順 / "F" フライング / "L" 出遅れ / "欠" 欠場 /
+    #   "転" 転覆 / "妨" 妨害失格 / "落" 落水 / "[N]" 優勝戦N着 /
+    #   "　" (full-width space) 日区切り
+    # Trailing padding spaces are stripped.
+    finish_sequence: Optional[str] = None
+
+
+@dataclass
+class RecentFormBoat:
+    """One boat's recent-form data within a race.
+
+    Identity fields (registration_number / racer_name) are filled from the
+    matching ``bc_zensou`` (or ``bc_zensou_touchi``) row by registration
+    number. Sessions are exactly 5 entries: index 0 = most recent (前1節),
+    index 4 = oldest in the file (前5節). When the source has no row for the
+    racer, identity fields and all sessions remain ``None``.
+    """
+
+    boat_number: int  # 1..6 (slot)
+    registration_number: Optional[str] = None
+    racer_name: Optional[str] = None
+    sessions: List[RecentFormSession] = field(default_factory=list)
+
+
+@dataclass
+class RecentForm:
+    """Recent-form data for one race (5 most recent 節, per boat).
+
+    Two parallel files share this dataclass — the difference between the
+    "national" and "local" variants is only in the underlying TSV
+    (``bc_zensou`` vs ``bc_zensou_touchi``) and the meaning of the figures
+    inside ``finish_sequence``. Aside from where the data was sourced, the
+    schema is identical, so the same converter/serialiser can render both.
+    """
+
+    date: str  # YYYY-MM-DD
+    stadium_number: int  # 1..24
+    race_number: int  # 1..12
+    race_code: str  # YYYYMMDDCCNN
+
+    # Always 6 boats when valid.
+    boats: List[RecentFormBoat] = field(default_factory=list)
+
+    def is_valid(self) -> bool:
+        return len(self.boats) == 6
+
+
+@dataclass
 class ConversionError:
     """Error during conversion process."""
 

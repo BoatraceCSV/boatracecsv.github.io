@@ -11,6 +11,9 @@ from .models import (
     RacePreview,
     RaceProgram,
     RaceResult,
+    RecentForm,
+    RecentFormBoat,
+    RecentFormSession,
 )
 from . import logger as logging_module
 
@@ -820,6 +823,129 @@ def race_cards_to_csv(items: List[RaceCard]) -> str:
         logging_module.error(
             "csv_generation_failed",
             file_type="race_cards",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Recent form (近況成績) — bc_zensou (national) / bc_zensou_touchi (local)
+# ---------------------------------------------------------------------------
+
+# One CSV row per race. Schema: 4 race-meta columns + 6 boats x 32 columns
+# (2 identity + 5 sessions x 6 sub-columns) = 196 columns total.
+# The same shape is used for both the national and the local variants —
+# only the underlying data source differs, so a single converter serves
+# both files.
+
+RECENT_FORM_HEADERS: List[str] = [
+    "レースコード",
+    "レース日",
+    "レース場コード",
+    "レース回",
+]
+
+_RECENT_FORM_IDENTITY_FIELDS: List[str] = ["登録番号", "選手名"]
+
+# Per-session sub-columns (in source order).
+_RECENT_FORM_SESSION_FIELDS: List[str] = [
+    "開始日",
+    "終了日",
+    "場コード",
+    "場名",
+    "グレード",
+    "着順列",
+]
+
+for _boat_num in range(1, 7):
+    for _identity_field in _RECENT_FORM_IDENTITY_FIELDS:
+        RECENT_FORM_HEADERS.append(f"艇{_boat_num}_{_identity_field}")
+    for _session_idx in range(1, 6):  # 前1節..前5節
+        for _session_field in _RECENT_FORM_SESSION_FIELDS:
+            RECENT_FORM_HEADERS.append(
+                f"艇{_boat_num}_前{_session_idx}節_{_session_field}"
+            )
+
+
+def _recent_form_session_cells(session: Optional[RecentFormSession]) -> List[str]:
+    """Render one session as 6 CSV cells. Empty session -> 6 blanks."""
+    if session is None:
+        return ["", "", "", "", "", ""]
+    return [
+        session.start_date or "",
+        session.end_date or "",
+        session.stadium_code or "",
+        session.stadium_name or "",
+        session.grade or "",
+        session.finish_sequence or "",
+    ]
+
+
+def _recent_form_boat_cells(boat: Optional[RecentFormBoat]) -> List[str]:
+    """Render one boat (identity + 5 sessions) as 32 CSV cells.
+
+    Missing boat -> 32 blanks. Missing trailing sessions are padded.
+    """
+    if boat is None:
+        return [""] * (
+            len(_RECENT_FORM_IDENTITY_FIELDS) + 5 * len(_RECENT_FORM_SESSION_FIELDS)
+        )
+
+    cells: List[str] = [
+        _fmt_optional(boat.registration_number),
+        boat.racer_name or "",
+    ]
+    sessions = list(boat.sessions) + [None] * (5 - len(boat.sessions))
+    for slot in sessions[:5]:
+        cells.extend(_recent_form_session_cells(slot))
+    return cells
+
+
+def recent_form_to_row(form: RecentForm) -> List[str]:
+    """Convert a single :class:`RecentForm` to a CSV row (196 cells)."""
+    row: List[str] = [
+        form.race_code,
+        form.date,
+        f"{form.stadium_number:02d}",
+        f"{form.race_number:02d}R",
+    ]
+    boats_by_number = {b.boat_number: b for b in form.boats}
+    for boat_num in range(1, 7):
+        row.extend(_recent_form_boat_cells(boats_by_number.get(boat_num)))
+    return row
+
+
+def recent_forms_to_csv(items: List[RecentForm], variant: str = "national") -> str:
+    """Serialise a list of :class:`RecentForm` to CSV content.
+
+    ``variant`` is used only for log labelling — it does not change the CSV
+    schema (national and local share the exact same column layout).
+    """
+    try:
+        output = StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow(RECENT_FORM_HEADERS)
+
+        ordered = sorted(items, key=lambda f: (f.stadium_number, f.race_number))
+        for item in ordered:
+            writer.writerow(recent_form_to_row(item))
+
+        csv_content = output.getvalue()
+        output.close()
+
+        logging_module.info(
+            "csv_generated",
+            file_type=f"recent_form_{variant}",
+            rows=len(ordered) + 1,
+            size_bytes=len(csv_content.encode("utf-8")),
+        )
+        return csv_content
+
+    except Exception as e:
+        logging_module.error(
+            "csv_generation_failed",
+            file_type=f"recent_form_{variant}",
             error=str(e),
             error_type=type(e).__name__,
         )
