@@ -658,8 +658,8 @@ def original_exhibition_to_csv(
 # Race cards (出走表詳細) from race.boatcast.jp's bc_j_str3
 # ---------------------------------------------------------------------------
 
-# One CSV row per race. Schema: 4 race-meta columns + 6 boats x 95 columns
-# (25 boat profile + 14 session slots x 5 sub-columns) = 574 columns total.
+# One CSV row per race. Schema: 4 race-meta columns + 6 boats x 96 columns
+# (26 boat profile + 14 session slots x 5 sub-columns) = 580 columns total.
 # The session slots are emitted in source order (col[25]..col[38] of bc_j_str3),
 # i.e. day1-race1, day1-race2, day2-race1, ..., day7-race2.
 
@@ -679,6 +679,7 @@ _RACE_CARD_BOAT_PROFILE_FIELDS: List[str] = [
     "出身地",
     "年齢",
     "級別",
+    "賞除",
     "F本数",
     "L本数",
     "全国平均ST",
@@ -735,9 +736,9 @@ def _race_card_session_cells(session: Optional[RaceCardSession]) -> List[str]:
 
 
 def _race_card_boat_cells(boat: Optional[RaceCardBoat]) -> List[str]:
-    """Render a single boat (profile + 14 sessions) as 95 CSV cells.
+    """Render a single boat (profile + 14 sessions) as 96 CSV cells.
 
-    Missing boat (欠場 / not held) -> 95 blanks.
+    Missing boat (欠場 / not held) -> 96 blanks.
     """
     if boat is None:
         return [""] * (len(_RACE_CARD_BOAT_PROFILE_FIELDS) + 14 * len(_RACE_CARD_SESSION_FIELDS))
@@ -750,6 +751,7 @@ def _race_card_boat_cells(boat: Optional[RaceCardBoat]) -> List[str]:
         boat.birthplace or "",
         _fmt_optional(boat.age),
         boat.grade or "",
+        boat.prize_excluded or "",
         _fmt_optional(boat.f_count),
         _fmt_optional(boat.l_count),
         _fmt_optional(boat.national_avg_st),
@@ -780,7 +782,7 @@ def _race_card_boat_cells(boat: Optional[RaceCardBoat]) -> List[str]:
 
 
 def race_card_to_row(card: RaceCard) -> List[str]:
-    """Convert a single :class:`RaceCard` to a CSV row (574 cells)."""
+    """Convert a single :class:`RaceCard` to a CSV row (580 cells)."""
     row: List[str] = [
         card.race_code,
         card.date,

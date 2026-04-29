@@ -18,9 +18,9 @@ Column mapping is reverse-engineered from ``RacerPerformance.js`` and
     [3]  支部:出身地 (full-width spaces inside; ":" separator)
     [4]  年齢
     [5]  級別 ("A1"/"A2"/"B1"/"B2")
-    [6]  (unused)
-    [7]  F本数
-    [8]  L本数
+    [6]  賞除フラグ (e.g. '賞除' when prize-excluded; blank otherwise. ~0.8%)
+    [7]  F本数  (encoded: ' ' or '' = 0, 'F' = 1, 'F2'/'F3'/... = 2/3/...)
+    [8]  L本数  (encoded: ' ' or '' = 0, 'L' = 1, 'L2'/'L3'/... = 2/3/...)
     [9]  全国平均ST
     [10] 全国勝率
     [11] 全国2連対率
@@ -36,7 +36,7 @@ Column mapping is reverse-engineered from ``RacerPerformance.js`` and
     [21] ボート番号
     [22] ボート2連対率
     [23] ボート3連対率
-    [24] 早見 (other race number same day; blank when only one race)
+    [24] 早見 (encoded "{N}R" e.g. "5R", "10R", or ' '/'' when blank)
     [25..38] 節間14スロット, each "{R番号},{進入},{枠},{ST},{着順}"
 
 A non-existent race returns HTTP 403 with an HTML SPA fallback body, so we
@@ -67,9 +67,11 @@ class RaceCardScraperError(Exception):
 _SESSION_SLOTS = 14
 _FIRST_SESSION_COL = 25
 
-# Tokens used inside ``着順`` of a session quintuple. We canonicalise full-width
-# digits to half-width strings but pass through letter tokens unchanged.
-_FULLWIDTH_DIGITS = {
+# Tokens used inside ``着順`` of a session quintuple. The boatcast source
+# emits **full-width** digits and full-width F/L flags, so we canonicalise
+# all single-char tokens to their half-width equivalents for downstream
+# consistency. Other letter tokens (欠/転/妨/落/エ/不) are pass-through.
+_FULLWIDTH_FINISH_TOKENS = {
     "１": "1",
     "２": "2",
     "３": "3",
@@ -79,7 +81,12 @@ _FULLWIDTH_DIGITS = {
     "７": "7",  # safety; should not appear
     "８": "8",
     "９": "9",
+    "Ｆ": "F",  # フライング — README documents half-width
+    "Ｌ": "L",  # 出遅れ
 }
+
+# Backwards-compat alias (old name pointed at digits-only mapping).
+_FULLWIDTH_DIGITS = _FULLWIDTH_FINISH_TOKENS
 
 
 class RaceCardScraper:
@@ -264,8 +271,9 @@ class RaceCardScraper:
             racer_name=_normalize_name(cols[1]) if len(cols) > 1 else None,
             period=_strip(cols[2]) or None,
             grade=_strip(cols[5]) or None,
-            f_count=_to_int(cols[7]) if len(cols) > 7 else None,
-            l_count=_to_int(cols[8]) if len(cols) > 8 else None,
+            prize_excluded=_strip(cols[6]) or None if len(cols) > 6 else None,
+            f_count=_parse_penalty_count(cols[7], "F") if len(cols) > 7 else None,
+            l_count=_parse_penalty_count(cols[8], "L") if len(cols) > 8 else None,
             national_avg_st=_to_float(cols[9]),
             national_win_rate=_to_float(cols[10]),
             national_double_rate=_to_float(cols[11]),
@@ -281,7 +289,7 @@ class RaceCardScraper:
             boat_id=_to_int(cols[21]),
             boat_double_rate=_to_float(cols[22]),
             boat_triple_rate=_to_float(cols[23]),
-            hayami=_to_int(cols[24]) if len(cols) > 24 else None,
+            hayami=_parse_hayami(cols[24]) if len(cols) > 24 else None,
             age=_to_int(cols[4]) if len(cols) > 4 else None,
         )
 
@@ -315,6 +323,80 @@ class RaceCardScraper:
 # ---------------------------------------------------------------------------
 # Module-level helpers (also used by tests)
 # ---------------------------------------------------------------------------
+
+
+def _parse_hayami(raw: Optional[str]) -> Optional[int]:
+    """Parse 早見 (col[24]) from bc_j_str3.
+
+    The boatcast source encodes the alternate race number with an ``R``
+    suffix (e.g. ``"5R"`` for race 5, ``"10R"`` for race 10), and uses
+    a single space ``" "`` or empty string when the racer only appears
+    in one race that day.
+
+    For consistency with the Programs CSV — which stores 早見 as a plain
+    integer (``"9"``, ``"11"``) — we strip the ``R`` suffix and return
+    the underlying integer.
+
+    Args:
+        raw: the raw column value from ``cols[24]``.
+
+    Returns:
+        The integer race number (1..12), or ``None`` for blank /
+        malformed values.
+    """
+    if raw is None:
+        return None
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+    # Strip a single trailing 'R' (case-insensitive) if present.
+    if cleaned[-1] in ("R", "r"):
+        cleaned = cleaned[:-1].strip()
+    if not cleaned:
+        return None
+    try:
+        n = int(cleaned)
+    except ValueError:
+        return None
+    return n if 1 <= n <= 12 else None
+
+
+def _parse_penalty_count(raw: Optional[str], marker: str) -> Optional[int]:
+    """Parse F本数 (col[7]) / L本数 (col[8]) from bc_j_str3.
+
+    The boatcast source encodes the count compactly as a letter-prefixed
+    string rather than a plain integer:
+
+        ``''`` or ``' '``     -> 0      (default for racers without penalties)
+        ``'F'``  / ``'L'``    -> 1      (one penalty in the lookback window)
+        ``'F2'`` / ``'L2'``   -> 2
+        ``'F3'`` / ``'L3'``   -> 3
+        ...
+
+    Args:
+        raw: the raw column value from ``cols[7]`` or ``cols[8]``.
+        marker: ``"F"`` for F本数, ``"L"`` for L本数.
+
+    Returns:
+        The integer penalty count (>= 0), or ``None`` for malformed values.
+        Empty / whitespace-only inputs return ``0`` (no penalty), matching
+        the source's "no record" convention.
+    """
+    if raw is None:
+        return None
+    cleaned = raw.strip()
+    if not cleaned:
+        return 0
+    if cleaned == marker:
+        return 1
+    if cleaned.startswith(marker):
+        suffix = cleaned[len(marker):]
+        try:
+            n = int(suffix)
+        except ValueError:
+            return None
+        return n if n >= 0 else None
+    return None
 
 
 def _parse_session_quintuple(raw: str) -> RaceCardSession:
@@ -365,17 +447,26 @@ def _parse_session_st(raw: str) -> Optional[float]:
 
 
 def _normalize_finish_position(raw: str) -> Optional[str]:
-    """Convert ``"１"-"６"`` (full-width) to ``"1"-"6"``; pass through letter
-    tokens (``"F"``/``"L"``/``"欠"``/``"転"``/``"妨"``/``"落"``).
+    """Convert full-width finish tokens to their half-width forms.
+
+    Mappings applied (single-char tokens only):
+        ``"１"`` - ``"６"`` -> ``"1"`` - ``"6"``
+        ``"Ｆ"`` -> ``"F"`` (フライング)
+        ``"Ｌ"`` -> ``"L"`` (出遅れ)
+
+    Other letter tokens are passed through unchanged. The set of
+    boatcast-emitted special tokens is ``F`` / ``L`` / ``欠`` (欠場) /
+    ``転`` (転覆) / ``妨`` (妨害失格) / ``落`` (落水) / ``エ`` (エンスト) /
+    ``不`` (不完走).
     """
     if raw is None:
         return None
     cleaned = raw.strip()
     if not cleaned or cleaned == "-":
         return None
-    # Map a single full-width digit if present.
-    if len(cleaned) == 1 and cleaned in _FULLWIDTH_DIGITS:
-        return _FULLWIDTH_DIGITS[cleaned]
+    # Map a single full-width digit / F / L if present.
+    if len(cleaned) == 1 and cleaned in _FULLWIDTH_FINISH_TOKENS:
+        return _FULLWIDTH_FINISH_TOKENS[cleaned]
     return cleaned
 
 
@@ -410,6 +501,8 @@ def _collapse_fullwidth(raw: str) -> str:
 __all__ = [
     "RaceCardScraper",
     "RaceCardScraperError",
+    "_parse_hayami",
+    "_parse_penalty_count",
     "_parse_session_quintuple",
     "_parse_session_st",
     "_normalize_finish_position",

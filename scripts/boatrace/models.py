@@ -295,6 +295,10 @@ class RaceCardBoat:
     age: Optional[int] = None
     grade: Optional[str] = None  # 級別 ("A1" / "A2" / "B1" / "B2")
 
+    # 賞除 (prize-money excluded flag from col[6]). Raw source value
+    # (typically '賞除' when set, blank otherwise). Rare: ~0.8% of boats.
+    prize_excluded: Optional[str] = None
+
     # Penalty / late counts
     f_count: Optional[int] = None  # F本数
     l_count: Optional[int] = None  # L本数

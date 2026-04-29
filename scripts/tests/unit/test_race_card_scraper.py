@@ -21,6 +21,8 @@ from boatrace.converter import (
 from boatrace.race_card_scraper import (
     RaceCardScraper,
     _normalize_finish_position,
+    _parse_hayami,
+    _parse_penalty_count,
     _parse_session_quintuple,
     _parse_session_st,
 )
@@ -95,12 +97,23 @@ def test_parse_session_st(raw, expected):
 @pytest.mark.parametrize(
     "raw,expected",
     [
+        # Full-width digits -> half-width.
         ("１", "1"),
         ("６", "6"),
+        # Full-width F/L flags -> half-width (NEW: previously passed through).
+        ("Ｆ", "F"),
+        ("Ｌ", "L"),
+        # Half-width F/L pass through.
         ("F", "F"),
         ("L", "L"),
+        # Japanese single-char tokens (pass-through).
         ("欠", "欠"),
         ("転", "転"),
+        ("妨", "妨"),
+        ("落", "落"),
+        ("エ", "エ"),  # エンスト
+        ("不", "不"),  # 不完走
+        # Blanks / placeholders.
         ("", None),
         ("-", None),
         (None, None),
@@ -108,6 +121,59 @@ def test_parse_session_st(raw, expected):
 )
 def test_normalize_finish_position(raw, expected):
     assert _normalize_finish_position(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,marker,expected",
+    [
+        # No-penalty encodings.
+        (" ", "F", 0),       # single-space pad in bc_j_str3
+        ("", "F", 0),         # occasionally empty between consecutive tabs
+        ("  ", "L", 0),
+        # 1-count encoded as bare letter.
+        ("F", "F", 1),
+        ("L", "L", 1),
+        # 2+ encoded as letter+digit suffix.
+        ("F2", "F", 2),
+        ("L3", "L", 3),
+        ("F10", "F", 10),
+        # Mismatch / malformed -> None (don't fabricate data).
+        ("L", "F", None),    # wrong marker
+        ("FX", "F", None),   # non-numeric suffix
+        ("F-1", "F", None),  # negative suffix rejected
+        (None, "F", None),
+    ],
+)
+def test_parse_penalty_count(raw, marker, expected):
+    assert _parse_penalty_count(raw, marker) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Normal "{N}R" encoding.
+        ("5R", 5),
+        ("10R", 10),
+        ("12R", 12),
+        ("1R", 1),
+        ("1r", 1),  # lowercase tolerated defensively
+        # Blank / pad means "racer is in only one race today".
+        ("", None),
+        (" ", None),
+        ("  ", None),
+        (None, None),
+        # Defensive: bare integer (no R) also accepted.
+        ("7", 7),
+        # Out-of-range or malformed -> None.
+        ("0R", None),    # race numbers are 1..12
+        ("13R", None),   # only 12 races per stadium per day
+        ("RR", None),
+        ("abc", None),
+        ("R", None),
+    ],
+)
+def test_parse_hayami(raw, expected):
+    assert _parse_hayami(raw) == expected
 
 
 def test_parse_session_quintuple_normal():
@@ -172,9 +238,11 @@ def test_scrape_race_first_boat_profile_fields():
     assert boat.birthplace == "愛知"
     assert boat.age == 48
     assert boat.grade == "A1"
-    # Penalty counts (blank in source -> None).
-    assert boat.f_count is None
-    assert boat.l_count is None
+    # 賞除 flag: source has empty col[6] -> None.
+    assert boat.prize_excluded is None
+    # Penalty counts: source has ' ' (single space) for both -> 0.
+    assert boat.f_count == 0
+    assert boat.l_count == 0
     # National
     assert boat.national_avg_st == 0.13
     assert boat.national_win_rate == 7.88
@@ -197,6 +265,30 @@ def test_scrape_race_first_boat_profile_fields():
     assert boat.hayami is None
 
 
+def test_scrape_race_prize_excluded_flag_when_present():
+    """col[6] = '賞除' should populate prize_excluded; blank -> None."""
+    scraper = RaceCardScraper(rate_limiter=MagicMock(wait=lambda: None))
+    # Synthesise a fixture with one boat carrying '賞除' in col[6].
+    body = (
+        "data=\n"
+        "1\t6\n"
+        # col[0..5] then '賞除' in col[6], then F/L (' '), then standard rates.
+        "9999\tテスト　　選手\t130期\t東　京:東　京\t30\tB1\t賞除\t \t \t"
+        "0.18\t4.50\t30.0\t50.0\t4.20\t25.0\t40.0\t0\t10\t30.0\t50.0\t0\t10\t30.0\t50.0\t\t"
+        + "\t".join(["-,-,-,-,-"] * 14)
+        + "\n"
+    )
+    mock_response = MagicMock(status_code=200, text=body)
+    scraper.session.get = MagicMock(return_value=mock_response)
+
+    card = scraper.scrape_race("2026-04-25", 17, 12)
+    assert card is not None
+    assert len(card.boats) == 1
+    boat = card.boats[0]
+    assert boat.prize_excluded == "賞除"
+    assert boat.registration_number == "9999"
+
+
 def test_scrape_race_f_count_when_present():
     scraper = RaceCardScraper(rate_limiter=MagicMock(wait=lambda: None))
     mock_response = MagicMock(status_code=200)
@@ -204,12 +296,10 @@ def test_scrape_race_f_count_when_present():
     scraper.session.get = MagicMock(return_value=mock_response)
 
     card = scraper.scrape_race("2026-04-25", 17, 12)
-    # Boat 6 (齊藤) has "F" in col[7] in the fixture (one F flag).
+    # Boat 6 (齊藤) has "F" in col[7] in the fixture -> 1 fly.
     boat6 = card.boats[5]
-    # _to_int("F") returns None — F本数 is encoded as letter in this column,
-    # not a count. The flag is captured but as a non-numeric string.
-    # Defensive contract: parse what's parseable; otherwise leave None.
-    assert boat6.f_count is None
+    assert boat6.f_count == 1
+    assert boat6.l_count == 0  # col[8] is ' ' (space) -> 0
     # Profile data is still populated.
     assert boat6.registration_number == "3978"
     assert boat6.racer_name == "齊藤 仁"
@@ -282,9 +372,9 @@ def test_scrape_race_status_2_returns_card_without_boats():
 # ---------------------------------------------------------------------------
 
 
-def test_race_card_headers_have_574_columns():
-    """4 race-meta + 6 boats x 95 per-boat (25 profile + 14 slots x 5) = 574."""
-    assert len(RACE_CARD_HEADERS) == 574
+def test_race_card_headers_have_580_columns():
+    """4 race-meta + 6 boats x 96 per-boat (26 profile + 14 slots x 5) = 580."""
+    assert len(RACE_CARD_HEADERS) == 580
 
 
 def test_race_card_headers_session_naming():
@@ -295,7 +385,7 @@ def test_race_card_headers_session_naming():
     assert "艇6_節D7走2_着順" in RACE_CARD_HEADERS
 
 
-def test_race_card_to_row_has_574_cells():
+def test_race_card_to_row_has_580_cells():
     card = RaceCard(
         date="2026-04-25",
         stadium_number=17,
@@ -312,7 +402,7 @@ def test_race_card_to_row_has_574_cells():
         ],
     )
     row = race_card_to_row(card)
-    assert len(row) == 574
+    assert len(row) == 580
 
 
 def test_race_card_to_row_first_meta_cells():

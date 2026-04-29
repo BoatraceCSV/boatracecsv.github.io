@@ -1,5 +1,5 @@
 {
-  "rate_limit_interval_seconds": 1,
+  "rate_limit_interval_seconds": 0.1,
   "max_retries": 2,
   "initial_backoff_seconds": 3,
   "max_backoff_seconds": 30,
