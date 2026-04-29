@@ -575,12 +575,18 @@ def _fmt_optional(value) -> str:
 
 
 def original_exhibition_to_row(data: OriginalExhibitionData) -> List[str]:
-    """Convert a single OriginalExhibitionData to a CSV row."""
+    """Convert a single OriginalExhibitionData to a CSV row.
+
+    The ``レース場`` column is emitted as a 2-digit zero-padded code
+    (``"01"`` - ``"24"``) for consistency with race_cards / recent_form
+    CSVs whose ``レース場コード`` column uses the same format. This
+    enables straight string equality joins across files.
+    """
     labels = list(data.measure_labels) + [""] * 3
     row: List[str] = [
         data.race_code,
         data.date,
-        str(data.stadium_number),
+        f"{data.stadium_number:02d}",
         f"{data.race_number:02d}R",
         _fmt_optional(data.status),
         _fmt_optional(data.measure_count),

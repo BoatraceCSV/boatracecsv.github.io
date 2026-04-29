@@ -246,7 +246,7 @@ def test_row_includes_labels_and_boat_values():
     row = original_exhibition_to_row(data)
     assert row[0] == "202604231701"
     assert row[1] == "2026-04-23"
-    assert row[2] == "17"
+    assert row[2] == "17"  # stadium 17 -> "17" (already 2 digits)
     assert row[3] == "01R"
     assert row[4] == "1"  # status
     assert row[5] == "3"  # measure_count
@@ -276,6 +276,26 @@ def test_row_pads_missing_boats_with_blanks():
     for i in range(6):
         base = 9 + i * 4
         assert row[base : base + 4] == ["", "", "", ""]
+
+
+def test_row_zero_pads_single_digit_stadium():
+    """レース場 column should be 2-digit zero-padded (e.g. 3 -> '03').
+
+    This matches race_cards / recent_form CSVs whose レース場コード is
+    always 2 digits, enabling string-equality joins across files.
+    """
+    data = OriginalExhibitionData(
+        date="2026-04-23",
+        stadium_number=3,
+        race_number=1,
+        race_code="202604230301",
+        status="1",
+        measure_count=3,
+        measure_labels=["一周", "まわり足", "直線"],
+        boats=[],
+    )
+    row = original_exhibition_to_row(data)
+    assert row[2] == "03"  # NOT "3"
 
 
 def test_row_leaves_value3_blank_for_two_column_stadium():
