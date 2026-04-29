@@ -18,8 +18,8 @@ Two TSV endpoints are used per stadium:
       [9]  1着回数        [10] 1着順位
       [11] 2着回数        [12] 2着順位
       [13] 3着回数        [14] 3着順位
-      [15] (★ unknown — kept raw)
-      [16] (★ unknown — kept raw)
+      [15] 連対外回数 (4着以下+DNF合計)  ← 出走数 - (1+2+3着) で確証
+      [16] 出走数                       ← col[9]+col[11]+col[13]+col[15] で確証
       [17] 優勝回数       [18] 優勝順位      ← JS-confirmed
       [19] 優出回数       [20] 優出順位      ← JS-confirmed
       [21] (★ unknown — kept raw)
@@ -256,8 +256,8 @@ def _parse_mdc_row(
         second_rank=_to_int(cols[12]),
         third_count=_to_int(cols[13]),
         third_rank=_to_int(cols[14]),
-        raw_col_15=_to_int(cols[15]),
-        raw_col_16=_to_int(cols[16]),
+        out_of_place_count=_to_int(cols[15]),
+        start_count=_to_int(cols[16]),
         championship_count=_to_int(cols[17]),
         championship_rank=_to_int(cols[18]),
         final_count=_to_int(cols[19]),

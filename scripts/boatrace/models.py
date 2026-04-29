@@ -425,9 +425,13 @@ class MotorStat:
     * Confidence ★★★ (verified by JS or distribution): col[0,1,2,17,19] →
       named fields. Plus the rate/rank pairs col[3..14] and col[18,20]
       verified via "rank-1 motor has max value" check across 5 stadiums.
+    * Confidence ★★★ (verified by mathematical identity across 2,772 rows):
+      col[15] = ``連対外回数`` (non-place finishes), col[16] = ``出走数``
+      (total starts). Identity ``col[16] == col[9] + col[11] + col[13] +
+      col[15]`` holds in 100% of observed rows.
     * Confidence ★★ (strong situational evidence): col[23,24] (avg lap),
       col[25,32] (dates), col[26..31] (maintenance category counts).
-    * Confidence ★ (hypothesis only): col[15,16,21,22] kept as raw fields
+    * Confidence ★ (hypothesis only): col[21,22] kept as raw fields
       without semantic naming.
 
     See README's *Motor Stats* section for the full provenance table.
@@ -454,9 +458,10 @@ class MotorStat:
     third_count: Optional[int] = None  # col[13]
     third_rank: Optional[int] = None  # col[14]
 
-    # Confidence ★ — kept raw pending verification (col[15,16]).
-    raw_col_15: Optional[int] = None
-    raw_col_16: Optional[int] = None
+    # Confidence ★★★ — verified via identity ``out_of_place_count + 1着 +
+    # 2着 + 3着 == start_count`` across all 2,772 historical rows.
+    out_of_place_count: Optional[int] = None  # col[15] — 連対外回数 (4着以下+DNF合計)
+    start_count: Optional[int] = None  # col[16] — 出走数
 
     # 優勝・優出 (col[17..20]).
     championship_count: Optional[int] = None  # col[17]

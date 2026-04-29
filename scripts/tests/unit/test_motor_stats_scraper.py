@@ -143,9 +143,16 @@ def test_parse_mdc_row_top_motor():
     assert stat.second_rank == 4
     assert stat.third_count == 1
     assert stat.third_rank == 26
-    # Confidence ★ raw fields
-    assert stat.raw_col_15 == 1
-    assert stat.raw_col_16 == 10
+    # Confidence ★★★ — verified via mathematical identity
+    # 連対外回数 + 1着 + 2着 + 3着 == 出走数
+    assert stat.out_of_place_count == 1
+    assert stat.start_count == 10
+    # Identity check: 5 + 3 + 1 + 1 = 10 ✓
+    assert (
+        stat.first_count + stat.second_count + stat.third_count
+        + stat.out_of_place_count
+        == stat.start_count
+    )
     # 優勝 / 優出
     assert stat.championship_count == 1
     assert stat.championship_rank == 1
@@ -262,7 +269,12 @@ def test_scrape_stadium_returns_none_when_mst_unparseable():
 
 
 def test_motor_stats_headers_have_34_columns():
-    """1 record_date + 33 source columns (with raw_col_15/16/21/22 kept) = 34."""
+    """1 record_date + 33 source columns = 34.
+
+    col[15] / col[16] are emitted as ``連対外回数`` / ``出走数`` (verified
+    by mathematical identity); col[21] / col[22] remain ``raw_col_21`` /
+    ``raw_col_22`` pending semantic verification.
+    """
     assert len(MOTOR_STATS_HEADERS) == 34
 
 
@@ -273,9 +285,11 @@ def test_motor_stats_headers_first_columns():
     assert MOTOR_STATS_HEADERS[3] == "モーター番号"
 
 
-def test_motor_stats_headers_include_raw_columns():
-    assert "raw_col_15" in MOTOR_STATS_HEADERS
-    assert "raw_col_16" in MOTOR_STATS_HEADERS
+def test_motor_stats_headers_include_named_and_raw_columns():
+    # col[15] / col[16] now emit named columns (★★★ verified).
+    assert "連対外回数" in MOTOR_STATS_HEADERS
+    assert "出走数" in MOTOR_STATS_HEADERS
+    # col[21] / col[22] remain raw pending verification.
     assert "raw_col_21" in MOTOR_STATS_HEADERS
     assert "raw_col_22" in MOTOR_STATS_HEADERS
 
@@ -297,8 +311,10 @@ def test_motor_stat_to_row_top_motor_full():
     assert row[4] in ("8.1", "8.10")
     # 1着回数 = 5
     assert row[10] == "5"
-    # raw_col_15 (★) is preserved as int.
+    # 連対外回数 (col[15] in source, named ★★★) = 1
     assert row[16] == "1"
+    # 出走数 (col[16] in source) = 10
+    assert row[17] == "10"
     # 優勝回数 = 1
     assert row[18] == "1"
     # 整備種別2回数 = 3
