@@ -141,9 +141,35 @@ def test_normalize_finish_sequence_strips_trailing_padding():
 
 
 def test_normalize_finish_sequence_keeps_internal_full_width_spaces():
-    """Internal 全角 space separates sub-races and must be retained."""
+    """Internal 全角 space separates sub-races and must be retained.
+
+    Full-width digits ``１-６`` are kept (per README), but the
+    full-width F flag ``Ｆ`` is normalised to its half-width form.
+    """
     raw = "５４４６５　Ｆ５２　２　　　　"
-    assert _normalize_finish_sequence(raw) == "５４４６５　Ｆ５２　２"
+    assert _normalize_finish_sequence(raw) == "５４４６５　F５２　２"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Full-width F / L flags are normalised to half-width.
+        ("Ｆ", "F"),
+        ("Ｌ", "L"),
+        ("１　Ｆ３Ｌ", "１　F３L"),
+        # Full-width digits ``１-６`` and other tokens pass through.
+        ("１２３４５６", "１２３４５６"),
+        ("欠転妨落エ不沈失", "欠転妨落エ不沈失"),
+        ("[１]", "[１]"),
+        # Trailing full-width-space padding stripped first, then translated.
+        ("Ｆ　　　", "F"),
+        # Empty / None.
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_normalize_finish_sequence_translates_fullwidth_fl(raw, expected):
+    assert _normalize_finish_sequence(raw) == expected
 
 
 def test_parse_session_block_full():

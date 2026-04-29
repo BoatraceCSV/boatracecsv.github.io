@@ -274,16 +274,31 @@ def _normalize_stadium_name(raw: str) -> str:
     return re.sub(r"　+", "", raw).strip()
 
 
-def _normalize_finish_sequence(raw: str) -> str:
-    """Trim trailing full-width-space padding and ASCII whitespace.
+# Full-width F / L flags emitted by ``bc_zensou`` are normalised to their
+# half-width forms. Full-width digits ``１-６`` are *kept* because the
+# README documents them as full-width (it is the convention used to
+# disambiguate "race finish" from any other tokens in downstream tooling).
+_FINISH_SEQUENCE_TRANSLATIONS = str.maketrans({
+    "Ｆ": "F",  # フライング
+    "Ｌ": "L",  # 出遅れ
+})
 
-    Internal full-width spaces are *kept* because they are meaningful (they
-    separate sub-races within a session, e.g. 早見 cases or splits between
-    different days when re-formatted).
+
+def _normalize_finish_sequence(raw: str) -> str:
+    """Trim trailing full-width-space padding and normalise letter tokens.
+
+    The boatcast source emits full-width F / L flags (``Ｆ`` / ``Ｌ``) but
+    documents them as half-width in CSV output. Internal full-width spaces
+    are *kept* because they are meaningful (they separate sub-races within
+    a session — typically day-to-day boundaries within a 節).
+
+    Other token characters (``欠``/``転``/``妨``/``落``/``エ``/``不``/
+    ``沈``/``失``) and full-width digits ``１-６`` pass through unchanged.
     """
     if raw is None:
         return ""
-    return raw.rstrip("　 \t\r\n")
+    trimmed = raw.rstrip("　 \t\r\n")
+    return trimmed.translate(_FINISH_SEQUENCE_TRANSLATIONS)
 
 
 __all__ = [
