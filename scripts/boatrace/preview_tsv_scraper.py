@@ -585,6 +585,83 @@ class PreviewTsvScraper:
     def _race_code(date: str, stadium_code: int, race_number: int) -> str:
         return f"{date.replace('-', '')}{stadium_code:02d}{race_number:02d}"
 
+    # ---- Realtime per-source public API --------------------------------
+    #
+    # The methods below expose raw per-source results so the realtime
+    # scheduler (``preview-realtime.py``) can persist each source into its
+    # own CSV. They share the same fetch / parse helpers as
+    # :meth:`scrape_race_preview` but return the raw dicts without merging
+    # them into a :class:`RacePreview`.
+
+    def fetch_tkz_raw(
+        self,
+        date: str,
+        stadium_code: int,
+        race_number: int,
+    ) -> Optional[Tuple[Optional[str], Dict[int, Dict[str, Optional[float]]]]]:
+        """Fetch and parse ``bc_j_tkz`` for one race.
+
+        Returns ``(status, {boat_number: {weight, weight_adjustment,
+        exhibition_time, tilt_adjustment}})`` or ``None`` when the source
+        file does not exist / is unparseable.
+        """
+        body = self._fetch(
+            self._build_url("hp_txt", "bc_j_tkz", date, stadium_code, race_number)
+        )
+        if body is None:
+            return None
+        status, boats = self._parse_tkz(body)
+        if status is None:
+            return None
+        return status, boats
+
+    def fetch_stt_raw(
+        self,
+        date: str,
+        stadium_code: int,
+        race_number: int,
+    ) -> Optional[Dict[int, Dict[str, Optional[float]]]]:
+        """Fetch and parse ``bc_j_stt`` for one race.
+
+        Returns ``{boat_number: {course_number, start_timing}}`` or ``None``
+        when the source file does not exist.
+        """
+        body = self._fetch(
+            self._build_url("hp_txt", "bc_j_stt", date, stadium_code, race_number)
+        )
+        if body is None:
+            return None
+        return self._parse_stt(body)
+
+    def fetch_sui_raw(
+        self,
+        date: str,
+        stadium_code: int,
+    ) -> Optional[Dict[str, Optional[float]]]:
+        """Fetch and parse the latest ``bc_sui`` snapshot for one stadium.
+
+        Returns a weather dict including the observation time as the
+        ``observed_at`` key (HHMM string), or ``None`` if the source file
+        does not exist. Unlike :meth:`_fetch_weather`, this does not fall
+        back to ``bc_rs1_2`` — the realtime scheduler only ever needs
+        bc_sui (the snapshot is re-fetched each invocation, so caching is
+        intentionally bypassed).
+        """
+        body = self._fetch(
+            self._build_url("m_txt", "bc_sui", date, stadium_code, None)
+        )
+        if not body:
+            return None
+        for raw in reversed(body.splitlines()):
+            if not raw.strip():
+                continue
+            parsed = self._parse_weather_line(raw)
+            if parsed:
+                cols = raw.split("\t")
+                parsed["observed_at"] = cols[0].strip() if cols else None
+                return parsed
+        return None
+
 
 # Convenience alias so callers reading "_normalize_name" still find it via
 # the new module without importing the old one.

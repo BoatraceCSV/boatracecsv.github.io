@@ -73,12 +73,6 @@ jobs:
           python scripts/preview.py --force
         if: always()
 
-      - name: Process Original Exhibition Data
-        run: |
-          python scripts/original-exhibition.py --force
-        if: always()
-        continue-on-error: true
-
       - name: Process Race Cards (boatcast bc_j_str3)
         run: |
           python scripts/race-card.py --force

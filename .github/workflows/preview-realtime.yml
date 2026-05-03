@@ -1,0 +1,91 @@
+name: Preview Realtime
+
+# Fires every minute between JST 08:30 and 23:00. Each run scrapes
+# preview data (bc_j_tkz / bc_j_stt / bc_sui) for races whose deadline
+# falls inside the eligibility window, and appends one row per source
+# to data/previews/{tkz,stt,sui}/{YYYY}/{MM}/{DD}.csv.
+#
+# JST -> UTC conversion (JST = UTC+9):
+#   08:30-08:59 JST -> 23:30-23:59 UTC (previous day)
+#   09:00-22:59 JST -> 00:00-13:59 UTC
+#   23:00       JST -> 14:00       UTC
+on:
+  schedule:
+    - cron: '30-59 23 * * *'   # JST 08:30-08:59
+    - cron: '*     0-13 * * *' # JST 09:00-22:59
+    - cron: '0     14 * * *'   # JST 23:00
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date override (YYYY-MM-DD). Default: today (JST).'
+        required: false
+        default: ''
+      now:
+        description: 'Reference time override (HH:MM JST). Default: now.'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Plan only, do not write or commit.'
+        required: false
+        default: false
+        type: boolean
+
+# Prevent overlapping runs from racing on the same CSVs / git push.
+concurrency:
+  group: preview-realtime
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: 1
+  LOG_LEVEL: INFO
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git config --global url."https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Run preview-realtime
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            ARGS="$ARGS --date ${{ github.event.inputs.date }}"
+          fi
+          if [ -n "${{ github.event.inputs.now }}" ]; then
+            ARGS="$ARGS --now ${{ github.event.inputs.now }}"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python scripts/preview-realtime.py $ARGS
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-realtime-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 7
+          if-no-files-found: ignore
