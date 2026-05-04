@@ -91,28 +91,6 @@ jobs:
         if: always()
         continue-on-error: true
 
-      - name: Generate Preview Predictions
-        run: |
-          python scripts/prediction-preview.py --date $(TZ=Asia/Tokyo date +%Y-%m-%d)
-        if: always()
-        continue-on-error: true
-
-      - name: Update Player Stats
-        run: |
-          python scripts/update_player_stats.py
-        if: always()
-        continue-on-error: true
-
-      - name: Estimate Races
-        run: |
-          python scripts/estimate.py
-        if: always()
-
-      - name: Confirm Predictions
-        run: |
-          python scripts/confirm.py
-        if: always()
-
       - name: Check Job Status
         if: always()
         run: |

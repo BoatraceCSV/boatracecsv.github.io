@@ -1,7 +1,0 @@
-{
-  "current_model": "program_models_v2.pkl",
-  "model_version": "2.2.0",
-  "training_date": "2026-04-01",
-  "feature_count": 49,
-  "eval_metric": "ndcg@1"
-}

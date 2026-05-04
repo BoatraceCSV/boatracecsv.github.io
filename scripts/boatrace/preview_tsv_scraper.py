@@ -18,9 +18,7 @@ non-existent files) the same way as ``original_exhibition_scraper.py``.
 
 The shape of each TSV was reverse-engineered from the SPA bundle on
 race.boatcast.jp (``StartDisplay.js`` / ``OriginalDisplayData.js``) and
-verified against ``data/previews/2026/04/24.csv``. See
-``specs/0XX-preview-tsv-migration/research.md`` for the column-by-column
-mapping.
+verified against ``data/previews/2026/04/24.csv``.
 
 The returned :class:`RacePreview` does **not** populate ``title`` — that
 field has no equivalent in boatcast.jp's TSVs. The caller is expected to
@@ -62,9 +60,9 @@ _WIND_DIRECTION_TO_CODE: List[Tuple[str, int]] = [
 
 
 # --- 天候: boatcast (1〜9) を CSV に書き出すときの値 ------------------------
-# 案 A: 1〜3 は現行 CSV と完全互換。4=雪 / 5=台風 / 6=霧 / 9=その他 は
-# boatcast 値を生で書き出す（過去データの 4=大雨 / 5=霧 と意味が衝突する点
-# は specs/research.md に記載）。
+# 1〜3 は現行 CSV と完全互換。4=雪 / 5=台風 / 6=霧 / 9=その他 は boatcast 値
+# を生で書き出す（旧 HTML 由来データの 4=大雨 / 5=霧 とは意味が衝突する点に
+# 注意）。
 _VALID_WEATHER_CODES = {1, 2, 3, 4, 5, 6, 9}
 
 
