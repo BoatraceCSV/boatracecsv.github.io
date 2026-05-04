@@ -1,18 +1,14 @@
 name: Preview Realtime
 
-# Fires every 15 minutes between JST 08:30 and 23:00. Each run scrapes
-# preview data (bc_j_tkz / bc_j_stt / bc_sui) for races whose deadline
-# falls inside the eligibility window, and appends one row per source
-# to data/previews/{tkz,stt,sui}/{YYYY}/{MM}/{DD}.csv.
+# NOTE: The 5-minute schedule has been migrated to Cloud Scheduler +
+# Cloud Run Jobs (project: boatrace-487212, region: asia-northeast1) because
+# GitHub Actions schedule triggers are heavily throttled and effectively
+# fire only ~hourly. See infra/README.md for the GCP setup.
 #
-# JST -> UTC conversion (JST = UTC+9):
-#   08:30-08:59 JST -> 23:30-23:59 UTC (previous day)
-#   09:00-22:59 JST -> 00:00-13:59 UTC
-#   23:00       JST -> 14:00       UTC
+# This workflow is retained as a manual fallback only. Trigger via the
+# GitHub UI ("Run workflow") if Cloud Run is down or you need to reprocess
+# a specific date.
 on:
-  schedule:
-    - cron: '30,45 23 * * *' # JST 08:30-08:59
-    - cron: '*/15   0-13 * * *'           # JST 09:00-22:59
   workflow_dispatch:
     inputs:
       date:

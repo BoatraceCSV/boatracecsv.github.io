@@ -1,0 +1,17 @@
+# Keep build context tiny — the runtime container clones the repo fresh, so
+# we only actually need scripts/requirements.txt and infra/run.sh.
+*
+
+!scripts/
+!scripts/requirements.txt
+!infra/
+!infra/run.sh
+!infra/Dockerfile
+
+# But re-exclude noisy subtrees that may live under scripts/.
+scripts/tests/
+scripts/dev/
+scripts/__pycache__/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
