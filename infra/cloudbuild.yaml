@@ -84,6 +84,9 @@ steps:
       - --parallelism=1
       - --tasks=1
       - --cpu=1
-      - --memory=512Mi
+      # 1Gi is well over the working set for a partial+sparse clone (~tens of
+      # MB), but provides headroom for git's transient packfile work and the
+      # python pandas/lightgbm import footprint.
+      - --memory=1Gi
 
 timeout: 1200s

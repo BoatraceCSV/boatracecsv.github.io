@@ -61,15 +61,43 @@ cd "${WORKDIR}"
 REMOTE_WITH_TOKEN="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
 REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 
-log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, depth=1)"
+# The repo is ~5 GB (mostly data/ and models/). A naive `git clone` OOMs on
+# the 1 GiB Cloud Run Job. We do a partial clone (commits/trees only, no
+# blobs) and then a cone-mode sparse-checkout of just the paths the script
+# actually reads or writes:
+#   - scripts/             python sources
+#   - .boatrace/           runtime config (load_config)
+#   - data/previews/{tkz,stt,sui,original_exhibition}/<YYYY>/<MM>/
+#                          existing CSVs for today (for dedup) + write target
+#
+# Today's YYYY/MM is computed in JST because csv_path_for() uses JST dates.
+TODAY_YM=$(TZ=Asia/Tokyo date +'%Y/%m')
+
+log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, ym=${TODAY_YM})"
 git clone \
   --depth 1 \
+  --filter=blob:none \
+  --no-checkout \
+  --no-tags \
   --single-branch \
   --branch "${GIT_BRANCH}" \
   "${REMOTE_WITH_TOKEN}" \
   repo
 
 cd repo
+
+git sparse-checkout init --cone
+git sparse-checkout set \
+  scripts \
+  .boatrace \
+  "data/previews/tkz/${TODAY_YM}" \
+  "data/previews/stt/${TODAY_YM}" \
+  "data/previews/sui/${TODAY_YM}" \
+  "data/previews/original_exhibition/${TODAY_YM}"
+
+# Materialize the working tree. Missing blobs are fetched on demand from the
+# promisor remote (origin) thanks to --filter=blob:none.
+git checkout "${GIT_BRANCH}"
 
 # Ensure boatrace.git_operations push() can fetch + rebase. With depth=1 the
 # rebase normally has nothing to do (we just cloned HEAD) but a credential
