@@ -225,6 +225,22 @@ def build_index_day(
     return df, weights_path
 
 
+def _csv_cell(v) -> str:
+    """Convert a Python value to its CSV-cell string representation.
+
+    Mirrors what ``pandas.DataFrame.to_csv`` would write: NaN/None → empty,
+    everything else → ``str(v)``. Used when splicing fresh rows into a
+    ``dtype=str`` DataFrame; recent pandas versions reject non-string
+    assignments to string-typed columns with
+    ``Invalid value 'X' for dtype 'str'``.
+    """
+    if v is None:
+        return ""
+    if isinstance(v, float) and np.isnan(v):
+        return ""
+    return str(v)
+
+
 def update_index_for_races(
     repo: Path, day: dt.date, race_codes: list[str],
 ) -> int:
@@ -245,7 +261,13 @@ def update_index_for_races(
         # to invoke build_index_day --mode daily first).
         return 0
 
-    existing = pd.read_csv(csv_path, dtype=str)
+    # All columns read as object dtype so we can splice in fresh values
+    # without pandas' strict "Invalid value 'X' for dtype 'str'" guard.
+    existing = pd.read_csv(csv_path, dtype=object)
+
+    # Normalize レースコード type for matching (CSV may have parsed it as int
+    # in older files; we always treat it as string).
+    existing["レースコード"] = existing["レースコード"].astype(str)
 
     # Compute fresh features for the whole day; cheap (~1s) and lets us reuse
     # the same code path. We only emit rows for the requested レースコード.
@@ -255,7 +277,8 @@ def update_index_for_races(
     weights_path = find_weights_file(repo, day)
     weights = load_weights(weights_path) if weights_path else {}
 
-    long_df = long_df[long_df["レースコード"].isin(race_codes)]
+    race_codes_str = [str(c) for c in race_codes]
+    long_df = long_df[long_df["レースコード"].astype(str).isin(race_codes_str)]
     if long_df.empty:
         return 0
 
@@ -263,7 +286,7 @@ def update_index_for_races(
     for code, grp in long_df.sort_values(["レースコード", "枠番"]).groupby(
         "レースコード", sort=False
     ):
-        new_rows[code] = _build_one_race_row(
+        new_rows[str(code)] = _build_one_race_row(
             code=code, meta_row=grp.iloc[0], boats=grp,
             weights=weights, state=STATE_REALTIME, skip_preview=False,
         )
@@ -282,7 +305,7 @@ def update_index_for_races(
         code = str(row["レースコード"])
         if code in new_rows:
             for k, v in new_rows[code].items():
-                existing.at[idx, k] = v
+                existing.at[idx, k] = _csv_cell(v)
             updated += 1
 
     atomic_write_csv(existing, csv_path)
