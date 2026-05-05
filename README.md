@@ -429,6 +429,103 @@ raw_col_21,raw_col_22,
 
 ---
 
+### Strength Index (強さポイント)
+**ファイルパス**: `data/index/YYYY/MM/DD.csv`
+**URL**: https://boatracecsv.github.io/data/index/2026/05/03.csv
+
+各レース 1 行で、6 枠分の「強さポイント」を 5 要素の偏差値で表現したファイルです。**枠番**・**選手**・**モーター**・**展示**・**気象** の 5 要素を場別に学習した重みで線形結合し、平均 50・標準偏差 10 の偏差値スケールで出力します。
+
+**生成パイプライン**:
+
+1. **日次バッチ** (`scripts/build_index.py --mode daily`、JST 00:10): 当日のレース全件について、変動が小さい 3 要素 (枠番・選手・モーター) を計算し、展示・気象は 50 (平均) で補完。状態 = `daily`、暫定の強さpt が入る。
+2. **直前バッチ** (`scripts/preview-realtime.py` から内部呼び出し): 各レースの締切 5 分前に preview を取得した直後、対応する index 行の展示・気象を実値で再計算。状態 = `realtime`、強さpt が確定値に更新される。
+3. **月次重み学習** (`scripts/build_weights.py --month YYYY-MM`、毎月 1 日 09:00 JST): 直近 6 ヶ月のデータから 24 場 × 5 要素の重みを学習し、`data/stadium/index_weights/YYYY-MM.csv` を生成。
+
+#### サンプルデータ(1行目、抜粋)
+
+```
+レースコード,レース日,レース場コード,レース回,状態,
+1枠_枠番pt,1枠_寄与_枠番pt,1枠_選手pt,1枠_寄与_選手pt,1枠_モーターpt,1枠_寄与_モーターpt,1枠_展示pt,1枠_寄与_展示pt,1枠_気象pt,1枠_寄与_気象pt,1枠_強さpt,
+2枠_… (同形式 11 列) … 6枠 まで,
+202605030101,2026-05-03,01,1R,realtime,
+68.84,30.28,36.59,8.06,50.00,5.94,54.93,3.24,18.63,1.30,51.84,
+…
+```
+
+#### 列の詳細説明
+
+**基本情報**:
+- `レースコード` / `レース日` / `レース場コード` / `レース回`: 他ファイルと同じ識別子
+- `状態`: `daily`(日次バッチ完了、展示・気象は暫定50)/ `realtime`(直前バッチで展示・気象を実値に更新済み)
+
+**艇 N の 11 列**(N=1..6, 計 66 列):
+- `N枠_枠番pt`: 偏差値スケールの 枠番強度。`data/stadium/win_rate.csv` の場×季節×コース勝率を場別 (μ, σ) で標準化
+- `N枠_選手pt`: 偏差値スケールの 選手能力指数。`data/recent_national/` + `data/recent_local/` の着順列をグレード別に得点化(算出基準点合計÷出走回数)し場別標準化。式は br-racers.jp の能力指数算出式に準拠
+- `N枠_モーターpt`: 偏差値スケールの モーター強度。`data/motor_stats/` の勝率を場別標準化(勝率0=データなしの場合は欠損として50で補完)
+- `N枠_展示pt`: 偏差値スケールの 展示パフォーマンス。展示タイム + オリジナル展示の3項目をレース内偏差値化して平均、その後場別標準化
+- `N枠_気象pt`: 偏差値スケールの 気象有利度。`data/stadium/sui_params.csv` で当日気象から各コースの有利pt変動を計算し場別標準化(コース固定有利は枠番ptに集約済み)
+- `N枠_寄与_{要素}pt`: その要素の重み × 偏差値pt(= 強さptへの寄与の内訳)
+- `N枠_強さpt`: 5 つの寄与の合計。Σ重み = 1 のため平均 50 ± 10 のスケールに収まる
+
+#### 補完ルール
+
+- 元データが欠損した要素の偏差値ptは **50 で補完**(平均扱い)
+- 5 要素のうち 1 つでも欠損があっても 強さpt は計算される
+- 重みファイル(`data/stadium/index_weights/YYYY-MM.csv`)が見つからない月のデータは、すべて NaN を出力
+
+> **用途**: 単発レースの予想に直接使えるランキング指標。`強さpt` 順で買い目を組み立てたり、寄与列でなぜ強い/弱いかを分解できる。重みは 6 ヶ月ローリングで学習されるため、季節変動を反映。
+
+---
+
+### Stadium Parameters (場別パラメータ)
+
+`data/stadium/` 配下に、index 計算で参照する場別の係数・統計量を保存しています。
+
+#### `data/stadium/win_rate.csv`
+
+場 × 季節 × コース別の長期勝率テーブル。`枠番pt` の生値ソース。
+
+| 列 | 説明 |
+| --- | --- |
+| `場コード` | "01"〜"24" |
+| `季節` | 春(3-5月)/ 夏(6-8月)/ 秋(9-11月)/ 冬(12-2月) |
+| `1コース勝率` 〜 `6コース勝率` | コース別の長期1着率(%) |
+
+#### `data/stadium/sui_params.csv`
+
+24 場分の気象線形回帰パラメータ。波・風(追い/向かい)・気温水温差・天候から各コースの有利pt変動を計算する係数。1 場 1 行、43 列(stadium + 切片6 + 6特徴量×6コース = 36)。
+
+| 列グループ | 内容 |
+| --- | --- |
+| `base_c1` 〜 `base_c6` | 基準条件(凪・無風・晴・気温=水温)下の有利pt切片 ※index計算では切片は使わず変動分のみを `気象pt` に反映 |
+| `wave_cm_c1〜c6` | 波高 1cm あたりの有利pt変化 |
+| `temp_diff_c1〜c6` | 気温-水温差 1℃ あたりの有利pt変化 |
+| `wind_tail_ms_c1〜c6` | 追い風 1m/s あたりの有利pt変化 |
+| `wind_head_ms_c1〜c6` | 向かい風 1m/s あたりの有利pt変化 |
+| `is_cloudy_c1〜c6` | 曇り(vs 晴)による有利ptシフト |
+| `is_rainy_c1〜c6` | 雨(vs 晴)による有利ptシフト |
+
+風向は各場の `facing_deg`(スタンド方位)で正規化して 追い風/向かい風/横風 のカテゴリに分けます。場ごとの learned R² は概ね 0.05〜0.20。`scripts/build_sui_params.py` で実データから再学習可能。
+
+#### `data/stadium/index_weights/YYYY-MM.csv`
+
+毎月 1 日に再学習される 24 場 × 5 要素の重みファイル。学習窓は対象月の 6 ヶ月前〜前月末。各場 1 行、`stadium`, `n_samples`, 5 要素の `mu_*` / `sigma_*` / `w_*`, `mu_y`, `sigma_y`, `mse`, `r2`, `fallback` を含む。
+
+| 列 | 説明 |
+| --- | --- |
+| `stadium` | 場名(全角:桐生・戸田 等) |
+| `n_samples` | SLSQP fit に使われた行数 |
+| `mu_{key}` / `sigma_{key}` | その場の 5 要素生pt値の平均と標準偏差(偏差値変換に使用) |
+| `w_{key}` | その要素の重み(非負・合計 1) |
+| `r2` | 着順予測の決定係数 |
+| `fallback` | 1 = サンプル不足で均等重み(0.2 ずつ)に倒した |
+
+build_index.py は実行時に **対象日の月以下で最新の重みファイル** を自動選択するため、未来日(月)用に重みファイルを事前生成しておく運用も可能。
+
+> **用途**: index 計算の中間成果物。重みの場別比較をすると、たとえば桐生は気象pt の重みが大きい(波が立ちやすいレース場)、福岡は 枠番pt の重みが大きい(イン強度が高い)など、場の性格が数値で見える。
+
+---
+
 ### ファイル間の関係性
 
 ```
@@ -446,7 +543,11 @@ Previews              → 当日の展示会走行テスト（当朝バッチ）
      ↓
 Realtime Preview      → 締切5分前の直前情報（tkz / stt / sui / original_exhibition の per-source 追記）
      ↓
+Strength Index        → 派生:5要素を場別重みで線形結合した強さポイント
+     ↓
 Results               → 本レースの結果（事後情報）
+
+Stadium Parameters    → win_rate.csv / sui_params.csv / index_weights/*.csv (Index 計算の参照テーブル)
 ```
 
 **基本的な追跡方法**: 同じ `レースコード` で各ファイルを紐付けることで、レースの事前情報から当日の展示・直前情報、最終結果までを一貫して追跡できます。
@@ -458,9 +559,10 @@ Results               → 本レースの結果（事後情報）
 4. **Motor Stats** から → モーター期成績スナップショット
 5. **Previews** から → 展示会での走行タイム・当日コンディション
 6. **Realtime Preview** から → 締切5分前の直前スナップショット（時系列で複数ソース）
-7. **Results** から → 最終順位・払戻金・実際の進入コース・ST
+7. **Strength Index** から → 6 枠分の強さポイント(偏差値)と要素別寄与の内訳
+8. **Results** から → 最終順位・払戻金・実際の進入コース・ST
 
-これらを組み合わせることで、レースの準備段階から当日の直前情報・実結果までを一貫して追跡でき、特徴量設計や分析に活用できます。
+これらを組み合わせることで、レースの準備段階から当日の直前情報・予測値・実結果までを一貫して追跡でき、特徴量設計や分析に活用できます。
 
 
 ## Quick Start
@@ -503,7 +605,11 @@ python scripts/fetch-and-convert.py --dry-run
 
 ```
 scripts/
-├── fetch-and-convert.py         # Main entry point
+├── fetch-and-convert.py         # Main entry point (legacy daily fetch)
+├── preview-realtime.py          # Realtime preview scraper (also updates index)
+├── build_index.py               # Strength Index builder (--mode daily/realtime, --update-races)
+├── build_weights.py             # Monthly weight learner (per-stadium 5-feature weights)
+├── build_sui_params.py          # 24-stadium weather coefficient learner
 ├── boatrace/                    # Python package
 │   ├── __init__.py
 │   ├── downloader.py            # HTTP downloads with retry
@@ -512,43 +618,42 @@ scripts/
 │   ├── converter.py             # Text → CSV conversion
 │   ├── storage.py               # File I/O operations
 │   ├── git_operations.py        # Git commit/push operations
+│   ├── index_features.py        # Shared 5-feature computation (build_index/build_weights)
 │   └── logger.py                # Structured JSON logging
 ├── requirements.txt
 └── tests/
     ├── unit/
-    │   ├── test_downloader.py
-    │   ├── test_extractor.py
-    │   ├── test_parser.py
-    │   ├── test_converter.py
-    │   └── test_storage.py
-    ├── integration/
-    │   ├── test_end_to_end.py
-    │   └── fixtures/
-    └── conftest.py
+    └── integration/
 
 .github/workflows/
-├── daily-sync.yml                          # Daily data sync (00:10 JST)
-└── preview-realtime.yml                    # Realtime preview (every minute, 08:30-23:00 JST)
+├── daily-sync.yml               # Daily data sync + daily index batch (00:10 JST)
+├── preview-realtime.yml         # Realtime preview (every minute, 08:30-23:00 JST)
+└── monthly-weights.yml          # Monthly weight rebuild (1st of month, 09:00 JST)
+
+infra/                           # Cloud Run Jobs deployment for preview-realtime
+├── Dockerfile
+├── run.sh
+├── cloudbuild.yaml
+└── README.md                    # Setup/update procedures for GCP
 
 data/                            # Published data (created at runtime)
-├── programs/
-│   └── YYYY/MM/DD.csv
-├── race_cards/
-│   └── YYYY/MM/DD.csv
-├── recent_national/
-│   └── YYYY/MM/DD.csv
-├── recent_local/
-│   └── YYYY/MM/DD.csv
-├── motor_stats/
-│   └── YYYY/MM/DD.csv
+├── programs/YYYY/MM/DD.csv
+├── race_cards/YYYY/MM/DD.csv
+├── recent_national/YYYY/MM/DD.csv
+├── recent_local/YYYY/MM/DD.csv
+├── motor_stats/YYYY/MM/DD.csv
 ├── previews/
-│   ├── YYYY/MM/DD.csv         # daily combined (preview.py)
-│   ├── tkz/YYYY/MM/DD.csv     # realtime: 体重・展示タイム・チルト
-│   ├── stt/YYYY/MM/DD.csv     # realtime: 進入コース・スタート展示
-│   ├── sui/YYYY/MM/DD.csv     # realtime: 水面気象スナップショット
+│   ├── YYYY/MM/DD.csv                      # daily combined (preview.py)
+│   ├── tkz/YYYY/MM/DD.csv                  # realtime: 体重・展示タイム・チルト
+│   ├── stt/YYYY/MM/DD.csv                  # realtime: 進入コース・スタート展示
+│   ├── sui/YYYY/MM/DD.csv                  # realtime: 水面気象スナップショット
 │   └── original_exhibition/YYYY/MM/DD.csv  # realtime: オリジナル展示
-└── results/
-    └── YYYY/MM/DD.csv
+├── index/YYYY/MM/DD.csv                    # 派生: 強さポイント (5要素偏差値+寄与+合計)
+├── stadium/
+│   ├── win_rate.csv                        # 場×季節×コース勝率
+│   ├── sui_params.csv                      # 24場気象線形回帰パラメータ
+│   └── index_weights/YYYY-MM.csv           # 月次重み(直近6ヶ月で再学習)
+└── results/YYYY/MM/DD.csv
 
 .boatrace/
 └── config.json                  # Configuration
@@ -699,6 +804,51 @@ Characteristics:
 - **No automatic git push**: default does not push anything. Use `--push` for per-day pushes, or run `git add data/race_cards && git commit && git push` manually once the run is complete.
 - **Earliest-date guard**: starting earlier than 2025-05-03 is allowed but the script warns, and those days are recorded as "no_races".
 
+### Build Strength Index (強さポイント)
+
+```bash
+# 当日朝に走らせる日次バッチ:
+#   枠番・選手・モーター + 暫定強さpt を埋める。展示・気象は 50 で補完。
+python scripts/build_index.py --date 2026-05-03 --mode daily
+
+# 過去日のバックフィル(全要素揃った状態で計算):
+python scripts/build_index.py --date 2026-05-03 --mode realtime
+
+# 一部レースだけ展示・気象を再計算して状態を realtime に更新
+# (preview-realtime.py から内部呼び出しされる)
+python scripts/build_index.py --date 2026-05-03 \
+  --update-races 202605030101,202605030102
+
+# 過去月のバックフィル例(月毎に重みファイルが必要):
+for d in $(seq -w 1 31); do
+  python scripts/build_index.py --date 2026-05-${d} --mode realtime
+done
+```
+
+### Build Monthly Weights (場別重み)
+
+```bash
+# 対象月の重みを直近6ヶ月のデータから学習
+python scripts/build_weights.py --month 2026-05
+
+# 過去月の重みを生成(walk-forward 検証用)
+python scripts/build_weights.py --month 2026-04
+python scripts/build_weights.py --month 2026-03
+```
+
+学習窓は `[対象月 - 6ヶ月, 対象月 - 1日]`(対象月のデータは含まない=リーケージなし)。場ごとに非負・合計1の制約で SLSQP 最適化。motor_stats の収録履歴が短い場合、motor 重みは小さくなる傾向あり。
+
+### Build Stadium Weather Params (sui_params.csv)
+
+```bash
+# 24場分の気象線形回帰パラメータを実データから再学習
+python scripts/build_sui_params.py \
+  --start-date 2025-01-01 --end-date 2026-04-30 \
+  --out data/stadium/sui_params.csv
+```
+
+`previews + results` を結合して場×コース別に線形回帰し、波・風(追い/向かい)・気温水温差・天候から有利pt変動を推定。
+
 ### Backfill Recent Form Data
 
 `race.boatcast.jp` carries `bc_zensou` and `bc_zensou_touchi` from **2024-03-12** onwards. Use `backfill-recent-form.py` to populate both `data/recent_national/` and `data/recent_local/` for a date range.
@@ -758,8 +908,10 @@ pytest --cov=boatrace tests/unit/
 
 ### Workflows
 
-- **`daily-sync.yml`** — Runs every day at 00:10 JST. Processes Results, Programs, Previews, Race Cards, Recent Form, and Motor Stats for the previous day. Each step uses `if: always()` (and `continue-on-error: true` for third-party-source steps) so a single source outage does not break the rest of the pipeline.
-- **`preview-realtime.yml`** — Runs every minute between JST 08:30 and 23:00. Scrapes per-source preview data (`tkz` / `stt` / `sui` / `original_exhibition`) for races whose deadline falls in the eligibility window (default `[now+1min, now+10min]`). Idempotent and resilient to cron drift; commits one batch per invocation only when rows are actually appended.
+- **`daily-sync.yml`** — Runs every day at 00:10 JST. Processes Results, Programs, Previews, Race Cards, Recent Form, and Motor Stats for the previous day. Then runs **Build Daily Index Batch** (`build_index.py --mode daily`) to populate today's `data/index/YYYY/MM/DD.csv` with 枠番・選手・モーター + 暫定強さpt(状態 = `daily`、展示・気象は 50 で補完)。Each step uses `if: always()` (and `continue-on-error: true` for third-party-source steps) so a single source outage does not break the rest of the pipeline.
+- **`preview-realtime.yml`** — Runs every minute between JST 08:30 and 23:00. Scrapes per-source preview data (`tkz` / `stt` / `sui` / `original_exhibition`) for races whose deadline falls in the eligibility window (default `[now+1min, now+10min]`). After appending preview rows, **also updates the corresponding rows in `data/index/YYYY/MM/DD.csv`** (展示・気象 を実値で再計算 → 状態 = `realtime`)、both changes go in a single commit. Idempotent and resilient to cron drift; commits one batch per invocation only when rows are actually appended.
+  - **Cloud Run Jobs 移行版**: GitHub Actions の cron が間引かれる課題に対応するため、Cloud Scheduler + Cloud Run Jobs で同じ `preview-realtime.py` を 5 分粒度で確実に実行する構成も用意しています。詳細は [`infra/README.md`](infra/README.md) を参照。
+- **`monthly-weights.yml`** — Runs on the 1st of each month at 09:00 JST. Re-learns 24-stadium × 5-feature weights from the prior 6 months of data and writes `data/stadium/index_weights/YYYY-MM.csv`. `build_index.py` automatically picks up the latest weights ≤ the target month.
 
 ## Configuration
 
