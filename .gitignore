@@ -12,3 +12,4 @@ scripts/tests/unit/__pycache__/
 scripts/tests/integration/__pycache__/
 logs
 docs/notebooks/.ipynb_checkpoints
+.DS_Store

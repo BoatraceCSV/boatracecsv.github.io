@@ -1,0 +1,82 @@
+name: Monthly Index Weights
+
+# 各場の 5要素重みを直近6ヶ月のデータから再計算し、
+# data/stadium/index_weights/YYYY-MM.csv を更新する。
+#
+# build_index.py は実行時に「対象日付の月以下で最新の重みファイル」を
+# 自動選択するため、このワークフローが先月分まで揃っていれば日次バッチが
+# 自動的に最新重みを使う。
+
+on:
+  schedule:
+    # JST 09:00 on the 1st of each month (= UTC 00:00 on the 1st).
+    # daily-sync.yml は 00:10 JST に走るので、当日の motor_stats / recent_form
+    # 等が揃った後の時刻を選んでいる。
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: 'Target month (YYYY-MM). Empty = current JST month.'
+        required: false
+        default: ''
+
+env:
+  PYTHONUNBUFFERED: 1
+  LOG_LEVEL: INFO
+
+jobs:
+  build-weights:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Pull LFS Files
+        run: |
+          git lfs pull
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r scripts/requirements.txt
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git config --global url."https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Resolve Target Month
+        id: month
+        run: |
+          MONTH="${{ github.event.inputs.month }}"
+          if [ -z "$MONTH" ]; then
+            MONTH=$(TZ=Asia/Tokyo date +%Y-%m)
+          fi
+          echo "TARGET_MONTH=$MONTH" >> "$GITHUB_ENV"
+          echo "Target month: $MONTH"
+
+      - name: Build Monthly Weights
+        run: |
+          python scripts/build_weights.py --month "$TARGET_MONTH"
+
+      - name: Commit Weights
+        run: |
+          git add data/stadium/index_weights/
+          if git diff --cached --quiet; then
+            echo "No weights changes to commit for $TARGET_MONTH"
+          else
+            git commit -m "Update monthly index weights ($TARGET_MONTH)"
+            git push
+          fi

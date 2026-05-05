@@ -91,6 +91,31 @@ jobs:
         if: always()
         continue-on-error: true
 
+      - name: Build Daily Index Batch (枠番・選手・モーター + 暫定強さpt)
+        # 当日 JST のレース全件分について、枠番・選手・モーター・暫定強さpt
+        # を埋めた data/index/YYYY/MM/DD.csv を生成する。展示・気象は 50 で
+        # 補完(状態=daily)。直前バッチ(preview-realtime.yml)が稼働開始する
+        # 朝までに完了させる必要があるため、データ取得ステップの直後に置く。
+        run: |
+          TODAY_JST=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+          echo "Building daily index for $TODAY_JST"
+          python scripts/build_index.py --date "$TODAY_JST" --mode daily
+        if: always()
+        continue-on-error: true
+
+      - name: Commit Daily Index
+        run: |
+          git add data/index/
+          if git diff --cached --quiet; then
+            echo "No daily index changes to commit"
+          else
+            TODAY_JST=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+            git commit -m "Update daily index batch ($TODAY_JST)"
+            git push
+          fi
+        if: always()
+        continue-on-error: true
+
       - name: Check Job Status
         if: always()
         run: |

@@ -63,6 +63,16 @@ from boatrace.preview_csv import (  # noqa: E402
     existing_race_codes,
 )
 
+# Per-race update of data/index/YYYY/MM/DD.csv after preview rows land.
+import importlib.util  # noqa: E402
+
+_build_index_path = Path(__file__).parent / "build_index.py"
+_spec = importlib.util.spec_from_file_location("build_index", _build_index_path)
+_build_index = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_build_index)
+update_index_for_races = _build_index.update_index_for_races
+index_csv_path = _build_index.index_csv_path
+
 
 SOURCES = ("tkz", "stt", "sui", "original_exhibition")
 
@@ -531,6 +541,39 @@ def main() -> int:
         sui=len(sui_rows),
         original_exhibition=len(oex_rows),
     )
+
+    # --- 5b. Update data/index/YYYY/MM/DD.csv for races whose preview --
+    #         we just appended (展示・気象を再計算 → 状態=realtime).
+    updated_codes = sorted({
+        row[0]  # 1st column = レースコード
+        for source_rows in (tkz_rows, stt_rows, sui_rows, oex_rows)
+        for row in source_rows
+    })
+    if updated_codes and not args.dry_run:
+        day = datetime.strptime(date_str, "%Y-%m-%d").date()
+        idx_path = index_csv_path(PROJECT_ROOT, day)
+        if not idx_path.exists():
+            logging_module.info(
+                "preview_realtime_index_skipped",
+                reason="index_csv_missing",
+                path=str(idx_path.relative_to(PROJECT_ROOT)),
+            )
+        else:
+            try:
+                n_updated = update_index_for_races(PROJECT_ROOT, day, updated_codes)
+                if n_updated > 0:
+                    paths.append(idx_path)
+                logging_module.info(
+                    "preview_realtime_index_updated",
+                    date=date_str,
+                    n_updated=n_updated,
+                    race_codes=updated_codes,
+                )
+            except Exception as exc:  # pragma: no cover — defensive
+                logging_module.error(
+                    "preview_realtime_index_update_failed",
+                    error=str(exc),
+                )
 
     # --- 6. Commit & push ---------------------------------------------
     if args.dry_run or args.no_commit or not paths:
