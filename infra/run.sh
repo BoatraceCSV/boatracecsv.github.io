@@ -65,15 +65,26 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 # the 1 GiB Cloud Run Job. We do a partial clone (commits/trees only, no
 # blobs) and then a cone-mode sparse-checkout of just the paths the script
 # actually reads or writes:
-#   - scripts/             python sources
-#   - .boatrace/           runtime config (load_config)
+#
+#   - scripts/                         python sources (preview-realtime.py + build_index.py)
+#   - .boatrace/                       runtime config (load_config)
+#   - data/stadium/                    win_rate.csv / sui_params.csv / index_weights/*.csv
+#   - data/index/<YYYY>/<MM>/          today's index CSV (read+write target)
+#   - data/programs/<YYYY>/<MM>/       feature input — racer rosters
+#   - data/recent_national/<YYYY>/<MM>/ feature input — 全国近況5節
+#   - data/recent_local/<YYYY>/<MM>/    feature input — 当地近況5節
+#   - data/motor_stats/<YYYY>/<MM>/     feature input — モーター期成績 (this month)
+#   - data/motor_stats/<PREV_YM>/      previous month — motor_pt has 7-day fallback
+#                                       that crosses month boundaries near month start
+#   - data/previews/<YYYY>/<MM>/       fallback when realtime per-source files miss
 #   - data/previews/{tkz,stt,sui,original_exhibition}/<YYYY>/<MM>/
-#                          existing CSVs for today (for dedup) + write target
+#                                       existing CSVs for today (for dedup) + write target
 #
 # Today's YYYY/MM is computed in JST because csv_path_for() uses JST dates.
 TODAY_YM=$(TZ=Asia/Tokyo date +'%Y/%m')
+PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +'%Y-%m-15') -1 month" +'%Y/%m')
 
-log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, ym=${TODAY_YM})"
+log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, ym=${TODAY_YM}, prev=${PREV_YM})"
 git clone \
   --depth 1 \
   --filter=blob:none \
@@ -90,6 +101,14 @@ git sparse-checkout init --cone
 git sparse-checkout set \
   scripts \
   .boatrace \
+  data/stadium \
+  "data/index/${TODAY_YM}" \
+  "data/programs/${TODAY_YM}" \
+  "data/recent_national/${TODAY_YM}" \
+  "data/recent_local/${TODAY_YM}" \
+  "data/motor_stats/${TODAY_YM}" \
+  "data/motor_stats/${PREV_YM}" \
+  "data/previews/${TODAY_YM}" \
   "data/previews/tkz/${TODAY_YM}" \
   "data/previews/stt/${TODAY_YM}" \
   "data/previews/sui/${TODAY_YM}" \
