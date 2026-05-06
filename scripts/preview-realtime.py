@@ -62,6 +62,14 @@ from boatrace.preview_csv import (  # noqa: E402
     csv_path_for,
     existing_race_codes,
 )
+from boatrace.result_realtime import (  # noqa: E402
+    RESULT_HEADERS,
+    ResultRealtimeFetcher,
+    append_rows as append_result_rows,
+    build_result_row,
+    csv_path_for as result_csv_path_for,
+    existing_race_codes as result_existing_race_codes,
+)
 
 # Per-race update of data/estimate/index/YYYY/MM/DD.csv after preview rows land.
 import importlib.util  # noqa: E402
@@ -350,21 +358,113 @@ def write_all(
     return paths_written, total_rows
 
 
+def select_finished_races(
+    races: List[HoldingRace],
+    now_jst: datetime,
+    date_str: str,
+    finished_min: int,
+    finished_max: int,
+    already_recorded: Set[str],
+) -> List[HoldingRace]:
+    """Filter the holding-list to races whose deadline already passed.
+
+    A race is a candidate for realtime result fetch when:
+      * ``cancel_status`` is empty (not 中止 / 順延 / 途中中止)
+      * its deadline is between ``finished_min`` and ``finished_max``
+        minutes *in the past* relative to ``now_jst``
+      * its ``race_code`` is not yet present in the realtime results CSV
+
+    The window has both bounds because:
+      * lower bound (``finished_min``): the race file does not appear
+        until a few minutes after the deadline; checking earlier would
+        always 403.
+      * upper bound (``finished_max``): once the file has been recorded
+        we don't need to keep retrying every minute for hours; idempotency
+        already handles the no-op, but skipping cuts HTTP traffic.
+    """
+    upper = now_jst - timedelta(minutes=finished_min)  # latest allowable deadline
+    lower = now_jst - timedelta(minutes=finished_max)  # earliest allowable deadline
+
+    candidates: List[HoldingRace] = []
+    for race in races:
+        if not race.is_open:
+            continue
+        deadline_dt = deadline_to_jst_datetime(date_str, race.deadline_time)
+        if deadline_dt is None:
+            continue
+        if not (lower <= deadline_dt <= upper):
+            continue
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        if race_code in already_recorded:
+            continue
+        candidates.append(race)
+    return candidates
+
+
+def fetch_and_build_result_rows(
+    fetcher: ResultRealtimeFetcher,
+    candidates: List[HoldingRace],
+    date_str: str,
+    fetched_at_iso: str,
+) -> List[List[str]]:
+    """Fetch and convert each candidate's bc_rs1_2 into a CSV row.
+
+    Skips races whose file does not yet exist (``fetch_race_result``
+    returns ``None``). Returns rows ready for :func:`append_result_rows`.
+    """
+    rows: List[List[str]] = []
+    for race in candidates:
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        result = fetcher.fetch_race_result(
+            date_str, race.stadium_code, race.race_number
+        )
+        if result is None:
+            logging_module.info(
+                "result_realtime_skip",
+                race_code=race_code,
+                reason="not_ready_or_missing",
+            )
+            continue
+        rows.append(
+            build_result_row(
+                race_code=race_code,
+                date_str=date_str,
+                stadium_code=race.stadium_code,
+                race_number=race.race_number,
+                deadline_time=race.deadline_time,
+                fetched_at_iso=fetched_at_iso,
+                result=result,
+            )
+        )
+    return rows
+
+
 def commit_changes(
     paths: List[Path],
     date_str: str,
     eligible: List[HoldingRace],
+    finished: Optional[List[HoldingRace]] = None,
 ) -> bool:
     """Stage paths, commit, push. Returns True on success / no-op."""
     if not paths:
         return True
 
     rel_paths = [str(p.relative_to(PROJECT_ROOT)) for p in paths]
-    summary = ",".join(
-        f"{r.stadium_code:02d}-{r.race_number:02d}"
-        for r in sorted(eligible, key=lambda r: (r.stadium_code, r.race_number))
-    )
-    message = f"Update preview realtime: {date_str} [{summary}]"
+    parts: List[str] = []
+    if eligible:
+        preview_summary = ",".join(
+            f"{r.stadium_code:02d}-{r.race_number:02d}"
+            for r in sorted(eligible, key=lambda r: (r.stadium_code, r.race_number))
+        )
+        parts.append(f"preview {preview_summary}")
+    if finished:
+        result_summary = ",".join(
+            f"{r.stadium_code:02d}-{r.race_number:02d}"
+            for r in sorted(finished, key=lambda r: (r.stadium_code, r.race_number))
+        )
+        parts.append(f"result {result_summary}")
+    summary = " | ".join(parts) if parts else "no-op"
+    message = f"Update realtime: {date_str} [{summary}]"
     return git_operations.commit_and_push(rel_paths, message)
 
 
@@ -406,6 +506,30 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=10,
         help="Upper bound (minutes ahead of now). Default: 10.",
+    )
+    parser.add_argument(
+        "--result-window-min",
+        type=int,
+        default=3,
+        help=(
+            "Minutes since deadline to start checking bc_rs1_2 (results). "
+            "Default: 3 — race typically finalises a few minutes after "
+            "deadline."
+        ),
+    )
+    parser.add_argument(
+        "--result-window-max",
+        type=int,
+        default=30,
+        help=(
+            "Minutes since deadline to stop checking bc_rs1_2. Default: 30 "
+            "— anything older has already been written or is unrecoverable."
+        ),
+    )
+    parser.add_argument(
+        "--skip-results",
+        action="store_true",
+        help="Run preview fetch but skip the result-realtime step.",
     )
     parser.add_argument(
         "--dry-run",
@@ -500,31 +624,26 @@ def main() -> int:
         ],
     )
 
-    if not eligible:
-        logging_module.info(
-            "preview_realtime_nothing_to_do",
-            date=date_str,
-            now=now_jst.isoformat(),
+    # --- 4. Fetch & build preview rows --------------------------------
+    if eligible:
+        scraper = PreviewTsvScraper(
+            timeout_seconds=config.get("request_timeout_seconds", 30),
+            rate_limiter=rate_limiter,
         )
-        return 0
-
-    # --- 4. Fetch & build rows ----------------------------------------
-    scraper = PreviewTsvScraper(
-        timeout_seconds=config.get("request_timeout_seconds", 30),
-        rate_limiter=rate_limiter,
-    )
-    oex_scraper = OriginalExhibitionScraper(
-        timeout_seconds=config.get("request_timeout_seconds", 30),
-        rate_limiter=rate_limiter,
-    )
-    tkz_rows, stt_rows, sui_rows, oex_rows = fetch_and_build_rows(
-        scraper,
-        oex_scraper,
-        eligible,
-        date_str,
-        fetched_at_iso,
-        already_recorded,
-    )
+        oex_scraper = OriginalExhibitionScraper(
+            timeout_seconds=config.get("request_timeout_seconds", 30),
+            rate_limiter=rate_limiter,
+        )
+        tkz_rows, stt_rows, sui_rows, oex_rows = fetch_and_build_rows(
+            scraper,
+            oex_scraper,
+            eligible,
+            date_str,
+            fetched_at_iso,
+            already_recorded,
+        )
+    else:
+        tkz_rows = stt_rows = sui_rows = oex_rows = []
 
     # --- 5. Write CSVs -------------------------------------------------
     paths, total = write_all(
@@ -575,11 +694,84 @@ def main() -> int:
                     error=str(exc),
                 )
 
+    # --- 5c. Fetch & append realtime results -------------------------
+    # For races whose deadline has already passed, try to fetch
+    # bc_rs1_2 and append a row to data/results/realtime/YYYY/MM/DD.csv.
+    # This runs in the same invocation as the preview pipeline so a
+    # single cron tick covers both "next 5 minutes" preview and "last
+    # ~30 minutes" results.
+    finished_candidates: List[HoldingRace] = []
+    result_rows: List[List[str]] = []
+    if not args.skip_results:
+        result_path = result_csv_path_for(PROJECT_ROOT, date_str)
+        already_results = result_existing_race_codes(result_path)
+
+        finished_candidates = select_finished_races(
+            races,
+            now_jst,
+            date_str,
+            args.result_window_min,
+            args.result_window_max,
+            already_results,
+        )
+
+        logging_module.info(
+            "result_realtime_candidates",
+            date=date_str,
+            candidate_count=len(finished_candidates),
+            candidates=[
+                f"{r.stadium_code:02d}-{r.race_number:02d}@{r.deadline_time}"
+                for r in finished_candidates
+            ],
+        )
+
+        if finished_candidates:
+            result_fetcher = ResultRealtimeFetcher(
+                timeout_seconds=config.get("request_timeout_seconds", 30),
+                rate_limiter=rate_limiter,
+            )
+            result_rows = fetch_and_build_result_rows(
+                result_fetcher,
+                finished_candidates,
+                date_str,
+                fetched_at_iso,
+            )
+
+        if result_rows:
+            if args.dry_run:
+                logging_module.info(
+                    "result_realtime_csv_dry_run",
+                    path=str(result_path),
+                    rows=len(result_rows),
+                )
+                paths.append(result_path)
+            else:
+                written = append_result_rows(
+                    result_path, RESULT_HEADERS, result_rows
+                )
+                if written > 0:
+                    paths.append(result_path)
+
+        logging_module.info(
+            "result_realtime_complete",
+            date=date_str,
+            candidates=len(finished_candidates),
+            written=len(result_rows),
+        )
+
     # --- 6. Commit & push ---------------------------------------------
     if args.dry_run or args.no_commit or not paths:
         return 0
 
-    if not commit_changes(paths, date_str, eligible):
+    # Only include the candidates whose result row was actually built
+    # (a subset — others returned 403 / partial).
+    finished_written_codes = {row[0] for row in result_rows}
+    finished_for_msg = [
+        r for r in finished_candidates
+        if build_race_code(date_str, r.stadium_code, r.race_number)
+        in finished_written_codes
+    ]
+    if not commit_changes(paths, date_str, eligible, finished=finished_for_msg):
         logging_module.error("preview_realtime_commit_failed")
         return 1
 
