@@ -430,8 +430,8 @@ raw_col_21,raw_col_22,
 ---
 
 ### Strength Index (強さポイント)
-**ファイルパス**: `data/index/YYYY/MM/DD.csv`
-**URL**: https://boatracecsv.github.io/data/index/2026/05/03.csv
+**ファイルパス**: `data/estimate/index/YYYY/MM/DD.csv`
+**URL**: https://boatracecsv.github.io/data/estimate/index/2026/05/03.csv
 
 各レース 1 行で、6 枠分の「強さポイント」を 5 要素の偏差値で表現したファイルです。**枠番**・**選手**・**モーター**・**展示**・**気象** の 5 要素を場別に学習した重みで線形結合し、平均 50・標準偏差 10 の偏差値スケールで出力します。
 
@@ -909,8 +909,8 @@ pytest --cov=boatrace tests/unit/
 
 ### Workflows
 
-- **`daily-sync.yml`** — Runs every day at 00:10 JST. Processes Results, Programs, Previews, Race Cards, Recent Form, and Motor Stats for the previous day. Then runs **Build Daily Index Batch** (`build_index.py --mode daily`) to populate today's `data/index/YYYY/MM/DD.csv` with 枠番・選手・モーター + 暫定強さpt(状態 = `daily`、展示・気象は 50 で補完)。Each step uses `if: always()` (and `continue-on-error: true` for third-party-source steps) so a single source outage does not break the rest of the pipeline.
-- **`preview-realtime.yml`** — Runs every minute between JST 08:30 and 23:00. Scrapes per-source preview data (`tkz` / `stt` / `sui` / `original_exhibition`) for races whose deadline falls in the eligibility window (default `[now+1min, now+10min]`). After appending preview rows, **also updates the corresponding rows in `data/index/YYYY/MM/DD.csv`** (展示・気象 を実値で再計算 → 状態 = `realtime`)、both changes go in a single commit. Idempotent and resilient to cron drift; commits one batch per invocation only when rows are actually appended.
+- **`daily-sync.yml`** — Runs every day at 00:10 JST. Processes Results, Programs, Previews, Race Cards, Recent Form, and Motor Stats for the previous day. Then runs **Build Daily Index Batch** (`build_index.py --mode daily`) to populate today's `data/estimate/index/YYYY/MM/DD.csv` with 枠番・選手・モーター + 暫定強さpt(状態 = `daily`、展示・気象は 50 で補完)。Each step uses `if: always()` (and `continue-on-error: true` for third-party-source steps) so a single source outage does not break the rest of the pipeline.
+- **`preview-realtime.yml`** — Runs every minute between JST 08:30 and 23:00. Scrapes per-source preview data (`tkz` / `stt` / `sui` / `original_exhibition`) for races whose deadline falls in the eligibility window (default `[now+1min, now+10min]`). After appending preview rows, **also updates the corresponding rows in `data/estimate/index/YYYY/MM/DD.csv`** (展示・気象 を実値で再計算 → 状態 = `realtime`)、both changes go in a single commit. Idempotent and resilient to cron drift; commits one batch per invocation only when rows are actually appended.
   - **Cloud Run Jobs 移行版**: GitHub Actions の cron が間引かれる課題に対応するため、Cloud Scheduler + Cloud Run Jobs で同じ `preview-realtime.py` を 5 分粒度で確実に実行する構成も用意しています。詳細は [`infra/README.md`](infra/README.md) を参照。
 - **`monthly-weights.yml`** — Runs on the 1st of each month at 09:00 JST. Re-learns 24-stadium × 5-feature weights from the prior 6 months of data and writes `data/estimate/stadium/index_weights/YYYY-MM.csv`. `build_index.py` automatically picks up the latest weights ≤ the target month.
 

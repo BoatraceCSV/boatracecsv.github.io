@@ -63,7 +63,7 @@ from boatrace.preview_csv import (  # noqa: E402
     existing_race_codes,
 )
 
-# Per-race update of data/index/YYYY/MM/DD.csv after preview rows land.
+# Per-race update of data/estimate/index/YYYY/MM/DD.csv after preview rows land.
 import importlib.util  # noqa: E402
 
 _build_index_path = Path(__file__).parent / "build_index.py"
@@ -542,7 +542,7 @@ def main() -> int:
         original_exhibition=len(oex_rows),
     )
 
-    # --- 5b. Update data/index/YYYY/MM/DD.csv for races whose preview --
+    # --- 5b. Update data/estimate/index/YYYY/MM/DD.csv for races whose preview --
     #         we just appended (展示・気象を再計算 → 状態=realtime).
     updated_codes = sorted({
         row[0]  # 1st column = レースコード

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build data/index/YYYY/MM/DD.csv — per-race strength components for each 枠番.
+Build data/estimate/index/YYYY/MM/DD.csv — per-race strength components for each 枠番.
 
 All output values use the 偏差値 scale (mean 50, std 10):
     pt    = 50 + 10 × z       where z = (raw − μ) / σ over 6mo training
@@ -96,7 +96,7 @@ def stadium_name_from_code(code2: str) -> str:
 # Index path & ordering helpers
 # ─────────────────────────────────────────────────────────────────────
 def index_csv_path(repo: Path, day: dt.date) -> Path:
-    return repo / "data" / "index" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    return repo / "data" / "estimate" / "index" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
 
 
 def index_columns() -> list[str]:

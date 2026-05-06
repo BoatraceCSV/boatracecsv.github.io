@@ -116,7 +116,7 @@ jobs:
 
       - name: Build Daily Index Batch (枠番・選手・モーター + 暫定強さpt)
         # 当日 JST のレース全件分について、枠番・選手・モーター・暫定強さpt
-        # を埋めた data/index/YYYY/MM/DD.csv を生成する。展示・気象は 50 で
+        # を埋めた data/estimate/index/YYYY/MM/DD.csv を生成する。展示・気象は 50 で
         # 補完(状態=daily)。直前バッチ(preview-realtime.yml)が稼働開始する
         # 朝までに完了させる必要があるため、データ取得ステップの直後に置く。
         run: |
@@ -128,7 +128,7 @@ jobs:
 
       - name: Commit Daily Index
         run: |
-          git add data/index/
+          git add data/estimate/index/
           if git diff --cached --quiet; then
             echo "No daily index changes to commit"
           else

@@ -51,7 +51,7 @@ Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`prev
 | `scripts/` | preview-realtime.py / build_index.py / boatrace パッケージ |
 | `.boatrace/` | 実行時設定 (load_config) |
 | `data/estimate/stadium/` | win_rate.csv, sui_params.csv, index_weights/*.csv |
-| `data/index/<YYYY/MM>/` | 当日 index CSV(直前バッチで一部レースを更新) |
+| `data/estimate/index/<YYYY/MM>/` | 当日 index CSV(直前バッチで一部レースを更新) |
 | `data/programs/<YYYY/MM>/` | 選手・モーター番号など特徴量入力 |
 | `data/programs/recent_national/<YYYY/MM>/` | 全国近況5節 |
 | `data/programs/recent_local/<YYYY/MM>/` | 当地近況5節 |
@@ -316,10 +316,10 @@ gcloud logging read \
   --limit=30 --freshness=10m --format='value(timestamp,textPayload)'
 ```
 
-`run.sh` の sparse-checkout 拡張 (data/index/, data/estimate/stadium/,
+`run.sh` の sparse-checkout 拡張 (data/estimate/index/, data/estimate/stadium/,
 data/programs/, data/programs/recent_*/, data/programs/motor_stats/) を伴う変更後は、
 特にログに `preview_realtime_index_skipped reason=index_csv_missing`
-が出ていないか確認します。出ている場合は当日の `data/index/` が
+が出ていないか確認します。出ている場合は当日の `data/estimate/index/` が
 GitHub Actions の `daily-sync.yml` で生成済みかをチェック。
 
 ### 4. イメージ ロールバック (前リビジョンに戻す)
@@ -443,7 +443,7 @@ Job 側は `:latest` 参照なので再デプロイ不要。
 
 ### `preview_realtime_index_skipped reason=index_csv_missing` がログに出る
 
-`scripts/preview-realtime.py` が `data/index/YYYY/MM/DD.csv` を更新しよう
+`scripts/preview-realtime.py` が `data/estimate/index/YYYY/MM/DD.csv` を更新しよう
 として、ファイルが存在しない/sparse-checkout されていない時のメッセージ。
 原因は2系統:
 
@@ -451,7 +451,7 @@ Job 側は `:latest` 参照なので再デプロイ不要。
    GitHub Actions の `.github/workflows/daily-sync.yml` で `Build Daily Index Batch`
    ステップが当日 00:10 JST に走っているはず。失敗していると当日の
    index CSV が main に存在しない。GitHub Actions の Run 履歴を確認。
-2. **`run.sh` の sparse-checkout に `data/index/${TODAY_YM}` が無い**
+2. **`run.sh` の sparse-checkout に `data/estimate/index/${TODAY_YM}` が無い**
    イメージが古いとこのパスが checkout されず、ファイルが存在するのに
    ローカルでは見えない状態になる。「## 更新手順」に従ってイメージを
    再ビルド+ Job を更新。
