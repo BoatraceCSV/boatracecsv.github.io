@@ -2,8 +2,12 @@ name: Daily Boatrace Data Sync
 
 on:
   schedule:
-    # Every day at 15:10 UTC = 00:10 JST
-    - cron: '10 15 * * *'
+    # Every day at 23:30 UTC = 08:30 JST (next day)
+    # 当日分の race_cards / recent_form / motor_stats が boatcast.jp 上で
+    # 揃う AM 8:00 以降に実行する。10 分程度で完了するため、
+    # preview-realtime.yml (08:30 JST 以降) の直前データ取得とほぼ並走しつつ
+    # 当日分の最新データを公開できる。
+    - cron: '30 23 * * *'
   workflow_dispatch:
     inputs:
       start_date:
@@ -74,20 +78,28 @@ jobs:
         if: always()
 
       - name: Process Race Cards (boatcast bc_j_str3)
+        # 当日分の race_cards を取得する。boatcast.jp の bc_j_str3 は
+        # AM 8:00 頃までに当日レース分が揃うため、08:30 JST 起動の
+        # 本ワークフローでは --date を当日 (TODAY_JST) に明示する。
         run: |
-          python scripts/race-card.py --force
+          TODAY_JST=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+          python scripts/race-card.py --date "$TODAY_JST" --force
         if: always()
         continue-on-error: true
 
       - name: Process Recent Form (boatcast bc_zensou + bc_zensou_touchi)
+        # 当日分の recent_form を取得する。
         run: |
-          python scripts/recent-form.py --force
+          TODAY_JST=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+          python scripts/recent-form.py --date "$TODAY_JST" --force
         if: always()
         continue-on-error: true
 
       - name: Process Motor Stats (boatcast bc_mst + bc_mdc)
+        # 当日分の motor_stats を取得する。
         run: |
-          python scripts/motor-stats.py --force
+          TODAY_JST=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+          python scripts/motor-stats.py --date "$TODAY_JST" --force
         if: always()
         continue-on-error: true
 
