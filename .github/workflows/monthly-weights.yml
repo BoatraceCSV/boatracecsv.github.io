@@ -1,7 +1,7 @@
 name: Monthly Index Weights
 
 # 各場の 5要素重みを直近6ヶ月のデータから再計算し、
-# data/stadium/index_weights/YYYY-MM.csv を更新する。
+# data/estimate/stadium/index_weights/YYYY-MM.csv を更新する。
 #
 # build_index.py は実行時に「対象日付の月以下で最新の重みファイル」を
 # 自動選択するため、このワークフローが先月分まで揃っていれば日次バッチが
@@ -73,7 +73,7 @@ jobs:
 
       - name: Commit Weights
         run: |
-          git add data/stadium/index_weights/
+          git add data/estimate/stadium/index_weights/
           if git diff --cached --quiet; then
             echo "No weights changes to commit for $TARGET_MONTH"
           else

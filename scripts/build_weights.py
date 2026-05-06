@@ -12,7 +12,7 @@ For each stadium:
             subject to  w ≥ 0,  Σ w = 1
        where y_std = standardized (7 − finish).
 
-Output: data/stadium/index_weights/YYYY-MM.csv (one row per stadium).
+Output: data/estimate/stadium/index_weights/YYYY-MM.csv (one row per stadium).
 
 Usage:
     python scripts/build_weights.py --month 2026-05
@@ -232,7 +232,7 @@ def main():
     p.add_argument("--month", required=True, help="Target month YYYY-MM. Training "
                                                    "window = [month-6mo, month-1day].")
     p.add_argument("--out", default=None,
-                   help="Override output path (default: data/stadium/index_weights/YYYY-MM.csv)")
+                   help="Override output path (default: data/estimate/stadium/index_weights/YYYY-MM.csv)")
     args = p.parse_args()
 
     repo = Path(args.repo_root).resolve()
@@ -263,7 +263,7 @@ def main():
               file=sys.stderr)
 
     out_path = (Path(args.out) if args.out
-                else repo / "data" / "stadium" / "index_weights"
+                else repo / "data" / "estimate" / "stadium" / "index_weights"
                 / f"{target:%Y-%m}.csv")
     save_weights(out_path, results)
     print(f"\n▼ Saved {len(results)} stadiums → {out_path}", file=sys.stderr)

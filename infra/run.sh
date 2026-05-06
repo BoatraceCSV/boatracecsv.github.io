@@ -68,7 +68,7 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #
 #   - scripts/                         python sources (preview-realtime.py + build_index.py)
 #   - .boatrace/                       runtime config (load_config)
-#   - data/stadium/                    win_rate.csv / sui_params.csv / index_weights/*.csv
+#   - data/estimate/stadium/           win_rate.csv / sui_params.csv / index_weights/*.csv
 #   - data/index/<YYYY>/<MM>/          today's index CSV (read+write target)
 #   - data/programs/<YYYY>/<MM>/                feature input — racer rosters
 #   - data/programs/recent_national/<YYYY>/<MM>/ feature input — 全国近況5節
@@ -101,7 +101,7 @@ git sparse-checkout init --cone
 git sparse-checkout set \
   scripts \
   .boatrace \
-  data/stadium \
+  data/estimate/stadium \
   "data/index/${TODAY_YM}" \
   "data/programs/${TODAY_YM}" \
   "data/programs/recent_national/${TODAY_YM}" \

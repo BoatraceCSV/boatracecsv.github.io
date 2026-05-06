@@ -62,7 +62,7 @@ STATE_REALTIME = "realtime"
 # ─────────────────────────────────────────────────────────────────────
 def find_weights_file(repo: Path, day: dt.date) -> Path | None:
     """Return the latest YYYY-MM.csv ≤ day's month. None if no file exists."""
-    weights_dir = repo / "data" / "stadium" / "index_weights"
+    weights_dir = repo / "data" / "estimate" / "stadium" / "index_weights"
     if not weights_dir.exists():
         return None
     target_tag = f"{day:%Y-%m}"

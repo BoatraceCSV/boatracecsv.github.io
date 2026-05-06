@@ -9,7 +9,7 @@ a per-(stadium, course) linear regression in advantage-point space.
 Usage:
     python scripts/build_sui_params.py \
         --start-date 2025-01-01 --end-date 2026-05-02 \
-        --out data/stadium/sui_params.csv
+        --out data/estimate/stadium/sui_params.csv
 """
 from __future__ import annotations
 
@@ -247,7 +247,7 @@ def main():
     p.add_argument("--repo-root", default=str(Path(__file__).parent.parent))
     p.add_argument("--start-date", default="2025-01-01")
     p.add_argument("--end-date", default="2026-05-02")
-    p.add_argument("--out", default="data/stadium/sui_params.csv")
+    p.add_argument("--out", default="data/estimate/stadium/sui_params.csv")
     args = p.parse_args()
 
     repo_root = Path(args.repo_root).resolve()

@@ -60,7 +60,7 @@ COMPONENT_LABELS = {
 # 1. 枠番ポイント
 # ─────────────────────────────────────────────────────────────────────
 def load_waku_table(repo: Path) -> dict:
-    df = pd.read_csv(repo / "data" / "stadium" / "win_rate.csv", dtype=str)
+    df = pd.read_csv(repo / "data" / "estimate" / "stadium" / "win_rate.csv", dtype=str)
     table: dict[tuple[str, str], list[float]] = {}
     for _, r in df.iterrows():
         key = (str(r["場コード"]).zfill(2), str(r["季節"]))
@@ -233,7 +233,7 @@ def hensachi(values: list[float]) -> list[float]:
 # 5. 気象ポイント
 # ─────────────────────────────────────────────────────────────────────
 def load_sui_params(repo: Path) -> dict:
-    df = pd.read_csv(repo / "data" / "stadium" / "sui_params.csv")
+    df = pd.read_csv(repo / "data" / "estimate" / "stadium" / "sui_params.csv")
     out = {}
     for _, row in df.iterrows():
         stadium = row["stadium"]
