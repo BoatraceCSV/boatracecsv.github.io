@@ -65,8 +65,8 @@ def mock_logger(monkeypatch):
 @pytest.fixture
 def temp_csv_directory(tmp_path):
     """Provide temporary directory for CSV file output during tests."""
-    results_dir = tmp_path / "data" / "results" / "2025" / "12"
-    programs_dir = tmp_path / "data" / "programs" / "2025" / "12"
+    results_dir = tmp_path / "data" / "results" / "daily" / "2025" / "12"
+    programs_dir = tmp_path / "data" / "programs" / "daily" / "2025" / "12"
     results_dir.mkdir(parents=True, exist_ok=True)
     programs_dir.mkdir(parents=True, exist_ok=True)
     return tmp_path

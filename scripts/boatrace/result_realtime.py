@@ -21,7 +21,7 @@ caller looks up :func:`existing_race_codes` before fetching and only
 fetches/parses races that aren't yet present.
 
 The K-file pipeline (``scripts/result.py``) writes the canonical results
-the next day to ``data/results/{YYYY}/{MM}/{DD}.csv`` (a different path),
+the next day to ``data/results/daily/{YYYY}/{MM}/{DD}.csv`` (a different path),
 so the two never collide.
 """
 

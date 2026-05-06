@@ -119,7 +119,7 @@ def process_result(
                         # Write
                         if not dry_run:
                             project_root = Path(__file__).parent.parent
-                            csv_path = project_root / f"data/results/{year}/{month}/{day}.csv"
+                            csv_path = project_root / f"data/results/daily/{year}/{month}/{day}.csv"
                             if write_csv(str(csv_path), csv_content, force_overwrite):
                                 stats["csv_files_created"] += 1
                                 logging_module.info(
@@ -291,7 +291,7 @@ def main():
         # Git commit and push if CSV files were created (not dry-run)
         if stats["csv_files_created"] > 0 and not args.dry_run:
             year, month, day = args.date.split("-")
-            csv_file = f"data/results/{year}/{month}/{day}.csv"
+            csv_file = f"data/results/daily/{year}/{month}/{day}.csv"
 
             logging_module.info(
                 "result_git_commit_start",
