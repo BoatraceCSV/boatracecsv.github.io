@@ -7,7 +7,7 @@ For a given date, this script:
   2. For each open stadium, fetches ``bc_mst`` (motor period start date)
      followed by ``bc_mdc_{period}_{jo}`` (one row per motor at the stadium).
   3. Aggregates all stadium-motor rows into a single CSV at
-     ``data/motor_stats/YYYY/MM/DD.csv``.
+     ``data/programs/motor_stats/YYYY/MM/DD.csv``.
 
 Note on history: race.boatcast.jp only carries the **current** motor
 period for each stadium. Historic periods are not retained server-side,
@@ -37,7 +37,7 @@ from boatrace.parser import parse_program_file
 from boatrace.storage import write_csv
 
 
-OUTPUT_DIR = "data/motor_stats"
+OUTPUT_DIR = "data/programs/motor_stats"
 
 
 def _collect_open_stadiums(
@@ -240,7 +240,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description=(
             "Scrape motor period statistics (モーター期成績) from race.boatcast.jp. "
-            "Writes data/motor_stats/YYYY/MM/DD.csv (one row per motor at each "
+            "Writes data/programs/motor_stats/YYYY/MM/DD.csv (one row per motor at each "
             "open stadium). Note: only the current motor period is exposed by "
             "boatcast — historical backfill is not possible."
         )

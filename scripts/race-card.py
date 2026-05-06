@@ -6,10 +6,10 @@ For a given date, this script:
      races exist (mirroring the original-exhibition.py flow).
   2. Fetches the per-race ``bc_j_str3`` TSV from race.boatcast.jp for each
      race.
-  3. Writes one CSV per date to ``data/race_cards/YYYY/MM/DD.csv``.
+  3. Writes one CSV per date to ``data/programs/race_cards/YYYY/MM/DD.csv``.
 
-This dataset is **parallel** to ``data/programs/`` — the existing programs
-CSV (sourced from the mbrace B-file) is not modified. Race cards add
+This dataset is **parallel** to ``data/programs/YYYY/MM/DD.csv`` — the existing
+programs CSV (sourced from the mbrace B-file) is not modified. Race cards add
 columns that programs lacks: 全国/当地 3連対率, 全国平均ST, F/L counts,
 モーター/ボート 3連対率, and the 14-slot 節間成績 (R番号/進入/枠/ST/着順).
 """
@@ -33,7 +33,7 @@ from boatrace.race_card_scraper import RaceCardScraper
 from boatrace.storage import write_csv
 
 
-OUTPUT_DIR = "data/race_cards"
+OUTPUT_DIR = "data/programs/race_cards"
 
 
 def _collect_actual_races(date_str: str, config: dict, rate_limiter: RateLimiter):

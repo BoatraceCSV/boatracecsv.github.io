@@ -10,8 +10,8 @@ For a given date, this script:
   3. Joins by registration number to produce per-race, per-boat
      :class:`RecentForm` objects.
   4. Writes two CSV files for the date:
-       - ``data/recent_national/YYYY/MM/DD.csv``
-       - ``data/recent_local/YYYY/MM/DD.csv``
+       - ``data/programs/recent_national/YYYY/MM/DD.csv``
+       - ``data/programs/recent_local/YYYY/MM/DD.csv``
 
 Both files follow the same shape (196 columns: 4 meta + 6 boats × 32),
 so the converter is shared between variants.
@@ -38,8 +38,8 @@ from boatrace.recent_form_scraper import RecentFormScraper, RecentFormRow
 from boatrace.storage import write_csv
 
 
-OUTPUT_DIR_NATIONAL = "data/recent_national"
-OUTPUT_DIR_LOCAL = "data/recent_local"
+OUTPUT_DIR_NATIONAL = "data/programs/recent_national"
+OUTPUT_DIR_LOCAL = "data/programs/recent_local"
 
 
 def _race_code(date_str: str, stadium_code: int, race_number: int) -> str:
@@ -359,8 +359,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description=(
             "Scrape recent-form data (全国・当地近況成績) from race.boatcast.jp. "
-            "Writes data/recent_national/YYYY/MM/DD.csv and "
-            "data/recent_local/YYYY/MM/DD.csv."
+            "Writes data/programs/recent_national/YYYY/MM/DD.csv and "
+            "data/programs/recent_local/YYYY/MM/DD.csv."
         )
     )
     parser.add_argument(

@@ -53,9 +53,9 @@ Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`prev
 | `data/stadium/` | win_rate.csv, sui_params.csv, index_weights/*.csv |
 | `data/index/<YYYY/MM>/` | 当日 index CSV(直前バッチで一部レースを更新) |
 | `data/programs/<YYYY/MM>/` | 選手・モーター番号など特徴量入力 |
-| `data/recent_national/<YYYY/MM>/` | 全国近況5節 |
-| `data/recent_local/<YYYY/MM>/` | 当地近況5節 |
-| `data/motor_stats/<YYYY/MM>/` + `<前月>/` | モーター期成績(前月分は7日fallback用) |
+| `data/programs/recent_national/<YYYY/MM>/` | 全国近況5節 |
+| `data/programs/recent_local/<YYYY/MM>/` | 当地近況5節 |
+| `data/programs/motor_stats/<YYYY/MM>/` + `<前月>/` | モーター期成績(前月分は7日fallback用) |
 | `data/previews/<YYYY/MM>/` | 1日1回バッチ生成の統合 preview(realtime 不在時のfallback) |
 | `data/previews/{tkz,stt,sui,original_exhibition}/<YYYY/MM>/` | 直前バッチの追記対象 |
 
@@ -317,7 +317,7 @@ gcloud logging read \
 ```
 
 `run.sh` の sparse-checkout 拡張 (data/index/, data/stadium/,
-data/programs/, data/recent_*/, data/motor_stats/) を伴う変更後は、
+data/programs/, data/programs/recent_*/, data/programs/motor_stats/) を伴う変更後は、
 特にログに `preview_realtime_index_skipped reason=index_csv_missing`
 が出ていないか確認します。出ている場合は当日の `data/index/` が
 GitHub Actions の `daily-sync.yml` で生成済みかをチェック。
@@ -459,6 +459,6 @@ Job 側は `:latest` 参照なので再デプロイ不要。
 ### `compute_features_for_day` が NaN だらけ / 想定より少ない結果
 
 `run.sh` の sparse-checkout に必要な data ディレクトリ
-(`data/stadium/`, `data/programs/`, `data/recent_*/`, `data/motor_stats/` 等)
+(`data/stadium/`, `data/programs/`, `data/programs/recent_*/`, `data/programs/motor_stats/` 等)
 が漏れている可能性。スクリプト側で新たに参照ファイルを増やしたら
 `run.sh` も同時に更新し、イメージを再ビルドする必要がある。

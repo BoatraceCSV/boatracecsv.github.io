@@ -70,11 +70,11 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #   - .boatrace/                       runtime config (load_config)
 #   - data/stadium/                    win_rate.csv / sui_params.csv / index_weights/*.csv
 #   - data/index/<YYYY>/<MM>/          today's index CSV (read+write target)
-#   - data/programs/<YYYY>/<MM>/       feature input — racer rosters
-#   - data/recent_national/<YYYY>/<MM>/ feature input — 全国近況5節
-#   - data/recent_local/<YYYY>/<MM>/    feature input — 当地近況5節
-#   - data/motor_stats/<YYYY>/<MM>/     feature input — モーター期成績 (this month)
-#   - data/motor_stats/<PREV_YM>/      previous month — motor_pt has 7-day fallback
+#   - data/programs/<YYYY>/<MM>/                feature input — racer rosters
+#   - data/programs/recent_national/<YYYY>/<MM>/ feature input — 全国近況5節
+#   - data/programs/recent_local/<YYYY>/<MM>/    feature input — 当地近況5節
+#   - data/programs/motor_stats/<YYYY>/<MM>/     feature input — モーター期成績 (this month)
+#   - data/programs/motor_stats/<PREV_YM>/       previous month — motor_pt has 7-day fallback
 #                                       that crosses month boundaries near month start
 #   - data/previews/<YYYY>/<MM>/       fallback when realtime per-source files miss
 #   - data/previews/{tkz,stt,sui,original_exhibition}/<YYYY>/<MM>/
@@ -104,10 +104,10 @@ git sparse-checkout set \
   data/stadium \
   "data/index/${TODAY_YM}" \
   "data/programs/${TODAY_YM}" \
-  "data/recent_national/${TODAY_YM}" \
-  "data/recent_local/${TODAY_YM}" \
-  "data/motor_stats/${TODAY_YM}" \
-  "data/motor_stats/${PREV_YM}" \
+  "data/programs/recent_national/${TODAY_YM}" \
+  "data/programs/recent_local/${TODAY_YM}" \
+  "data/programs/motor_stats/${TODAY_YM}" \
+  "data/programs/motor_stats/${PREV_YM}" \
   "data/previews/${TODAY_YM}" \
   "data/previews/tkz/${TODAY_YM}" \
   "data/previews/stt/${TODAY_YM}" \

@@ -59,8 +59,8 @@ from boatrace.storage import file_exists, write_csv
 # bc_zensou and bc_zensou_touchi; 2024-03-11 and earlier return HTTP 403.
 EARLIEST_AVAILABLE = "2024-03-12"
 
-OUTPUT_DIR_NATIONAL = "data/recent_national"
-OUTPUT_DIR_LOCAL = "data/recent_local"
+OUTPUT_DIR_NATIONAL = "data/programs/recent_national"
+OUTPUT_DIR_LOCAL = "data/programs/recent_local"
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +348,7 @@ def _parse_arguments():
     parser = argparse.ArgumentParser(
         description=(
             "Backfill recent-form data (全国・当地近況5節) across a date range. "
-            "Writes both data/recent_national/ and data/recent_local/ "
+            "Writes both data/programs/recent_national/ and data/programs/recent_local/ "
             "from the same boatcast TSVs."
         )
     )

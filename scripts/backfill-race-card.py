@@ -59,7 +59,7 @@ from boatrace.storage import file_exists, write_csv
 # and earlier return HTTP 403 across all stadiums.
 EARLIEST_AVAILABLE = "2025-05-03"
 
-OUTPUT_DIR = "data/race_cards"
+OUTPUT_DIR = "data/programs/race_cards"
 
 
 # ---------------------------------------------------------------------------

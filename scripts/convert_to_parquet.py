@@ -5,13 +5,13 @@ Aggregates daily CSV files into monthly Parquet files for faster I/O.
 Original CSVs are preserved; Parquet files are written to parallel directories.
 
 Directory structure:
-    data/programs/2025/01/01.csv          →  data/programs_parquet/2025/01.parquet
-    data/results/2025/01/01.csv           →  data/results_parquet/2025/01.parquet
-    data/previews/2025/01/01.csv          →  data/previews_parquet/2025/01.parquet
-    data/race_cards/2026/04/25.csv        →  data/race_cards_parquet/2026/04.parquet
-    data/recent_national/2026/04/25.csv   →  data/recent_national_parquet/2026/04.parquet
-    data/recent_local/2026/04/25.csv      →  data/recent_local_parquet/2026/04.parquet
-    data/motor_stats/2026/04/25.csv       →  data/motor_stats_parquet/2026/04.parquet
+    data/programs/2025/01/01.csv                  →  data/programs_parquet/2025/01.parquet
+    data/results/2025/01/01.csv                   →  data/results_parquet/2025/01.parquet
+    data/previews/2025/01/01.csv                  →  data/previews_parquet/2025/01.parquet
+    data/programs/race_cards/2026/04/25.csv       →  data/race_cards_parquet/2026/04.parquet
+    data/programs/recent_national/2026/04/25.csv  →  data/recent_national_parquet/2026/04.parquet
+    data/programs/recent_local/2026/04/25.csv     →  data/recent_local_parquet/2026/04.parquet
+    data/programs/motor_stats/2026/04/25.csv      →  data/motor_stats_parquet/2026/04.parquet
 
 Usage:
     python scripts/convert_to_parquet.py
@@ -42,13 +42,28 @@ DATA_TYPES = [
 ]
 
 
+# Map user-facing data_type → input subdirectory under ``data/``. The
+# boatcast-derived datasets live under ``data/programs/<name>/`` to keep
+# pre-race metadata grouped; the parquet output basenames stay flat for
+# backwards compatibility with downstream consumers.
+INPUT_SUBDIR = {
+    'programs': 'programs',
+    'results': 'results',
+    'previews': 'previews',
+    'race_cards': 'programs/race_cards',
+    'recent_national': 'programs/recent_national',
+    'recent_local': 'programs/recent_local',
+    'motor_stats': 'programs/motor_stats',
+}
+
+
 def convert_month_to_parquet(repo_root, data_type, year, month):
     """Convert all daily CSVs for a given month to a single Parquet file.
 
     Returns:
         Number of CSV files merged, or 0 if no files found.
     """
-    csv_dir = repo_root / 'data' / data_type / year / month
+    csv_dir = repo_root / 'data' / INPUT_SUBDIR[data_type] / year / month
     if not csv_dir.exists():
         return 0
 
@@ -90,7 +105,7 @@ def convert_all(repo_root, data_types, years):
 
     for data_type in data_types:
         print(f"\nConverting {data_type}...")
-        data_dir = repo_root / 'data' / data_type
+        data_dir = repo_root / 'data' / INPUT_SUBDIR[data_type]
 
         if not data_dir.exists():
             print(f"  Directory not found: {data_dir}")

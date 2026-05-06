@@ -174,11 +174,11 @@ def racer_pt_for_boat(boat_records: list[tuple[str, str]]) -> float:
 # ─────────────────────────────────────────────────────────────────────
 def load_motor_table_for_day(repo: Path, day: dt.date) -> dict:
     """Returns {(場コード2桁, モーター番号int): 勝率float}; falls back to up to 7 prior days."""
-    p = repo / "data" / "motor_stats" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    p = repo / "data" / "programs" / "motor_stats" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     if not p.exists():
         for back in range(1, 8):
             alt = day - dt.timedelta(days=back)
-            p_alt = repo / "data" / "motor_stats" / f"{alt:%Y}" / f"{alt:%m}" / f"{alt:%d}.csv"
+            p_alt = repo / "data" / "programs" / "motor_stats" / f"{alt:%Y}" / f"{alt:%m}" / f"{alt:%d}.csv"
             if p_alt.exists():
                 p = p_alt
                 break
@@ -464,8 +464,8 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
         return pd.DataFrame()
 
     prev_path = repo / "data" / "previews" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
-    rn_path   = repo / "data" / "recent_national" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
-    rl_path   = repo / "data" / "recent_local"   / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    rn_path   = repo / "data" / "programs" / "recent_national" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    rl_path   = repo / "data" / "programs" / "recent_local"   / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     oe_path   = repo / "data" / "previews" / "original_exhibition" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
 
     prog = pd.read_csv(prog_path, dtype=str)
