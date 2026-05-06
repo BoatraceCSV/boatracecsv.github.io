@@ -303,14 +303,14 @@ def main():
                 year, month, day = current_date.split("-")
 
                 results_csv = project_root / f"data/results/{year}/{month}/{day}.csv"
-                programs_csv = project_root / f"data/programs/{year}/{month}/{day}.csv"
+                programs_csv = project_root / f"data/programs/daily/{year}/{month}/{day}.csv"
                 previews_csv = project_root / f"data/previews/{year}/{month}/{day}.csv"
 
                 day_csv_files = []
                 if results_csv.exists():
                     day_csv_files.append(f"data/results/{year}/{month}/{day}.csv")
                 if programs_csv.exists():
-                    day_csv_files.append(f"data/programs/{year}/{month}/{day}.csv")
+                    day_csv_files.append(f"data/programs/daily/{year}/{month}/{day}.csv")
                 if previews_csv.exists():
                     day_csv_files.append(f"data/previews/{year}/{month}/{day}.csv")
 

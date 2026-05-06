@@ -52,7 +52,7 @@ Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`prev
 | `.boatrace/` | 実行時設定 (load_config) |
 | `data/estimate/stadium/` | win_rate.csv, sui_params.csv, index_weights/*.csv |
 | `data/estimate/index/<YYYY/MM>/` | 当日 index CSV(直前バッチで一部レースを更新) |
-| `data/programs/<YYYY/MM>/` | 選手・モーター番号など特徴量入力 |
+| `data/programs/daily/<YYYY/MM>/` | 選手・モーター番号など特徴量入力 |
 | `data/programs/recent_national/<YYYY/MM>/` | 全国近況5節 |
 | `data/programs/recent_local/<YYYY/MM>/` | 当地近況5節 |
 | `data/programs/motor_stats/<YYYY/MM>/` + `<前月>/` | モーター期成績(前月分は7日fallback用) |
@@ -317,7 +317,7 @@ gcloud logging read \
 ```
 
 `run.sh` の sparse-checkout 拡張 (data/estimate/index/, data/estimate/stadium/,
-data/programs/, data/programs/recent_*/, data/programs/motor_stats/) を伴う変更後は、
+data/programs/daily/, data/programs/recent_*/, data/programs/motor_stats/) を伴う変更後は、
 特にログに `preview_realtime_index_skipped reason=index_csv_missing`
 が出ていないか確認します。出ている場合は当日の `data/estimate/index/` が
 GitHub Actions の `daily-sync.yml` で生成済みかをチェック。
@@ -459,6 +459,6 @@ Job 側は `:latest` 参照なので再デプロイ不要。
 ### `compute_features_for_day` が NaN だらけ / 想定より少ない結果
 
 `run.sh` の sparse-checkout に必要な data ディレクトリ
-(`data/estimate/stadium/`, `data/programs/`, `data/programs/recent_*/`, `data/programs/motor_stats/` 等)
+(`data/estimate/stadium/`, `data/programs/daily/`, `data/programs/recent_*/`, `data/programs/motor_stats/` 等)
 が漏れている可能性。スクリプト側で新たに参照ファイルを増やしたら
 `run.sh` も同時に更新し、イメージを再ビルドする必要がある。

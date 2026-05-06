@@ -450,7 +450,7 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     Columns: レースコード, レース日, レース場コード(2桁), レース回, 枠番,
              waku, racer, motor, exhibit, weather (5 raw feature pts).
 
-    Includes only races present in `data/programs/`. Missing previews,
+    Includes only races present in `data/programs/daily/`. Missing previews,
     motors, etc. fall back to NaN in the relevant columns.
     """
     season = SEASON_BY_MONTH[day.month]
@@ -459,7 +459,7 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     motor_tab = load_motor_table_for_day(repo, day)
     sui = load_sui_params(repo)
 
-    prog_path = repo / "data" / "programs" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    prog_path = repo / "data" / "programs" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     if not prog_path.exists():
         return pd.DataFrame()
 

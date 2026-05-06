@@ -5,7 +5,7 @@ Aggregates daily CSV files into monthly Parquet files for faster I/O.
 Original CSVs are preserved; Parquet files are written to parallel directories.
 
 Directory structure:
-    data/programs/2025/01/01.csv                  →  data/programs_parquet/2025/01.parquet
+    data/programs/daily/2025/01/01.csv            →  data/programs_parquet/2025/01.parquet
     data/results/2025/01/01.csv                   →  data/results_parquet/2025/01.parquet
     data/previews/2025/01/01.csv                  →  data/previews_parquet/2025/01.parquet
     data/programs/race_cards/2026/04/25.csv       →  data/race_cards_parquet/2026/04.parquet
@@ -47,7 +47,7 @@ DATA_TYPES = [
 # pre-race metadata grouped; the parquet output basenames stay flat for
 # backwards compatibility with downstream consumers.
 INPUT_SUBDIR = {
-    'programs': 'programs',
+    'programs': 'programs/daily',
     'results': 'results',
     'previews': 'previews',
     'race_cards': 'programs/race_cards',

@@ -8,7 +8,7 @@ For a given date, this script:
      race.
   3. Writes one CSV per date to ``data/programs/race_cards/YYYY/MM/DD.csv``.
 
-This dataset is **parallel** to ``data/programs/YYYY/MM/DD.csv`` — the existing
+This dataset is **parallel** to ``data/programs/daily/YYYY/MM/DD.csv`` — the existing
 programs CSV (sourced from the mbrace B-file) is not modified. Race cards add
 columns that programs lacks: 全国/当地 3連対率, 全国平均ST, F/L counts,
 モーター/ボート 3連対率, and the 14-slot 節間成績 (R番号/進入/枠/ST/着順).

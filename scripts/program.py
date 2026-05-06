@@ -131,7 +131,7 @@ def process_program(
                         # Write
                         if not dry_run:
                             project_root = Path(__file__).parent.parent
-                            csv_path = project_root / f"data/programs/{year}/{month}/{day}.csv"
+                            csv_path = project_root / f"data/programs/daily/{year}/{month}/{day}.csv"
                             if write_csv(str(csv_path), csv_content, force_overwrite):
                                 stats["csv_files_created"] += 1
                                 logging_module.info(
@@ -304,7 +304,7 @@ def main():
         if stats["csv_files_created"] > 0 and not args.dry_run:
             # Programs are saved with the program date, which is the argument date
             year, month, day = args.date.split("-")
-            csv_file = f"data/programs/{year}/{month}/{day}.csv"
+            csv_file = f"data/programs/daily/{year}/{month}/{day}.csv"
 
             logging_module.info(
                 "program_git_commit_start",

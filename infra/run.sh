@@ -70,7 +70,7 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #   - .boatrace/                       runtime config (load_config)
 #   - data/estimate/stadium/           win_rate.csv / sui_params.csv / index_weights/*.csv
 #   - data/estimate/index/<YYYY>/<MM>/ today's index CSV (read+write target)
-#   - data/programs/<YYYY>/<MM>/                feature input — racer rosters
+#   - data/programs/daily/<YYYY>/<MM>/          feature input — racer rosters
 #   - data/programs/recent_national/<YYYY>/<MM>/ feature input — 全国近況5節
 #   - data/programs/recent_local/<YYYY>/<MM>/    feature input — 当地近況5節
 #   - data/programs/motor_stats/<YYYY>/<MM>/     feature input — モーター期成績 (this month)
@@ -103,7 +103,7 @@ git sparse-checkout set \
   .boatrace \
   data/estimate/stadium \
   "data/estimate/index/${TODAY_YM}" \
-  "data/programs/${TODAY_YM}" \
+  "data/programs/daily/${TODAY_YM}" \
   "data/programs/recent_national/${TODAY_YM}" \
   "data/programs/recent_local/${TODAY_YM}" \
   "data/programs/motor_stats/${TODAY_YM}" \

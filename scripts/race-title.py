@@ -7,7 +7,7 @@ https://race.boatcast.jp/?jo=XX SPA consumes) and writes a flat per-race
 CSV to ``data/programs/title/YYYY/MM/DD.csv``.
 
 The motivation: the per-race title (e.g. "ドラドキ目玉", "予選特別",
-"優勝戦") only appears in the ``data/programs/YYYY/MM/DD.csv`` program
+"優勝戦") only appears in the ``data/programs/daily/YYYY/MM/DD.csv`` program
 files — it is not present in ``race_cards``, ``recent_local``,
 ``recent_national`` or ``motor_stats``. This script produces a small
 sidecar CSV keyed by ``レースコード`` that downstream consumers can join
