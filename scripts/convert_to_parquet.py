@@ -7,7 +7,7 @@ Original CSVs are preserved; Parquet files are written to parallel directories.
 Directory structure:
     data/programs/daily/2025/01/01.csv            →  data/programs_parquet/2025/01.parquet
     data/results/2025/01/01.csv                   →  data/results_parquet/2025/01.parquet
-    data/previews/2025/01/01.csv                  →  data/previews_parquet/2025/01.parquet
+    data/previews/daily/2025/01/01.csv            →  data/previews_parquet/2025/01.parquet
     data/programs/race_cards/2026/04/25.csv       →  data/race_cards_parquet/2026/04.parquet
     data/programs/recent_national/2026/04/25.csv  →  data/recent_national_parquet/2026/04.parquet
     data/programs/recent_local/2026/04/25.csv     →  data/recent_local_parquet/2026/04.parquet
@@ -49,7 +49,7 @@ DATA_TYPES = [
 INPUT_SUBDIR = {
     'programs': 'programs/daily',
     'results': 'results',
-    'previews': 'previews',
+    'previews': 'previews/daily',
     'race_cards': 'programs/race_cards',
     'recent_national': 'programs/recent_national',
     'recent_local': 'programs/recent_local',

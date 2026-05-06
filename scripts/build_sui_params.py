@@ -2,7 +2,7 @@
 """
 Fit sui_params.csv from real historical race data for all 24 stadiums.
 
-Joins data/previews/YYYY/MM/DD.csv (weather + exhibition) with
+Joins data/previews/daily/YYYY/MM/DD.csv (weather + exhibition) with
 data/results/YYYY/MM/DD.csv (course + finish) by レースコード, then fits
 a per-(stadium, course) linear regression in advantage-point space.
 
@@ -74,7 +74,7 @@ def iter_dates(start: dt.date, end: dt.date):
 
 def load_day(repo_root: Path, day: dt.date) -> list[dict]:
     """Load (previews + results) for one day and return long-format rows."""
-    prev_path = repo_root / "data" / "previews" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    prev_path = repo_root / "data" / "previews" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     res_path = repo_root / "data" / "results" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     if not prev_path.exists() or not res_path.exists():
         return []

@@ -2,7 +2,7 @@
 """Compare TSV-source vs HTML-source preview CSVs for parity validation.
 
 Phase 4 helper: takes a date whose committed
-``data/previews/YYYY/MM/DD.csv`` was produced by the legacy HTML scraper,
+``data/previews/daily/YYYY/MM/DD.csv`` was produced by the legacy HTML scraper,
 re-runs the new :class:`PreviewTsvScraper` for the same set of races,
 and prints a column-by-column diff report.
 
@@ -97,7 +97,7 @@ def _classify_diff(a: str, b: str) -> str:
 
 def _load_existing_csv(date: str) -> List[Dict[str, str]]:
     y, m, d = date.split("-")
-    path = _REPO_ROOT / "data" / "previews" / y / m / f"{d}.csv"
+    path = _REPO_ROOT / "data" / "previews" / "daily" / y / m / f"{d}.csv"
     if not path.exists():
         raise FileNotFoundError(
             f"Committed CSV not found at {path}. Run a previous "
@@ -234,7 +234,7 @@ def parse_args() -> argparse.Namespace:
         "--date",
         required=True,
         help="Date to compare (YYYY-MM-DD). The committed CSV at "
-        "data/previews/YYYY/MM/DD.csv must already exist.",
+        "data/previews/daily/YYYY/MM/DD.csv must already exist.",
     )
     parser.add_argument(
         "--limit",

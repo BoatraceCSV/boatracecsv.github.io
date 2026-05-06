@@ -186,7 +186,7 @@ def process_date(date_str, races, config, rate_limiter, repo_root):
     print(f"\nProcessing {date_str} ({len(races)} races)...", file=sys.stderr)
 
     year, month, day = date_str.split('-')
-    csv_path = repo_root / f"data/previews/{year}/{month}/{day}.csv"
+    csv_path = repo_root / f"data/previews/daily/{year}/{month}/{day}.csv"
 
     succeeded = 0
     failed = 0
@@ -290,7 +290,7 @@ def main():
         # Commit for this date
         if succeeded > 0 and args.push:
             year, month, day = date_str.split('-')
-            csv_file = f"data/previews/{year}/{month}/{day}.csv"
+            csv_file = f"data/previews/daily/{year}/{month}/{day}.csv"
             message = f"Update missing boatrace previews: {date_str}"
 
             if git_operations.commit_and_push([csv_file], message):

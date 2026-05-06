@@ -56,7 +56,7 @@ Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`prev
 | `data/programs/recent_national/<YYYY/MM>/` | 全国近況5節 |
 | `data/programs/recent_local/<YYYY/MM>/` | 当地近況5節 |
 | `data/programs/motor_stats/<YYYY/MM>/` + `<前月>/` | モーター期成績(前月分は7日fallback用) |
-| `data/previews/<YYYY/MM>/` | 1日1回バッチ生成の統合 preview(realtime 不在時のfallback) |
+| `data/previews/daily/<YYYY/MM>/` | 1日1回バッチ生成の統合 preview(realtime 不在時のfallback) |
 | `data/previews/{tkz,stt,sui,original_exhibition}/<YYYY/MM>/` | 直前バッチの追記対象 |
 
 ## ワンタイム セットアップ

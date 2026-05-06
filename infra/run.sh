@@ -76,7 +76,7 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #   - data/programs/motor_stats/<YYYY>/<MM>/     feature input — モーター期成績 (this month)
 #   - data/programs/motor_stats/<PREV_YM>/       previous month — motor_pt has 7-day fallback
 #                                       that crosses month boundaries near month start
-#   - data/previews/<YYYY>/<MM>/       fallback when realtime per-source files miss
+#   - data/previews/daily/<YYYY>/<MM>/ fallback when realtime per-source files miss
 #   - data/previews/{tkz,stt,sui,original_exhibition}/<YYYY>/<MM>/
 #                                       existing CSVs for today (for dedup) + write target
 #
@@ -108,7 +108,7 @@ git sparse-checkout set \
   "data/programs/recent_local/${TODAY_YM}" \
   "data/programs/motor_stats/${TODAY_YM}" \
   "data/programs/motor_stats/${PREV_YM}" \
-  "data/previews/${TODAY_YM}" \
+  "data/previews/daily/${TODAY_YM}" \
   "data/previews/tkz/${TODAY_YM}" \
   "data/previews/stt/${TODAY_YM}" \
   "data/previews/sui/${TODAY_YM}" \

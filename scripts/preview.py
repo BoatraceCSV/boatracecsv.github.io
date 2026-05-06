@@ -271,7 +271,7 @@ def process_preview(
                     # Write
                     if not dry_run:
                         project_root = Path(__file__).parent.parent
-                        csv_path = project_root / f"data/previews/{year}/{month}/{day}.csv"
+                        csv_path = project_root / f"data/previews/daily/{year}/{month}/{day}.csv"
                         logging_module.info(
                             "preview_csv_write_start",
                             date=date_str,
@@ -454,7 +454,7 @@ def main():
         # Git commit and push if CSV files were created (not dry-run)
         if stats["csv_files_created"] > 0 and not args.dry_run:
             year, month, day = args.date.split("-")
-            csv_file = f"data/previews/{year}/{month}/{day}.csv"
+            csv_file = f"data/previews/daily/{year}/{month}/{day}.csv"
 
             logging_module.info(
                 "preview_git_commit_start",

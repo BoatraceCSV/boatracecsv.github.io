@@ -401,7 +401,7 @@ def main():
         # sibling row's title (TSV has no title field) and to write to.
         year, month, day = date_str.split("-")
         project_root = Path(__file__).parent.parent
-        csv_path = project_root / f"data/previews/{year}/{month}/{day}.csv"
+        csv_path = project_root / f"data/previews/daily/{year}/{month}/{day}.csv"
 
         # Pull a title from any same-stadium row in the existing CSV.
         title = _lookup_title_in_csv(csv_path, stadium_code)
@@ -425,7 +425,7 @@ def main():
 
             # Git commit and push if requested
             if args.push:
-                relative_path = f"data/previews/{year}/{month}/{day}.csv"
+                relative_path = f"data/previews/daily/{year}/{month}/{day}.csv"
                 message = f"Update boatrace preview: {date_str} Stadium {stadium_code} Race {race_number}"
 
                 logging_module.info(

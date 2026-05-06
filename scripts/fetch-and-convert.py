@@ -304,7 +304,7 @@ def main():
 
                 results_csv = project_root / f"data/results/{year}/{month}/{day}.csv"
                 programs_csv = project_root / f"data/programs/daily/{year}/{month}/{day}.csv"
-                previews_csv = project_root / f"data/previews/{year}/{month}/{day}.csv"
+                previews_csv = project_root / f"data/previews/daily/{year}/{month}/{day}.csv"
 
                 day_csv_files = []
                 if results_csv.exists():
@@ -312,7 +312,7 @@ def main():
                 if programs_csv.exists():
                     day_csv_files.append(f"data/programs/daily/{year}/{month}/{day}.csv")
                 if previews_csv.exists():
-                    day_csv_files.append(f"data/previews/{year}/{month}/{day}.csv")
+                    day_csv_files.append(f"data/previews/daily/{year}/{month}/{day}.csv")
 
                 # Git operations for this day (if files exist and not dry-run)
                 if day_csv_files and not session.dry_run:

@@ -463,7 +463,7 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     if not prog_path.exists():
         return pd.DataFrame()
 
-    prev_path = repo / "data" / "previews" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    prev_path = repo / "data" / "previews" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     rn_path   = repo / "data" / "programs" / "recent_national" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     rl_path   = repo / "data" / "programs" / "recent_local"   / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     oe_path   = repo / "data" / "previews" / "original_exhibition" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"

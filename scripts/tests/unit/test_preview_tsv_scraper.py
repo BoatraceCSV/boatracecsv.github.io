@@ -5,7 +5,7 @@ race.boatcast.jp. They were sampled from races on 2026-04-24 (jo=01,
 jo=12, jo=17) during Phase 0 endpoint discovery and trimmed to the
 shape we rely on. The expected post-processing values were
 cross-checked against the existing
-``data/previews/2026/04/24.csv`` to ensure parity with the legacy
+``data/previews/daily/2026/04/24.csv`` to ensure parity with the legacy
 HTML-based scraper.
 """
 
