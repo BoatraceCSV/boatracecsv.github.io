@@ -103,6 +103,17 @@ jobs:
         if: always()
         continue-on-error: true
 
+      - name: Process Race Titles (boatcast getHoldingList2)
+        # 当日分の per-race タイトル(レース名) を取得する。
+        # data/programs/title/YYYY/MM/DD.csv に書き出す。
+        # race_cards / recent_local / motor_stats には レース名 が無いため、
+        # レースコード をキーに join できる sidecar として保持する。
+        run: |
+          TODAY_JST=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+          python scripts/race-title.py --date "$TODAY_JST" --force
+        if: always()
+        continue-on-error: true
+
       - name: Build Daily Index Batch (枠番・選手・モーター + 暫定強さpt)
         # 当日 JST のレース全件分について、枠番・選手・モーター・暫定強さpt
         # を埋めた data/index/YYYY/MM/DD.csv を生成する。展示・気象は 50 で
