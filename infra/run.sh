@@ -84,6 +84,10 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #   - data/previews/daily/<YYYY>/<MM>/ fallback when realtime per-source files miss
 #   - data/previews/{tkz,stt,sui,original_exhibition}/<YYYY>/<MM>/
 #                                       existing CSVs for today (for dedup) + write target
+#   - data/results/realtime/<YYYY>/<MM>/        bc_rs1_2 由来の realtime 結果 CSV
+#                                       (existing CSV for dedup + write target).
+#                                       cone 外だと git add が無視され、
+#                                       ファイルが永続化されない。
 #   - data/programs/title/<YYYY>/<MM>/        GCS ミラー対象 (fun-site が読む)
 #   - data/programs/race_cards/<YYYY>/<MM>/   GCS ミラー対象 (fun-site が読む)
 #
@@ -120,6 +124,7 @@ git sparse-checkout set \
   "data/previews/stt/${TODAY_YM}" \
   "data/previews/sui/${TODAY_YM}" \
   "data/previews/original_exhibition/${TODAY_YM}" \
+  "data/results/realtime/${TODAY_YM}" \
   "data/programs/title/${TODAY_YM}" \
   "data/programs/race_cards/${TODAY_YM}"
 
