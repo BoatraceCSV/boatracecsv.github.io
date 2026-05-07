@@ -20,14 +20,22 @@ git clone --depth 1  (PAT in Secret Manager)
    │
    ▼
 python scripts/preview-realtime.py
-   │
+   │   ├─ git commit && git push origin main   (boatrace.git_operations)
+   │   ├─ ★ GCS mirror upload (boatrace.gcs_publisher.upload_csvs)
+   │   │     gs://${BOATRACE_GCS_CSV_BUCKET}/data/{programs/title,programs/race_cards,
+   │   │                                            previews/stt,estimate/index}/...
+   │   └─ ★ Pub/Sub publish (boatrace.gcs_publisher.publish_realtime_completed)
+   │         topic: ${BOATRACE_PUBSUB_TOPIC} (e.g. fun-site-realtime-completed)
    ▼
-git commit && git push origin main   (boatrace.git_operations)
+fun-site が Eventarc 経由で Cloud Run Job として起動 → Astro 再ビルド → Cloud Storage 配信
 ```
 
 * GCP Project: `boatrace-487212` (Project Number: `530399381543`)
 * Region: `asia-northeast1`
 * GitHub repo: `BoatraceCSV/boatracecsv.github.io`
+* CSV mirror bucket: `boatrace-realtime-data-boatrace-487212` (fun-site/infra で provision)
+* Pub/Sub topic: `projects/boatrace-487212/topics/fun-site-realtime-completed`
+  (fun-site/infra で provision)
 
 ## ファイル構成
 
@@ -140,6 +148,28 @@ gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
 > **更新時:** `gcloud secrets versions add "$SECRET_NAME" --data-file=-`
 > Cloud Run Job 側で `--update-secrets=GITHUB_TOKEN=${SECRET_NAME}:latest`
 > としていれば自動で最新版が参照されます。
+
+### 4-b. fun-site への CSV ミラーと Pub/Sub publish 用の権限・環境変数
+
+`scripts/boatrace/gcs_publisher.py` が GCS 書込と Pub/Sub publish を行う。
+バケットと topic 自体は fun-site/infra で `terraform apply` 済みである前提。
+
+```bash
+# 環境変数（Cloud Run Job spec で更新）
+gcloud run jobs update "$JOB_NAME" \
+  --region="$REGION" \
+  --update-env-vars="BOATRACE_GCS_CSV_BUCKET=boatrace-realtime-data-${PROJECT_ID},BOATRACE_PUBSUB_TOPIC=projects/${PROJECT_ID}/topics/fun-site-realtime-completed"
+```
+
+> Runner SA への IAM ロール (`roles/storage.objectAdmin` on the bucket と
+> `roles/pubsub.publisher` on the topic) は **fun-site/infra/realtime-pipeline.tf** の
+> `google_storage_bucket_iam_member.preview_realtime_csv_writer` /
+> `google_pubsub_topic_iam_member.preview_realtime_publisher` で付与される。
+> 二重管理を避けるため、本リポジトリ側では IAM 付与の `gcloud` を実行しない。
+
+未設定時は `gcs_publisher` が `gcs_upload_skipped reason=no_bucket_configured` 等の
+ログを出して no-op になるため、段階的ロールアウト（コードだけ先に main にマージし、
+本番側で環境変数を後から付与）が可能。
 
 ### 5. Runner SA / Cloud Build SA に必要な IAM ロール
 

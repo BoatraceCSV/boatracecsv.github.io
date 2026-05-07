@@ -70,6 +70,11 @@ from boatrace.result_realtime import (  # noqa: E402
     csv_path_for as result_csv_path_for,
     existing_race_codes as result_existing_race_codes,
 )
+from boatrace.gcs_publisher import (  # noqa: E402
+    assemble_updated_races,
+    publish_realtime_completed,
+    upload_csvs,
+)
 
 # Per-race update of data/estimate/index/YYYY/MM/DD.csv after preview rows land.
 import importlib.util  # noqa: E402
@@ -760,20 +765,50 @@ def main() -> int:
         )
 
     # --- 6. Commit & push ---------------------------------------------
-    if args.dry_run or args.no_commit or not paths:
-        return 0
+    if not (args.dry_run or args.no_commit or not paths):
+        # Only include the candidates whose result row was actually built
+        # (a subset — others returned 403 / partial).
+        finished_written_codes = {row[0] for row in result_rows}
+        finished_for_msg = [
+            r for r in finished_candidates
+            if build_race_code(date_str, r.stadium_code, r.race_number)
+            in finished_written_codes
+        ]
+        if not commit_changes(paths, date_str, eligible, finished=finished_for_msg):
+            logging_module.error("preview_realtime_commit_failed")
+            return 1
 
-    # Only include the candidates whose result row was actually built
-    # (a subset — others returned 403 / partial).
-    finished_written_codes = {row[0] for row in result_rows}
-    finished_for_msg = [
-        r for r in finished_candidates
-        if build_race_code(date_str, r.stadium_code, r.race_number)
-        in finished_written_codes
-    ]
-    if not commit_changes(paths, date_str, eligible, finished=finished_for_msg):
-        logging_module.error("preview_realtime_commit_failed")
-        return 1
+    # --- 7. Mirror CSVs to GCS + Pub/Sub publish ----------------------
+    # 下流の fun-site は GCS にミラーされた CSV を読み、Pub/Sub の
+    # `realtime-completed` トピックを Eventarc で受けて再ビルドする。
+    # GCS バケット / Pub/Sub topic 名は環境変数で設定。未設定時は本ステップは no-op。
+    if not args.dry_run:
+        try:
+            day = datetime.strptime(date_str, "%Y-%m-%d").date()
+            upload_results = upload_csvs(PROJECT_ROOT, day)
+            updated_races, trigger = assemble_updated_races(
+                PROJECT_ROOT,
+                day,
+                upload_results,
+                realtime_updated_codes=updated_codes,
+            )
+            if updated_races:
+                publish_realtime_completed(
+                    day,
+                    updated_races,
+                    trigger,
+                )
+            else:
+                logging_module.info(
+                    "pubsub_publish_skipped",
+                    reason="no_updated_races",
+                )
+        except Exception as exc:  # pragma: no cover — defensive
+            # GCS / Pub/Sub の失敗は git push 成功を巻き戻さない方針（次サイクルで補える）
+            logging_module.error(
+                "gcs_publish_failed",
+                error=str(exc),
+            )
 
     return 0
 

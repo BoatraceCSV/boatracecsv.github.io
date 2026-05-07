@@ -8,3 +8,6 @@ lightgbm>=4.0.0
 pyarrow>=14.0.0
 pytest==7.4.3
 pytest-cov==4.1.0
+# GCS / Pub/Sub mirror for realtime fan-out (preview-realtime.py)
+google-cloud-storage>=2.14.0
+google-cloud-pubsub>=2.21.0

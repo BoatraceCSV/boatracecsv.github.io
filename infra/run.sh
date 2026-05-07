@@ -46,6 +46,11 @@ GIT_USER_NAME="${GIT_USER_NAME:-preview-realtime-bot}"
 GIT_USER_EMAIL="${GIT_USER_EMAIL:-preview-realtime-bot@users.noreply.github.com}"
 PREVIEW_EXTRA_ARGS="${PREVIEW_EXTRA_ARGS:-}"
 
+# fun-site への CSV ミラーと Pub/Sub 通知用の環境変数 (Cloud Run Job 側で注入推奨)。
+# 未設定なら scripts/boatrace/gcs_publisher.py が自動で no-op になる。
+export BOATRACE_GCS_CSV_BUCKET="${BOATRACE_GCS_CSV_BUCKET:-}"
+export BOATRACE_PUBSUB_TOPIC="${BOATRACE_PUBSUB_TOPIC:-}"
+
 WORKDIR="$(mktemp -d -t preview-realtime.XXXXXX)"
 cleanup() {
   # Best-effort cleanup; never fail the job because of this.
@@ -79,6 +84,8 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #   - data/previews/daily/<YYYY>/<MM>/ fallback when realtime per-source files miss
 #   - data/previews/{tkz,stt,sui,original_exhibition}/<YYYY>/<MM>/
 #                                       existing CSVs for today (for dedup) + write target
+#   - data/programs/title/<YYYY>/<MM>/        GCS ミラー対象 (fun-site が読む)
+#   - data/programs/race_cards/<YYYY>/<MM>/   GCS ミラー対象 (fun-site が読む)
 #
 # Today's YYYY/MM is computed in JST because csv_path_for() uses JST dates.
 TODAY_YM=$(TZ=Asia/Tokyo date +'%Y/%m')
@@ -112,7 +119,9 @@ git sparse-checkout set \
   "data/previews/tkz/${TODAY_YM}" \
   "data/previews/stt/${TODAY_YM}" \
   "data/previews/sui/${TODAY_YM}" \
-  "data/previews/original_exhibition/${TODAY_YM}"
+  "data/previews/original_exhibition/${TODAY_YM}" \
+  "data/programs/title/${TODAY_YM}" \
+  "data/programs/race_cards/${TODAY_YM}"
 
 # Materialize the working tree. Missing blobs are fetched on demand from the
 # promisor remote (origin) thanks to --filter=blob:none.
