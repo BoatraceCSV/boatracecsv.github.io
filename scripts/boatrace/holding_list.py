@@ -27,7 +27,9 @@ A race is *eligible* for realtime preview scraping when its
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional
 
 import requests
@@ -194,10 +196,101 @@ def _parse_holding_payload(payload: dict, date_str: str) -> List[HoldingRace]:
     return races
 
 
+def load_holding_from_title_csv(
+    project_root: Path,
+    date_str: str,
+) -> List[HoldingRace]:
+    """Load :class:`HoldingRace` list from ``data/programs/title/.../DD.csv``.
+
+    The live ``getHoldingList2`` API rewrites a race's ``DeadlineTimeAll[i]``
+    entry from ``"HH:MM"`` to ``"締切"`` (closing) and finally ``"確定"``
+    (finalised) once the race progresses past its deadline. After that
+    point :func:`fetch_holding_list` cannot tell us *when* a finished
+    race's deadline was, so :func:`select_finished_races` in
+    ``preview-realtime.py`` would silently drop every result candidate.
+
+    The daily-sync workflow snapshots all 12 races' scheduled deadlines
+    at JST 08:30 (before any race starts) into
+    ``data/programs/title/{YYYY}/{MM}/{DD}.csv`` (column
+    ``電話投票締切予定``). That file is therefore a stable truth source
+    for "what was the deadline of race N at stadium S today".
+
+    Returns an empty list when the file is missing or unreadable; the
+    caller may fall back to :func:`fetch_holding_list` in that case.
+    """
+    year, month, day = date_str.split("-")
+    path = (
+        project_root
+        / "data"
+        / "programs"
+        / "title"
+        / year
+        / month
+        / f"{day}.csv"
+    )
+    if not path.exists():
+        logging_module.info(
+            "title_csv_missing",
+            path=str(path),
+            date=date_str,
+        )
+        return []
+
+    races: List[HoldingRace] = []
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    stadium_code = int((row.get("レース場コード") or "").strip())
+                except (TypeError, ValueError):
+                    continue
+                if stadium_code < 1 or stadium_code > 24:
+                    continue
+
+                race_str = (row.get("レース回") or "").strip().rstrip("R")
+                try:
+                    race_number = int(race_str)
+                except ValueError:
+                    continue
+                if race_number < 1 or race_number > 12:
+                    continue
+
+                deadline = (row.get("電話投票締切予定") or "").strip()
+                cancel = (row.get("中止状態") or "").strip()
+                title = (row.get("タイトル") or "").strip() or None
+
+                races.append(
+                    HoldingRace(
+                        stadium_code=stadium_code,
+                        race_number=race_number,
+                        deadline_time=deadline,
+                        cancel_status=cancel,
+                        title=title,
+                    )
+                )
+    except OSError as exc:
+        logging_module.warning(
+            "title_csv_read_error",
+            path=str(path),
+            error=str(exc),
+        )
+        return []
+
+    logging_module.info(
+        "title_csv_loaded",
+        path=str(path),
+        date=date_str,
+        races=len(races),
+    )
+    return races
+
+
 __all__ = [
     "HoldingListError",
     "HoldingRace",
     "HOLDING_LIST_BASE_URL",
     "build_race_code",
     "fetch_holding_list",
+    "load_holding_from_title_csv",
 ]

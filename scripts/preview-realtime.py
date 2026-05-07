@@ -44,6 +44,7 @@ from boatrace.holding_list import (  # noqa: E402
     HoldingRace,
     build_race_code,
     fetch_holding_list,
+    load_holding_from_title_csv,
 )
 from boatrace.preview_tsv_scraper import PreviewTsvScraper  # noqa: E402
 from boatrace.original_exhibition_scraper import (  # noqa: E402
@@ -711,8 +712,20 @@ def main() -> int:
         result_path = result_csv_path_for(PROJECT_ROOT, date_str)
         already_results = result_existing_race_codes(result_path)
 
+        # The live holding list rewrites a race's ``deadline_time`` to
+        # "締切" / "確定" the moment its deadline passes, which makes
+        # :func:`select_finished_races` drop every post-deadline race
+        # (parse_hhmm fails). For result-realtime we therefore prefer the
+        # daily-sync snapshot in ``data/programs/title/.../DD.csv``,
+        # which preserves the original ``HH:MM`` deadlines for all 12
+        # races at every venue. Falls back to the live holding list when
+        # the title CSV is missing (e.g. daily-sync hasn't run yet).
+        result_source_races = (
+            load_holding_from_title_csv(PROJECT_ROOT, date_str) or races
+        )
+
         finished_candidates = select_finished_races(
-            races,
+            result_source_races,
             now_jst,
             date_str,
             args.result_window_min,
