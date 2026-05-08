@@ -11,6 +11,7 @@ This module is invoked at the very end of ``preview-realtime.py`` to:
    * ``data/programs/race_cards/YYYY/MM/DD.csv`` (daily-sync の成果物)
    * ``data/previews/stt/YYYY/MM/DD.csv`` (preview-realtime が追記)
    * ``data/estimate/index/YYYY/MM/DD.csv`` (preview-realtime が更新)
+   * ``data/results/realtime/YYYY/MM/DD.csv`` (preview-realtime が追記)
 
    Each object is uploaded only when its content (md5) differs from the
    currently-stored object. This keeps GCS object generations stable and
@@ -125,13 +126,19 @@ def _gcs_md5_hex(blob) -> Optional[str]:
 
 
 def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
-    """fun-site が当日ビルドで読む 4 種類の CSV のローカル相対パスを列挙。"""
+    """fun-site が当日ビルドで読む 5 種類の CSV のローカル相対パスを列挙。
+
+    ``results`` は preview-realtime が当日確定直後に追記する realtime 結果
+    CSV (``data/results/realtime/YYYY/MM/DD.csv``)。K-file 由来の翌日確定
+    CSV (``data/results/daily/...``) はここでは扱わない。
+    """
     ymd = f"{day:%Y}/{day:%m}/{day:%d}"
     return [
         CsvUploadSpec("title", f"data/programs/title/{ymd}.csv"),
         CsvUploadSpec("race_cards", f"data/programs/race_cards/{ymd}.csv"),
         CsvUploadSpec("stt", f"data/previews/stt/{ymd}.csv"),
         CsvUploadSpec("index", f"data/estimate/index/{ymd}.csv"),
+        CsvUploadSpec("results", f"data/results/realtime/{ymd}.csv"),
     ]
 
 
@@ -244,6 +251,7 @@ def assemble_updated_races(
     day: dt.date,
     upload_results: List[UploadResult],
     realtime_updated_codes: Iterable[str],
+    result_updated_codes: Optional[Iterable[str]] = None,
     *,
     realtime_index_state: str = "realtime",
 ) -> Tuple[List[UpdatedRace], str]:
@@ -253,8 +261,11 @@ def assemble_updated_races(
     * If ``programs/title`` or ``programs/race_cards`` is in the changed set,
       treat this run as a *daily bootstrap* and include every race from
       ``programs/race_cards`` in the payload with the corresponding csv types.
-    * Otherwise, only include races present in ``realtime_updated_codes``
-      (preview-realtime's per-invocation set).
+    * Otherwise, include races present in ``realtime_updated_codes``
+      (preview-realtime が今サイクルで preview 行を追記したレース) and/or
+      ``result_updated_codes`` (今サイクルで realtime 結果行を追記した
+      レース)。「結果のみ」が更新されたサイクルでも payload が空にならない
+      ように、``result_updated_codes`` は独立した軸で扱う。
     """
     changed_types: Set[str] = {r.spec.csv_type for r in upload_results if r.changed}
 
@@ -284,10 +295,13 @@ def assemble_updated_races(
             if "index" in changed_types:
                 entry.csv_types.add("index")
                 entry.index_state = "daily"
+            if "results" in changed_types:
+                entry.csv_types.add("results")
 
     # 直前バッチで実際に更新されたレースは csvTypes を上書き / 追加し、index は realtime 扱い
     realtime_set = {code for code in realtime_updated_codes if code}
-    if realtime_set:
+    result_set = {code for code in (result_updated_codes or ()) if code}
+    if realtime_set or result_set:
         ymd = f"{day:%Y}/{day:%m}/{day:%d}"
         race_card_index: Dict[str, Tuple[str, int]] = {
             code: (sid, num)
@@ -313,6 +327,22 @@ def assemble_updated_races(
             if "index" in changed_types:
                 entry.csv_types.add("index")
                 entry.index_state = realtime_index_state
+
+        for code in sorted(result_set):
+            sid_num = race_card_index.get(code)
+            if not sid_num:
+                continue  # race_cards に存在しない race_code は無視
+            stadium_id, race_number = sid_num
+            entry = by_code.setdefault(
+                code,
+                UpdatedRace(
+                    race_code=code,
+                    stadium_id=stadium_id,
+                    race_number=race_number,
+                ),
+            )
+            if "results" in changed_types:
+                entry.csv_types.add("results")
 
     return sorted(by_code.values(), key=lambda r: (r.stadium_id, r.race_number)), trigger
 

@@ -799,11 +799,16 @@ def main() -> int:
         try:
             day = datetime.strptime(date_str, "%Y-%m-%d").date()
             upload_results = upload_csvs(PROJECT_ROOT, day)
+            # 今サイクルで realtime 結果行が追記されたレースコード集合。
+            # preview 行が無く結果のみが更新されたケースでも updated_races
+            # が空にならないよう、preview 系 (updated_codes) と独立に渡す。
+            result_updated_codes = {row[0] for row in result_rows}
             updated_races, trigger = assemble_updated_races(
                 PROJECT_ROOT,
                 day,
                 upload_results,
                 realtime_updated_codes=updated_codes,
+                result_updated_codes=result_updated_codes,
             )
             if updated_races:
                 publish_realtime_completed(
