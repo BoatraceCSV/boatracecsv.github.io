@@ -25,14 +25,24 @@ Modes
 Per-race update API
 -------------------
 The function ``update_index_for_races(repo, day, race_codes)`` is meant to
-be called from ``preview-realtime.py``. It rebuilds *only* the listed
-レースコード rows from current preview data, marks them 状態=realtime, and
-atomically rewrites the daily CSV. Other races on the day keep whatever
-status they previously had.
+be called from ``preview-realtime.py``. For each listed レースコード it
+**adds (or upserts)** a 状態=realtime row computed from the latest preview
+data, **leaving any 状態=daily row for that race intact**. Therefore a
+single race can have up to two rows in the CSV:
+
+    daily   行  — 朝バッチが書いた評価 (展示・気象は中立値 50)
+    realtime 行 — preview-realtime 反映後の評価 (展示・気象を含む)
+
+Other races on the day keep whatever rows they previously had. The
+fun-site builder reads both rows separately by 状態 and shows them as
+「当日買い目」/「直前買い目」, so the daily evaluation is preserved through
+the day.
 
 Usage:
-    python scripts/build_index.py --date 2026-05-03                # realtime
+    python scripts/build_index.py --date 2026-05-03                # realtime full rebuild
     python scripts/build_index.py --date 2026-05-03 --mode daily   # daily batch
+    python scripts/build_index.py --date 2026-05-03 --mode realtime --force
+        # force full rebuild even if existing CSV has 状態=daily rows
 """
 from __future__ import annotations
 
@@ -43,7 +53,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 # Local import — shared feature builders
@@ -225,91 +234,130 @@ def build_index_day(
     return df, weights_path
 
 
-def _csv_cell(v) -> str:
-    """Convert a Python value to its CSV-cell string representation.
+def _normalize_state_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure ``状態`` column exists and has no empty/NaN cells.
 
-    Mirrors what ``pandas.DataFrame.to_csv`` would write: NaN/None → empty,
-    everything else → ``str(v)``. Used when splicing fresh rows into a
-    ``dtype=str`` DataFrame; recent pandas versions reject non-string
-    assignments to string-typed columns with
-    ``Invalid value 'X' for dtype 'str'``.
+    Older index CSVs were produced before the 状態 column existed, in
+    which case every row is treated as ``daily``. NaN / empty cells are
+    likewise treated as ``daily``. Returns the DataFrame with the column
+    materialized (in-place modification of the input is also fine).
     """
-    if v is None:
-        return ""
-    if isinstance(v, float) and np.isnan(v):
-        return ""
-    return str(v)
+    if "状態" not in df.columns:
+        df["状態"] = STATE_DAILY
+        return df
+    df["状態"] = df["状態"].fillna(STATE_DAILY).replace("", STATE_DAILY)
+    return df
+
+
+def _sort_index_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Sort rows by (レースコード asc, 状態 = daily then realtime).
+
+    This is purely for git-diff readability; downstream consumers
+    (fun-site, gcs_publisher) don't depend on row order.
+    """
+    if df.empty:
+        return df
+    state_order = pd.Categorical(
+        df["状態"], categories=[STATE_DAILY, STATE_REALTIME], ordered=True
+    )
+    return (
+        df.assign(_state_order=state_order)
+          .sort_values(["レースコード", "_state_order"], kind="stable")
+          .drop(columns=["_state_order"])
+          .reset_index(drop=True)
+    )
 
 
 def update_index_for_races(
     repo: Path, day: dt.date, race_codes: list[str],
 ) -> int:
-    """Rebuild only listed レースコード rows in the daily index CSV.
+    """Upsert ``状態=realtime`` rows for the listed レースコード.
 
-    - Reads the existing CSV (errors if missing — daily batch must run first)
-    - Re-computes 5 features on-the-fly for those races (展示・気象を含む)
-    - Marks 状態=realtime
-    - Atomically rewrites the CSV preserving order and other rows verbatim
+    Behaviour:
+    - Reads the existing CSV. Returns 0 when the CSV is missing (the daily
+      batch must have run first); the caller decides whether to bootstrap
+      via ``build_index_day --mode daily``.
+    - For each requested race, recomputes the 5 features (展示・気象 含む)
+      and constructs a fresh ``状態=realtime`` row.
+    - Adds the realtime row alongside any existing ``状態=daily`` row for
+      the same race (the daily row is **never overwritten or removed**).
+    - If a ``状態=realtime`` row already exists for the race (e.g. a 2nd
+      preview-realtime cycle), it is replaced with the freshly computed
+      values (in-place upsert; row count stays the same).
+    - Other races on the day are left byte-equivalent.
+    - Atomically rewrites the CSV with rows sorted (race_code asc, daily
+      before realtime).
 
-    Returns: the number of rows successfully updated.
+    Returns: the number of realtime rows upserted (= len(race_codes) when
+    every requested race has feature data).
     """
     if not race_codes:
         return 0
     csv_path = index_csv_path(repo, day)
     if not csv_path.exists():
-        # No daily-batch CSV to update; nothing to do (caller decides whether
-        # to invoke build_index_day --mode daily first).
+        # No daily-batch CSV to update; nothing to do.
         return 0
 
-    # All columns read as object dtype so we can splice in fresh values
-    # without pandas' strict "Invalid value 'X' for dtype 'str'" guard.
+    # All columns read as object dtype so subsequent concat preserves
+    # mixed-type cells without pandas' strict "Invalid value 'X' for
+    # dtype 'str'" guard.
     existing = pd.read_csv(csv_path, dtype=object)
-
-    # Normalize レースコード type for matching (CSV may have parsed it as int
-    # in older files; we always treat it as string).
     existing["レースコード"] = existing["レースコード"].astype(str)
+    existing = _normalize_state_column(existing)
 
-    # Compute fresh features for the whole day; cheap (~1s) and lets us reuse
-    # the same code path. We only emit rows for the requested レースコード.
+    # Pad missing columns and lock column order to the canonical schema.
+    cols = index_columns()
+    for c in cols:
+        if c not in existing.columns:
+            existing[c] = ""
+    existing = existing[cols]
+
+    # Compute fresh features for the whole day; cheap and reuses
+    # build_index_day's code path. Filter down to the requested races only.
     long_df = compute_features_for_day(repo, day)
     if long_df.empty:
         return 0
     weights_path = find_weights_file(repo, day)
     weights = load_weights(weights_path) if weights_path else {}
 
-    race_codes_str = [str(c) for c in race_codes]
+    race_codes_str = {str(c) for c in race_codes}
     long_df = long_df[long_df["レースコード"].astype(str).isin(race_codes_str)]
     if long_df.empty:
         return 0
 
-    new_rows = {}
+    new_realtime: dict[str, dict] = {}
     for code, grp in long_df.sort_values(["レースコード", "枠番"]).groupby(
         "レースコード", sort=False
     ):
-        new_rows[str(code)] = _build_one_race_row(
+        new_realtime[str(code)] = _build_one_race_row(
             code=code, meta_row=grp.iloc[0], boats=grp,
             weights=weights, state=STATE_REALTIME, skip_preview=False,
         )
 
-    # Splice updated rows back into the existing DataFrame.
-    cols = index_columns()
-    # Ensure existing CSV has all required columns (older daily files may
-    # have been generated before 状態 was added).
-    for c in cols:
-        if c not in existing.columns:
-            existing[c] = ""
-    existing = existing[cols]
+    if not new_realtime:
+        return 0
 
-    updated = 0
-    for idx, row in existing.iterrows():
-        code = str(row["レースコード"])
-        if code in new_rows:
-            for k, v in new_rows[code].items():
-                existing.at[idx, k] = _csv_cell(v)
-            updated += 1
+    # Partition existing rows: keep daily (and any other non-realtime states
+    # that future versions may add) untouched; drop realtime rows that we're
+    # about to upsert; keep realtime rows for races we're not touching.
+    is_realtime = existing["状態"] == STATE_REALTIME
+    daily_or_other = existing[~is_realtime]
+    realtime_kept = existing[
+        is_realtime & ~existing["レースコード"].isin(new_realtime.keys())
+    ]
+    realtime_new = pd.DataFrame(
+        [new_realtime[c] for c in sorted(new_realtime.keys())],
+        columns=cols,
+    )
 
-    atomic_write_csv(existing, csv_path)
-    return updated
+    result = pd.concat(
+        [daily_or_other, realtime_kept, realtime_new],
+        ignore_index=True,
+    )
+    result = _sort_index_rows(result)
+
+    atomic_write_csv(result, csv_path)
+    return len(new_realtime)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -326,8 +374,14 @@ def main():
     p.add_argument("--out", default=None, help="Override output path")
     p.add_argument("--update-races", default=None,
                    help="Comma-separated レースコード list. If set, only those "
-                        "rows are updated in-place (state→realtime); the rest "
-                        "of the day is left as-is. Requires the CSV to exist.")
+                        "rows are upserted as 状態=realtime; existing 状態=daily "
+                        "rows for the same races are preserved. Requires the "
+                        "CSV to exist.")
+    p.add_argument("--force", action="store_true",
+                   help="Allow --mode realtime to overwrite an existing CSV "
+                        "that contains 状態=daily rows. Without --force, a "
+                        "full realtime rebuild that would discard the morning "
+                        "batch's daily evaluation is refused.")
     args = p.parse_args()
 
     repo = Path(args.repo_root).resolve()
@@ -336,11 +390,30 @@ def main():
     if args.update_races:
         codes = [c.strip() for c in args.update_races.split(",") if c.strip()]
         n = update_index_for_races(repo, day, codes)
-        print(f"Updated {n} rows in {index_csv_path(repo, day)}")
+        print(f"Upserted {n} realtime rows in {index_csv_path(repo, day)}")
         return
 
-    df, weights_path = build_index_day(repo, day, mode=args.mode)
     out_path = Path(args.out) if args.out else index_csv_path(repo, day)
+
+    # Safety: --mode realtime full rebuild would clobber the morning batch's
+    # 状態=daily rows. Require an explicit --force to proceed.
+    if args.mode == STATE_REALTIME and out_path.exists() and not args.force:
+        try:
+            preview = pd.read_csv(out_path, dtype=object, usecols=["状態"])
+        except (ValueError, KeyError):
+            preview = None
+        has_daily = (
+            preview is not None
+            and (preview["状態"].fillna(STATE_DAILY).replace("", STATE_DAILY) == STATE_DAILY).any()
+        )
+        if has_daily:
+            sys.exit(
+                f"refusing to overwrite {out_path}: it contains 状態=daily rows. "
+                f"Re-run with --force if you really want a full realtime rebuild "
+                f"(this discards the morning batch's daily evaluation)."
+            )
+
+    df, weights_path = build_index_day(repo, day, mode=args.mode)
     atomic_write_csv(df, out_path)
 
     weight_msg = (f" (weights: {weights_path.name})" if weights_path
