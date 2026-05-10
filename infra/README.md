@@ -155,12 +155,17 @@ gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
 `scripts/boatrace/gcs_publisher.py` が GCS 書込と Pub/Sub publish を行う。
 バケットと topic 自体は fun-site/infra で `terraform apply` 済みである前提。
 
-```bash
-# 環境変数（Cloud Run Job spec で更新）
-gcloud run jobs update "$JOB_NAME" \
-  --region="$REGION" \
-  --update-env-vars="BOATRACE_GCS_CSV_BUCKET=boatrace-realtime-data-${PROJECT_ID},BOATRACE_PUBSUB_TOPIC=projects/${PROJECT_ID}/topics/fun-site-realtime-completed"
-```
+環境変数 `BOATRACE_GCS_CSV_BUCKET` / `BOATRACE_PUBSUB_TOPIC` は
+`infra/cloudbuild.yaml` の `substitutions` (`_GCS_CSV_BUCKET` / `_PUBSUB_TOPIC`)
+として宣言してあり、`deploy-job` ステップの `--set-env-vars` で毎ビルド注入される。
+そのため**手動で `gcloud run jobs update --update-env-vars=...` を実行する必要はない** (値を
+変えたい場合は `cloudbuild.yaml` の substitutions を書き換えて再ビルド)。
+
+> `gcloud run jobs deploy` の `--set-env-vars` は**列挙したキーで全置換**するため、
+> 過去にこの README では手動 `--update-env-vars` を案内していた。それを毎回手で
+> 入れ直す運用になっていたのを cloudbuild.yaml に取り込んで自動化した経緯。
+> 既存の Job に `--update-env-vars` で個別追加した値も次回ビルドで上書きされるので、
+> 値を変えたい場合は必ず `cloudbuild.yaml` 側を編集すること。
 
 > Runner SA への IAM ロール (`roles/storage.objectAdmin` on the bucket と
 > `roles/pubsub.publisher` on the topic) は **fun-site/infra/realtime-pipeline.tf** の

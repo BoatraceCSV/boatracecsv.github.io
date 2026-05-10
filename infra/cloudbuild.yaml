@@ -26,6 +26,12 @@ substitutions:
   _SECRET_NAME: github-token
   _GITHUB_REPO: BoatraceCSV/boatracecsv.github.io
   _GIT_BRANCH: main
+  # fun-site への CSV ミラー / Pub/Sub publish 用。Job spec の単一情報源を
+  # cloudbuild.yaml に集約する目的でここに定義し、deploy 時に毎回流し込む。
+  # gcloud run jobs --set-env-vars は列挙したキーで全置換するため、
+  # ここに含めておかないとデプロイのたびに値が消える。
+  _GCS_CSV_BUCKET: boatrace-realtime-data-boatrace-487212
+  _PUBSUB_TOPIC: projects/boatrace-487212/topics/fun-site-realtime-completed
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -78,7 +84,7 @@ steps:
       - --project=${_PROJECT_ID}
       - --service-account=${_RUNNER_SA}@${_PROJECT_ID}.iam.gserviceaccount.com
       - --set-secrets=GITHUB_TOKEN=${_SECRET_NAME}:latest
-      - --set-env-vars=GITHUB_REPO=${_GITHUB_REPO},GIT_BRANCH=${_GIT_BRANCH}
+      - --set-env-vars=GITHUB_REPO=${_GITHUB_REPO},GIT_BRANCH=${_GIT_BRANCH},BOATRACE_GCS_CSV_BUCKET=${_GCS_CSV_BUCKET},BOATRACE_PUBSUB_TOPIC=${_PUBSUB_TOPIC}
       - --max-retries=0
       - --task-timeout=300s
       - --parallelism=1
