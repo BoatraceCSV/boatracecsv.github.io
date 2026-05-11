@@ -210,7 +210,7 @@ def load_holding_from_title_csv(
     ``preview-realtime.py`` would silently drop every result candidate.
 
     The daily-sync workflow snapshots all 12 races' scheduled deadlines
-    at JST 08:30 (before any race starts) into
+    at JST 07:30 (before any race starts) into
     ``data/programs/title/{YYYY}/{MM}/{DD}.csv`` (column
     ``電話投票締切予定``). That file is therefore a stable truth source
     for "what was the deadline of race N at stadium S today".

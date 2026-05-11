@@ -239,37 +239,28 @@ gcloud run jobs add-iam-policy-binding "$JOB_NAME" \
   --role=roles/run.invoker
 ```
 
-### 8. Cloud Scheduler 登録 (JST 08:30〜22:59 を 5 分毎)
+### 8. Cloud Scheduler 登録 (JST 08:00〜22:59 を 5 分毎)
 
-GitHub Actions 側の cron 2 本をそのまま JST に直して 2 本登録します。
+`preview-realtime-daytime` 1 本を JST 08:00 起点・5 分毎で登録します
+(過去には JST 08:30 系列を別 Scheduler `preview-realtime-morning` として
+切っていましたが、開催日朝の `getHoldingList2` で扱える時刻が前倒し
+された関係で 08:00 起点に統合し、`preview-realtime-morning` は削除済み)。
 
 ```bash
 JOB_URI="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run"
 INVOKER_EMAIL="${INVOKER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# JST 08:30, 08:35, ..., 08:55
-gcloud scheduler jobs create http preview-realtime-morning \
-  --location="$REGION" \
-  --schedule="30,35,40,45,50,55 8 * * *" \
-  --time-zone="Asia/Tokyo" \
-  --uri="$JOB_URI" \
-  --http-method=POST \
-  --oauth-service-account-email="$INVOKER_EMAIL" \
-  --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
-  --attempt-deadline=60s \
-  --description="Preview realtime — JST 08:30-08:59"
-
-# JST 09:00, 09:05, ..., 22:55
+# JST 08:00, 08:05, ..., 22:55
 gcloud scheduler jobs create http preview-realtime-daytime \
   --location="$REGION" \
-  --schedule="*/5 9-22 * * *" \
+  --schedule="*/5 8-22 * * *" \
   --time-zone="Asia/Tokyo" \
   --uri="$JOB_URI" \
   --http-method=POST \
   --oauth-service-account-email="$INVOKER_EMAIL" \
   --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
   --attempt-deadline=60s \
-  --description="Preview realtime — JST 09:00-22:59"
+  --description="Preview realtime — JST 08:00-22:59"
 ```
 
 > `attempt-deadline` は Scheduler が `jobs:run` API のレスポンスを待つ時間
@@ -384,8 +375,8 @@ gcloud run jobs deploy "$JOB_NAME" \
 
 ### 5. 完全停止 (Scheduler 一時停止)
 
-更新で問題が出ていて切り戻しの暇もない場合は Scheduler 2 本を
-停止して呼び出し自体を止めます(後述の「ロールバック」セクション参照)。
+更新で問題が出ていて切り戻しの暇もない場合は Scheduler を停止して
+呼び出し自体を止めます(後述の「ロールバック」セクション参照)。
 
 ## CI 連携 (任意)
 
@@ -410,25 +401,23 @@ gcloud builds triggers create github \
 * **PAT ローテート**: 期限が切れる前に `gcloud secrets versions add` で
   新バージョンを追加するだけ。Job 側は `:latest` 参照なので再デプロイ不要。
 * **想定外の重複実行**: Job は `parallelism=1 tasks=1 max-retries=0` で動く
-  ため同一 Scheduler の重複は無いが、Scheduler 2 本がたまたま同時刻に
-  なる構成は今のところ存在しない (08:30 系列 と 09-22 系列はオーバーラップ
-  しない)。`scripts/preview-realtime.py` 自身も `レースコード` で冪等化
-  されているため、万一の重複でも CSV は壊れない。
+  ため同一 Scheduler の重複は無い。Scheduler は `preview-realtime-daytime`
+  の 1 本のみ (`*/5 8-22 * * *`)。`scripts/preview-realtime.py` 自身も
+  `レースコード` で冪等化されているため、万一の重複でも CSV は壊れない。
 * **タイムアウト**: 1 実行 5 分。GitHub Actions 側と同じ。Boatrace 側 API が
   詰まり 5 分超過した場合はその回を捨てて次の Scheduler に任せる方針。
-* **コスト概算**: 168 回/日 × 30 日 ≒ 5,000 実行/月、平均 30 秒程度なら
+* **コスト概算**: 180 回/日 × 30 日 ≒ 5,400 実行/月、平均 30 秒程度なら
   Cloud Run Jobs / Scheduler とも実質無料枠内 (Scheduler は 3 ジョブまで
-  無料、ここでは 2 本)。
+  無料、ここでは 1 本)。
 * **GitHub Actions 側のフォールバック**: `.github/workflows/preview-realtime.yml`
   は `workflow_dispatch` のみ残してあるので、Cloud Run 側に障害が出たら
   GitHub UI から手動で 1 回起動できる。
 
 ## ロールバック
 
-Scheduler 2 本を一時停止すれば Cloud Run 側は完全停止します:
+Scheduler を一時停止すれば Cloud Run 側は完全停止します:
 
 ```bash
-gcloud scheduler jobs pause preview-realtime-morning  --location="$REGION"
 gcloud scheduler jobs pause preview-realtime-daytime  --location="$REGION"
 ```
 
@@ -485,7 +474,7 @@ Job 側は `:latest` 参照なので再デプロイ不要。
 
 1. **当日の daily-batch index がまだ生成されていない**
    GitHub Actions の `.github/workflows/daily-sync.yml` で `Build Daily Index Batch`
-   ステップが当日 00:10 JST に走っているはず。失敗していると当日の
+   ステップが当日 07:30 JST に走っているはず。失敗していると当日の
    index CSV が main に存在しない。GitHub Actions の Run 履歴を確認。
 2. **`run.sh` の sparse-checkout に `data/estimate/index/${TODAY_YM}` が無い**
    イメージが古いとこのパスが checkout されず、ファイルが存在するのに
