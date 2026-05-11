@@ -70,26 +70,18 @@ def process_program(
     year = date_parts[0]
     month = date_parts[1]
     day = date_parts[2]
+    year_short = year[2:]
+    file_date = f"{year_short}{month}{day}"
+    year_month = f"{year}{month}"
 
-    # For B-file, we need to download from previous day
-    prev_date_obj = datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=1)
-    prev_date_str = prev_date_obj.strftime("%Y-%m-%d")
-    prev_date_parts = prev_date_str.split("-")
-    prev_year = prev_date_parts[0]
-    prev_month = prev_date_parts[1]
-    prev_day = prev_date_parts[2]
-    prev_year_short = prev_year[2:]
-    prev_file_date = f"{prev_year_short}{prev_month}{prev_day}"
-    prev_year_month = f"{prev_year}{prev_month}"
-
-    # Download B-file (programs) for next day
+    # Download B-file (programs) for current date.
+    # bYYMMDD.lzh contains programs for YYMMDD itself (not the next day).
     base_url = "https://www1.mbrace.or.jp/od2"
-    b_file_url = f"{base_url}/B/{prev_year_month}/b{prev_file_date}.lzh"
+    b_file_url = f"{base_url}/B/{year_month}/b{file_date}.lzh"
 
     logging_module.info(
         "program_downloading",
         date=date_str,
-        download_date=prev_date_str,
         url=b_file_url,
     )
 
