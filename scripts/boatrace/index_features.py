@@ -450,8 +450,14 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     Columns: レースコード, レース日, レース場コード(2桁), レース回, 枠番,
              waku, racer, motor, exhibit, weather (5 raw feature pts).
 
-    Includes only races present in `data/programs/daily/`. Missing previews,
-    motors, etc. fall back to NaN in the relevant columns.
+    Race universe is taken from ``data/programs/race_cards/YYYY/MM/DD.csv``
+    (boatcast.jp `bc_j_str3` API snapshot, written by ``race-card.py``).
+    This source reflects the actual current-day schedule from boatcast and
+    therefore stays correct on series-transition days (初日/最終日) where
+    the official B-file (``programs/daily``) may be missing entries.
+
+    Missing previews / motor stats / recent form fall back to NaN in the
+    relevant columns.
     """
     season = SEASON_BY_MONTH[day.month]
 
@@ -459,7 +465,7 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     motor_tab = load_motor_table_for_day(repo, day)
     sui = load_sui_params(repo)
 
-    prog_path = repo / "data" / "programs" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    prog_path = repo / "data" / "programs" / "race_cards" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     if not prog_path.exists():
         return pd.DataFrame()
 
@@ -493,7 +499,9 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
             continue
         stadium_code2 = f"{stadium_code:02d}"
         stadium_name = STADIUM_NAMES.get(stadium_code, "")
-        race_round = prog_row.get("レース回", "")
+        # race_cards 形式の "01R" を従来の "1R" に正規化 (programs/daily 互換)。
+        race_round_raw = prog_row.get("レース回", "")
+        race_round = race_round_raw.lstrip("0") if isinstance(race_round_raw, str) else ""
 
         # Prefer realtime per-source CSVs; fall back to the combined daily file.
         rt = realtime_by.get(code)
@@ -536,8 +544,12 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
                 recs.extend(build_recent_records(rl_row, waku))
             rpt = racer_pt_for_boat(recs)
 
+            # race_cards は "艇N_モーター番号"。旧 programs/daily の
+            # "{N}枠_モーター番号" もフォールバックとして受け付ける。
+            motor_raw = prog_row.get(f"艇{waku}_モーター番号",
+                                    prog_row.get(f"{waku}枠_モーター番号", ""))
             try:
-                m_num = int(float(prog_row.get(f"{waku}枠_モーター番号", "")))
+                m_num = int(float(motor_raw))
                 mpt = motor_pt(motor_tab, stadium_code2, m_num)
             except (ValueError, TypeError):
                 mpt = float("nan")
