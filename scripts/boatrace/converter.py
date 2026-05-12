@@ -10,7 +10,6 @@ from .models import (
     RaceCardBoat,
     RaceCardSession,
     RacePreview,
-    RaceProgram,
     RaceResult,
     RecentForm,
     RecentFormBoat,
@@ -109,50 +108,6 @@ RESULTS_HEADERS = [
     "6着_着順", "6着_艇番", "6着_登録番号", "6着_選手名", "6着_モーター番号", "6着_ボート番号",
     "6着_展示タイム", "6着_進入コース", "6着_スタートタイミング", "6着_レースタイム",
 ]
-
-# CSV Headers for programs (same structure as results CSV)
-PROGRAMS_HEADERS = [
-    "レースコード", "タイトル", "日次", "レース日", "レース場", "レース回", "レース名",
-    "距離(m)", "電話投票締切予定",
-]
-
-# Add racer frame headers matching results CSV structure (6 frames)
-# Each frame has: 艇番, 登録番号, 選手名, 年齢, 支部, 体重, 級別,
-#                 全国勝率, 全国2連対率, 当地勝率, 当地2連対率,
-#                 モーター番号, モーター2連対率, ボート番号, ボート2連対率,
-#                 今節成績(12フィールド), 早見 (28 fields per frame)
-for frame_num in range(1, 7):
-    PROGRAMS_HEADERS.extend([
-        f"{frame_num}枠_艇番",
-        f"{frame_num}枠_登録番号",
-        f"{frame_num}枠_選手名",
-        f"{frame_num}枠_年齢",
-        f"{frame_num}枠_支部",
-        f"{frame_num}枠_体重",
-        f"{frame_num}枠_級別",
-        f"{frame_num}枠_全国勝率",
-        f"{frame_num}枠_全国2連対率",
-        f"{frame_num}枠_当地勝率",
-        f"{frame_num}枠_当地2連対率",
-        f"{frame_num}枠_モーター番号",
-        f"{frame_num}枠_モーター2連対率",
-        f"{frame_num}枠_ボート番号",
-        f"{frame_num}枠_ボート2連対率",
-        f"{frame_num}枠_今節成績_1-1",
-        f"{frame_num}枠_今節成績_1-2",
-        f"{frame_num}枠_今節成績_2-1",
-        f"{frame_num}枠_今節成績_2-2",
-        f"{frame_num}枠_今節成績_3-1",
-        f"{frame_num}枠_今節成績_3-2",
-        f"{frame_num}枠_今節成績_4-1",
-        f"{frame_num}枠_今節成績_4-2",
-        f"{frame_num}枠_今節成績_5-1",
-        f"{frame_num}枠_今節成績_5-2",
-        f"{frame_num}枠_今節成績_6-1",
-        f"{frame_num}枠_今節成績_6-2",
-        f"{frame_num}枠_早見",
-    ])
-
 
 def _parse_betting_result(result: str, field_count: int) -> List[str]:
     """Parse betting result string into CSV fields.
@@ -254,92 +209,6 @@ def race_result_to_row(race: RaceResult) -> List[str]:
     return row
 
 
-def race_program_to_row(program: RaceProgram) -> List[str]:
-    """Convert RaceProgram to CSV row (matching results CSV structure).
-
-    Args:
-        program: RaceProgram object
-
-    Returns:
-        List of CSV field values (one row per race with all 6 frames)
-    """
-    # Generate race code if not provided
-    # Format: YYYYMMDDCCNN where CC is venue code, NN is race round number
-    race_code = program.race_code or ""
-    if not race_code:
-        # Extract date, stadium, and race round to generate code
-        if program.date and program.stadium and program.race_round:
-            try:
-                # Date: YYYYMMDD
-                date_code = program.date.replace("-", "")  # "2025-12-05" -> "20251205"
-                
-                # Venue code: 01-24
-                venue_code = VENUE_CODES.get(program.stadium, "00")
-                
-                # Race round: extract number from "01R", "02R", "1R", "2R", etc.
-                race_round_num = program.race_round.rstrip('R')  # "01R" -> "01", "1R" -> "1"
-                # Ensure 2-digit format
-                race_round_num = race_round_num.zfill(2)  # "1" -> "01"
-
-                race_code = date_code + venue_code + race_round_num
-            except Exception:
-                race_code = ""
-    
-    row = [
-        race_code,                                          # レースコード
-        program.title,                                      # タイトル
-        program.day_of_session or "",                       # 日次
-        program.date,                                       # レース日
-        program.stadium,                                    # レース場
-        program.race_round,                                 # レース回
-        program.race_name or "",                            # レース名
-        program.distance or "",                             # 距離(m)
-        program.post_time or "",                            # 電話投票締切予定
-    ]
-
-    # Add racer frame data (pad with empty frames if fewer than 6)
-    # This matches the structure of results CSV where all 6 racers are in one row
-    frames = program.racer_frames + [None] * (6 - len(program.racer_frames))
-
-    for frame in frames[:6]:
-        if frame:
-            # Add frame fields in Japanese format (28 fields per frame)
-            row.extend([
-                str(frame.entry_number),                    # 艇番
-                frame.registration_number or "",            # 登録番号
-                frame.racer_name or "",                     # 選手名
-                str(frame.age) if frame.age else "",        # 年齢
-                frame.prefecture or "",                     # 支部
-                str(frame.weight) if frame.weight else "",  # 体重
-                frame.class_grade or "",                    # 級別
-                str(frame.win_rate) if frame.win_rate else "",              # 全国勝率
-                str(frame.place_rate) if frame.place_rate else "",          # 全国2連対率
-                str(frame.local_win_rate) if frame.local_win_rate else "",  # 当地勝率
-                str(frame.local_place_rate) if frame.local_place_rate else "",  # 当地2連対率
-                frame.motor_number or "",                   # モーター番号
-                str(frame.motor_2nd_rate) if frame.motor_2nd_rate else "",  # モーター2連対率
-                frame.boat_number or "",                    # ボート番号
-                str(frame.boat_2nd_rate) if frame.boat_2nd_rate else "",    # ボート2連対率
-                frame.results_day1_race1 or "",             # 今節成績_1-1
-                frame.results_day1_race2 or "",             # 今節成績_1-2
-                frame.results_day2_race1 or "",             # 今節成績_2-1
-                frame.results_day2_race2 or "",             # 今節成績_2-2
-                frame.results_day3_race1 or "",             # 今節成績_3-1
-                frame.results_day3_race2 or "",             # 今節成績_3-2
-                frame.results_day4_race1 or "",             # 今節成績_4-1
-                frame.results_day4_race2 or "",             # 今節成績_4-2
-                frame.results_day5_race1 or "",             # 今節成績_5-1
-                frame.results_day5_race2 or "",             # 今節成績_5-2
-                frame.results_day6_race1 or "",             # 今節成績_6-1
-                frame.results_day6_race2 or "",             # 今節成績_6-2
-                frame.hayami or "",                         # 早見
-            ])
-        else:
-            row.extend([""] * 28)
-
-    return row
-
-
 def races_to_csv(races: List[RaceResult]) -> str:
     """Convert list of RaceResult objects to CSV format.
 
@@ -377,49 +246,6 @@ def races_to_csv(races: List[RaceResult]) -> str:
         logging_module.error(
             "csv_generation_failed",
             file_type="results",
-            error=str(e),
-            error_type=type(e).__name__,
-        )
-        return ""
-
-
-def programs_to_csv(programs: List[RaceProgram]) -> str:
-    """Convert list of RaceProgram objects to CSV format.
-
-    Args:
-        programs: List of RaceProgram objects
-
-    Returns:
-        CSV content as string
-    """
-    try:
-        output = StringIO()
-        writer = csv.writer(output, lineterminator="\n")
-
-        # Write header
-        writer.writerow(PROGRAMS_HEADERS)
-
-        # Write data rows
-        for program in programs:
-            row = race_program_to_row(program)
-            writer.writerow(row)
-
-        csv_content = output.getvalue()
-        output.close()
-
-        logging_module.info(
-            "csv_generated",
-            file_type="programs",
-            rows=len(programs) + 1,  # +1 for header
-            size_bytes=len(csv_content.encode("utf-8")),
-        )
-
-        return csv_content
-
-    except Exception as e:
-        logging_module.error(
-            "csv_generation_failed",
-            file_type="programs",
             error=str(e),
             error_type=type(e).__name__,
         )

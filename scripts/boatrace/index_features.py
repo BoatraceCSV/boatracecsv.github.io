@@ -412,8 +412,7 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     Race universe is taken from ``data/programs/race_cards/YYYY/MM/DD.csv``
     (boatcast.jp `bc_j_str3` API snapshot, written by ``race-card.py``).
     This source reflects the actual current-day schedule from boatcast and
-    therefore stays correct on series-transition days (初日/最終日) where
-    the official B-file (``programs/daily``) may be missing entries.
+    therefore stays correct on series-transition days (初日/最終日).
 
     Preview source: ``data/previews/{sui,tkz,stt,original_exhibition}/``
     (realtime per-source CSVs).  These are the sole preview source —
@@ -458,7 +457,7 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
             continue
         stadium_code2 = f"{stadium_code:02d}"
         stadium_name = STADIUM_NAMES.get(stadium_code, "")
-        # race_cards 形式の "01R" を従来の "1R" に正規化 (programs/daily 互換)。
+        # race_cards 形式の "01R" を "1R" に正規化。
         race_round_raw = prog_row.get("レース回", "")
         race_round = race_round_raw.lstrip("0") if isinstance(race_round_raw, str) else ""
 
@@ -500,10 +499,8 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
                 recs.extend(build_recent_records(rl_row, waku))
             rpt = racer_pt_for_boat(recs)
 
-            # race_cards は "艇N_モーター番号"。旧 programs/daily の
-            # "{N}枠_モーター番号" もフォールバックとして受け付ける。
-            motor_raw = prog_row.get(f"艇{waku}_モーター番号",
-                                    prog_row.get(f"{waku}枠_モーター番号", ""))
+            # race_cards は "艇N_モーター番号" 形式。
+            motor_raw = prog_row.get(f"艇{waku}_モーター番号", "")
             try:
                 m_num = int(float(motor_raw))
                 mpt = motor_pt(motor_tab, stadium_code2, m_num)
