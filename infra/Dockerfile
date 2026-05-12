@@ -38,12 +38,21 @@ WORKDIR /app
 COPY scripts/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Entry script. The repo (and therefore scripts/preview-realtime.py) is fetched
-# at runtime, so we do not COPY scripts/ into the image.
-# `--chmod=0755` ensures the file is executable in the image regardless of the
-# source file's mode on the build machine (macOS often drops the +x bit when
-# files are created via editor/sync tools).
-COPY --chmod=0755 infra/run.sh /app/run.sh
+# Entry scripts. The repo (and therefore the Python entry points
+# scripts/preview-realtime.py and the daily-sync scripts) is fetched at
+# runtime, so we do not COPY scripts/ into the image.
+#
+# `--chmod=0755` ensures the files are executable in the image regardless of
+# the source files' modes on the build machine (macOS often drops the +x bit
+# when files are created via editor/sync tools).
+#
+# 1 イメージ・複数 Job 構成:
+# - preview-realtime Job → --command=/app/run.sh
+# - daily-sync       Job → --command=/app/run-daily-sync.sh
+# どちらも依存関係 (requirements.txt) を共有するため、イメージは 1 本にまとめ、
+# Cloud Run Job 側の `--command` で切り替える。
+COPY --chmod=0755 infra/run.sh            /app/run.sh
+COPY --chmod=0755 infra/run-daily-sync.sh /app/run-daily-sync.sh
 
 # Cloud Run Jobs run as root by default; we drop to an unprivileged user. The
 # user needs a writable home for git's HTTP credential / config files.
@@ -56,4 +65,6 @@ ENV HOME=/home/runner
 # All transient state lives under /workspace (cloned repo, logs).
 WORKDIR /workspace
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/app/run.sh"]
+# ENTRYPOINT は tini のみ。実行スクリプトは Cloud Run Job 側の `--command`
+# で指定する (preview-realtime / daily-sync で同イメージを共有するため)。
+ENTRYPOINT ["/usr/bin/tini", "--"]

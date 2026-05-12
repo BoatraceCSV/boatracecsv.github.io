@@ -19,8 +19,12 @@
 substitutions:
   _REGION: asia-northeast1
   _AR_REPO: containers
+  # イメージは preview-realtime / daily-sync の 2 Job で共通。歴史的経緯で
+  # イメージ名は preview-realtime のままにしておく (Artifact Registry の
+  # 既存タグを温存するため)。
   _IMAGE: preview-realtime
   _JOB_NAME: preview-realtime
+  _JOB_NAME_DAILY: daily-sync
   _PROJECT_ID: boatrace-487212
   _RUNNER_SA: preview-realtime-runner
   _SECRET_NAME: github-token
@@ -71,6 +75,10 @@ steps:
   # the Job on first run and updates the existing Job on subsequent runs.
   # Cloud Build needs roles/run.developer on the project AND
   # iam.serviceAccountUser on the runner SA — see infra/README.md §5.
+  #
+  # `--command` を明示するのは、Dockerfile の ENTRYPOINT を tini のみに
+  # したため (1 イメージで複数 Job を運用)。preview-realtime は run.sh、
+  # daily-sync は run-daily-sync.sh を実行する。
   - id: deploy-job
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
@@ -83,6 +91,7 @@ steps:
       - --region=${_REGION}
       - --project=${_PROJECT_ID}
       - --service-account=${_RUNNER_SA}@${_PROJECT_ID}.iam.gserviceaccount.com
+      - --command=/app/run.sh
       - --set-secrets=GITHUB_TOKEN=${_SECRET_NAME}:latest
       - --set-env-vars=GITHUB_REPO=${_GITHUB_REPO},GIT_BRANCH=${_GIT_BRANCH},BOATRACE_GCS_CSV_BUCKET=${_GCS_CSV_BUCKET},BOATRACE_PUBSUB_TOPIC=${_PUBSUB_TOPIC}
       - --max-retries=0
@@ -95,4 +104,35 @@ steps:
       # python pandas/lightgbm import footprint.
       - --memory=1Gi
 
-timeout: 1200s
+  # daily-sync Job: 旧 .github/workflows/daily-sync.yml を置き換える。
+  # JST 07:30 に Cloud Scheduler から起動される (Scheduler の作成は
+  # infra/README.md の手順に従う; cloudbuild からは作らない)。
+  #
+  # preview-realtime と異なる点:
+  #   - --command:        /app/run-daily-sync.sh
+  #   - --task-timeout:   3600s (実測 ~22 分 + バッファ)
+  #   - --memory:         2Gi   (build_index の pandas + lightgbm に余裕)
+  #   - --cpu:            2     (22 分の総時間圧縮)
+  - id: deploy-job-daily-sync
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - deploy
+      - ${_JOB_NAME_DAILY}
+      - --image=${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --project=${_PROJECT_ID}
+      - --service-account=${_RUNNER_SA}@${_PROJECT_ID}.iam.gserviceaccount.com
+      - --command=/app/run-daily-sync.sh
+      - --set-secrets=GITHUB_TOKEN=${_SECRET_NAME}:latest
+      - --set-env-vars=GITHUB_REPO=${_GITHUB_REPO},GIT_BRANCH=${_GIT_BRANCH},BOATRACE_GCS_CSV_BUCKET=${_GCS_CSV_BUCKET},BOATRACE_PUBSUB_TOPIC=${_PUBSUB_TOPIC}
+      - --max-retries=0
+      - --task-timeout=3600s
+      - --parallelism=1
+      - --tasks=1
+      - --cpu=2
+      - --memory=2Gi
+
+timeout: 1800s
