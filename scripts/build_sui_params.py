@@ -7,10 +7,9 @@ per-source CSV family) with data/results/daily/YYYY/MM/DD.csv
 (course + finish) by レースコード, then fits a per-(stadium, course) linear
 regression in advantage-point space.
 
-The legacy combined ``data/previews/daily/`` file is no longer read.
-Historical sui coverage was reconstructed by
-``scripts/backfill_realtime_from_daily.py`` and currently starts at
-2025-11-01; days before that are silently skipped.
+Historical sui coverage starts at 2025-11-01 (it was reconstructed from
+the previously-existing legacy combined preview CSV before that file
+family was removed). Days before 2025-11-01 are silently skipped.
 
 Usage:
     python scripts/build_sui_params.py \

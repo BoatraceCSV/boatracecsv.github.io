@@ -416,10 +416,10 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     the official B-file (``programs/daily``) may be missing entries.
 
     Preview source: ``data/previews/{sui,tkz,stt,original_exhibition}/``
-    (realtime per-source CSVs).  The legacy combined
-    ``data/previews/daily/`` file is no longer consulted — historical
-    coverage was reconstructed into the per-source families by
-    ``scripts/backfill_realtime_from_daily.py``.
+    (realtime per-source CSVs).  These are the sole preview source —
+    the legacy combined ``data/previews/daily/`` file family was removed
+    after its historical coverage was reconstructed into the per-source
+    families.
 
     Missing previews / motor stats / recent form fall back to NaN in the
     relevant columns.

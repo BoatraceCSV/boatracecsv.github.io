@@ -18,7 +18,9 @@ non-existent files) the same way as ``original_exhibition_scraper.py``.
 
 The shape of each TSV was reverse-engineered from the SPA bundle on
 race.boatcast.jp (``StartDisplay.js`` / ``OriginalDisplayData.js``) and
-verified against ``data/previews/daily/2026/04/24.csv``.
+verified against the legacy HTML-based scraper output during the 2026-04
+TSV migration (the reference CSV at ``data/previews/daily/`` has since
+been removed).
 
 The returned :class:`RacePreview` does **not** populate ``title`` — that
 field has no equivalent in boatcast.jp's TSVs. The caller is expected to
