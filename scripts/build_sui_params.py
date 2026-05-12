@@ -2,13 +2,19 @@
 """
 Fit sui_params.csv from real historical race data for all 24 stadiums.
 
-Joins data/previews/daily/YYYY/MM/DD.csv (weather + exhibition) with
-data/results/daily/YYYY/MM/DD.csv (course + finish) by レースコード, then fits
-a per-(stadium, course) linear regression in advantage-point space.
+Joins data/previews/sui/YYYY/MM/DD.csv (weather snapshot from the realtime
+per-source CSV family) with data/results/daily/YYYY/MM/DD.csv
+(course + finish) by レースコード, then fits a per-(stadium, course) linear
+regression in advantage-point space.
+
+The legacy combined ``data/previews/daily/`` file is no longer read.
+Historical sui coverage was reconstructed by
+``scripts/backfill_realtime_from_daily.py`` and currently starts at
+2025-11-01; days before that are silently skipped.
 
 Usage:
     python scripts/build_sui_params.py \
-        --start-date 2025-01-01 --end-date 2026-05-02 \
+        --start-date 2025-11-01 --end-date 2026-05-02 \
         --out data/estimate/stadium/sui_params.csv
 """
 from __future__ import annotations
@@ -73,8 +79,13 @@ def iter_dates(start: dt.date, end: dt.date):
 
 
 def load_day(repo_root: Path, day: dt.date) -> list[dict]:
-    """Load (previews + results) for one day and return long-format rows."""
-    prev_path = repo_root / "data" / "previews" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    """Load (sui weather + results) for one day and return long-format rows.
+
+    Weather is read from the realtime per-source ``data/previews/sui/``
+    CSV (same schema as the boatcast bc_rs1_2 snapshot used by
+    preview-realtime.py). Days without a ``sui`` file are silently skipped.
+    """
+    prev_path = repo_root / "data" / "previews" / "sui" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     res_path = repo_root / "data" / "results" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     if not prev_path.exists() or not res_path.exists():
         return []
@@ -245,7 +256,8 @@ def save_params_csv(path: Path, params: dict):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--repo-root", default=str(Path(__file__).parent.parent))
-    p.add_argument("--start-date", default="2025-01-01")
+    # sui per-source CSV history starts at 2025-11-01 (backfill window).
+    p.add_argument("--start-date", default="2025-11-01")
     p.add_argument("--end-date", default="2026-05-02")
     p.add_argument("--out", default="data/estimate/stadium/sui_params.csv")
     args = p.parse_args()

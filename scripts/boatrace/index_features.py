@@ -282,48 +282,6 @@ def weather_advantage(params: dict, stadium_name: str, weather: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────
 # 6. Per-day feature computation
 # ─────────────────────────────────────────────────────────────────────
-def parse_preview_row(row) -> dict:
-    def _f(key, default=float("nan")):
-        try:
-            v = float(row[key])
-            return v if not np.isnan(v) else default
-        except (ValueError, TypeError, KeyError):
-            return default
-
-    def _i(key, default=None):
-        try:
-            v = float(row[key])
-            return default if np.isnan(v) else int(v)
-        except (ValueError, TypeError, KeyError):
-            return default
-
-    weather = None
-    try:
-        air = _f("気温(℃)", float("nan"))
-        wat = _f("水温(℃)", float("nan"))
-        if not (np.isnan(air) or np.isnan(wat)):
-            weather = {
-                "wind_ms":    _f("風速(m)", 0.0) if not np.isnan(_f("風速(m)", 0.0)) else 0.0,
-                "wind_deg":   WIND_CODE_TO_DEG.get(_i("風向", 1), 0),
-                "wave_cm":    _f("波の高さ(cm)", 0.0) if not np.isnan(_f("波の高さ(cm)", 0.0)) else 0.0,
-                "weather":    WEATHER_CODE_TO_LABEL.get(_i("天候", 1), "晴"),
-                "air_temp":   air,
-                "water_temp": wat,
-            }
-    except Exception:
-        weather = None
-
-    boats = {}
-    for i in range(1, 7):
-        try:
-            course = int(float(row[f"艇{i}_コース"]))
-            extime = float(row[f"艇{i}_展示タイム"])
-        except (ValueError, TypeError, KeyError):
-            course, extime = i, float("nan")
-        boats[i] = {"course": course, "exhibit_time": extime}
-    return {"weather": weather, "boats": boats}
-
-
 def parse_orig_exhibit_row(row) -> dict:
     out = {}
     for i in range(1, 7):
@@ -354,7 +312,8 @@ def build_recent_records(recent_row, boat_no: int) -> list[tuple[str, str]]:
 
 def _load_realtime_preview_by_code(repo: Path, day: dt.date) -> dict:
     """Read per-source realtime preview CSVs and assemble a dict keyed by
-    レースコード that has the same shape as ``parse_preview_row`` output.
+    レースコード with the per-race weather / boats / oe_vals payload that
+    ``compute_features_for_day`` consumes.
 
     Sources (under data/previews/):
         - sui/YYYY/MM/DD.csv  → weather (風速・風向・波・天候・気温・水温)
@@ -456,6 +415,12 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     therefore stays correct on series-transition days (初日/最終日) where
     the official B-file (``programs/daily``) may be missing entries.
 
+    Preview source: ``data/previews/{sui,tkz,stt,original_exhibition}/``
+    (realtime per-source CSVs).  The legacy combined
+    ``data/previews/daily/`` file is no longer consulted — historical
+    coverage was reconstructed into the per-source families by
+    ``scripts/backfill_realtime_from_daily.py``.
+
     Missing previews / motor stats / recent form fall back to NaN in the
     relevant columns.
     """
@@ -469,25 +434,19 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     if not prog_path.exists():
         return pd.DataFrame()
 
-    prev_path = repo / "data" / "previews" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     rn_path   = repo / "data" / "programs" / "recent_national" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     rl_path   = repo / "data" / "programs" / "recent_local"   / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
-    oe_path   = repo / "data" / "previews" / "original_exhibition" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
 
     prog = pd.read_csv(prog_path, dtype=str)
-    prev = pd.read_csv(prev_path, dtype=str) if prev_path.exists() else pd.DataFrame()
     rn   = pd.read_csv(rn_path, dtype=str)   if rn_path.exists()   else pd.DataFrame()
     rl   = pd.read_csv(rl_path, dtype=str)   if rl_path.exists()   else pd.DataFrame()
-    oe   = pd.read_csv(oe_path, dtype=str)   if oe_path.exists()   else pd.DataFrame()
 
-    prev_by = {r["レースコード"]: r for _, r in prev.iterrows()} if not prev.empty else {}
     rn_by   = {r["レースコード"]: r for _, r in rn.iterrows()}   if not rn.empty   else {}
     rl_by   = {r["レースコード"]: r for _, r in rl.iterrows()}   if not rl.empty   else {}
-    oe_by   = {r["レースコード"]: r for _, r in oe.iterrows()}   if not oe.empty   else {}
 
-    # Realtime per-source CSVs (preview-realtime.py appendages) override the
-    # combined daily file when present, so the index reflects the freshest
-    # weather/exhibit data without waiting for the once-a-day rebuild.
+    # Sole preview source: the realtime per-source CSV families
+    # (sui / tkz / stt / original_exhibition).  When a race has no row in
+    # any of them, preview-derived features fall back to NaN per-race below.
     realtime_by = _load_realtime_preview_by_code(repo, day)
 
     rows = []
@@ -503,21 +462,18 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
         race_round_raw = prog_row.get("レース回", "")
         race_round = race_round_raw.lstrip("0") if isinstance(race_round_raw, str) else ""
 
-        # Prefer realtime per-source CSVs; fall back to the combined daily file.
+        # Pull realtime per-source preview payload; default to NaN-everywhere
+        # for races with no row in any of sui/tkz/stt/original_exhibition.
         rt = realtime_by.get(code)
         if rt is not None:
             prev_info = {"weather": rt["weather"], "boats": rt["boats"]}
             oe_vals = rt["oe_vals"]
         else:
-            prev_row = prev_by.get(code)
-            prev_info = parse_preview_row(prev_row) if prev_row is not None else {
+            prev_info = {
                 "weather": None,
                 "boats": {i: {"course": i, "exhibit_time": float("nan")} for i in range(1, 7)},
             }
-            oe_row = oe_by.get(code)
-            oe_vals = parse_orig_exhibit_row(oe_row) if oe_row is not None else {
-                i: [float("nan")] * 3 for i in range(1, 7)
-            }
+            oe_vals = {i: [float("nan")] * 3 for i in range(1, 7)}
 
         ext_z = hensachi([prev_info["boats"][i]["exhibit_time"] for i in range(1, 7)])
         v1_z = hensachi([oe_vals[i][0] for i in range(1, 7)])
