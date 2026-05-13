@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+#
+# Cloud Run Jobs entrypoint for monthly-weights.
+#
+# Replaces .github/workflows/monthly-weights.yml. Runs every month on the 1st
+# at JST 06:00 via Cloud Scheduler. Performs:
+#   1. Partial+sparse clone of main covering the last 7 months
+#      (= target_month + 6 prior months) + 1 extra month for motor_stats
+#      fallback (build_weights.py invokes compute_features_for_day for every
+#      day in the 6-month training window, and motor_stats has a 7-day
+#      fallback that crosses month boundaries).
+#   2. Run scripts/build_weights.py --month "${TARGET_MONTH}".
+#   3. Commit + push data/estimate/stadium/index_weights/ (build_weights.py
+#      writes the CSV but does not self-commit).
+#
+# The monthly-weights schedule is intentionally placed BEFORE daily-sync
+# (07:30 JST) so that the boundary day's daily index and realtime index are
+# both computed with the freshly-updated weights. Trade-off: previous month's
+# last day K-file is not yet ingested at 06:00 (daily-sync ingests it at
+# 07:30), so the training window loses 1/180 days. See
+# infra/monthly-weights-migration-plan.md §5 Open Question #3.
+#
+# Required env (injected by the Cloud Run Job spec):
+#   GITHUB_TOKEN  - fine-grained PAT with Contents:Write on the repo (from
+#                   Secret Manager: github-token).
+#
+# Optional env (sensible defaults):
+#   GITHUB_REPO       owner/name of the GitHub repo
+#   GIT_BRANCH        branch to clone and push to
+#   GIT_USER_NAME     committer name
+#   GIT_USER_EMAIL    committer email
+#   TARGET_MONTH      YYYY-MM override for the target month — used for
+#                     backfill via `gcloud run jobs execute
+#                     --update-env-vars=TARGET_MONTH=2026-03`. When unset,
+#                     current month (JST) is used.
+#
+# Exit codes:
+#   0  success (commit pushed, or no diff to commit)
+#   1  failure (clone failed, python crashed, git push rejected, etc.)
+#
+# Idempotency: build_weights.py rewrites the same
+# data/estimate/stadium/index_weights/${TARGET_MONTH}.csv each run; the
+# subsequent `git diff --cached --quiet` check makes a no-op re-run silent.
+
+set -Eeuo pipefail
+
+log() {
+  printf '[run-monthly-weights %s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+on_error() {
+  local exit_code=$?
+  log "FAILED (exit=${exit_code}) at line $1"
+  exit "${exit_code}"
+}
+trap 'on_error $LINENO' ERR
+
+: "${GITHUB_TOKEN:?GITHUB_TOKEN is required (mount Secret Manager secret github-token)}"
+
+GITHUB_REPO="${GITHUB_REPO:-BoatraceCSV/boatracecsv.github.io}"
+GIT_BRANCH="${GIT_BRANCH:-main}"
+GIT_USER_NAME="${GIT_USER_NAME:-monthly-weights-bot}"
+GIT_USER_EMAIL="${GIT_USER_EMAIL:-monthly-weights-bot@users.noreply.github.com}"
+
+# TARGET_MONTH で対象月を上書き。空なら JST 当月。backfill 時は
+#   gcloud run jobs execute monthly-weights --update-env-vars=TARGET_MONTH=2026-04
+# のように指定する。
+if [[ -n "${TARGET_MONTH:-}" ]]; then
+  log "TARGET_MONTH override: ${TARGET_MONTH}"
+else
+  TARGET_MONTH=$(TZ=Asia/Tokyo date +%Y-%m)
+fi
+
+# 形式チェック (YYYY-MM)。早期 fail で誤指定の sparse-checkout 計算を防ぐ。
+if ! [[ "${TARGET_MONTH}" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]]; then
+  log "Invalid TARGET_MONTH='${TARGET_MONTH}' (expected YYYY-MM)"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# sparse-checkout 対象月の計算
+#
+# build_weights.py の訓練ウィンドウは [target - 6 ヶ月, target - 1 日]。
+# `compute_features_for_day(repo, day)` は各日について以下を読む:
+#   - data/programs/race_cards/<YM>/<DD>.csv         (universe)
+#   - data/programs/recent_national/<YM>/<DD>.csv    (recent 特徴量)
+#   - data/programs/recent_local/<YM>/<DD>.csv       (recent 特徴量)
+#   - data/programs/motor_stats/<YM>/<DD>.csv        (motor 特徴量、7日fallback あり)
+#   - data/results/daily/<YM>/<DD>.csv               (target = 7 - 着順)
+# さらに index_features.py が固定で読む:
+#   - data/estimate/stadium/win_rate.csv
+#   - data/estimate/stadium/sui_params.csv
+#
+# target 当月の出力先 (data/estimate/stadium/index_weights/) は
+# data/estimate/stadium/ に含まれるため別途列挙不要。
+#
+# 対象月リスト:
+#   - target_month そのもの (出力 CSV を git add するため cone 内に必須)
+#   - target_month - 1 月 〜 target_month - 6 月 (訓練ウィンドウ)
+#   - target_month - 7 月 (motor_stats の 7 日 fallback が月境界をまたぐため)
+# 合計 8 ヶ月。
+# ---------------------------------------------------------------------------
+months=()
+months+=("$(echo "${TARGET_MONTH}" | tr - /)")          # target_month, e.g. "2026/05"
+for i in 1 2 3 4 5 6 7; do
+  m=$(TZ=Asia/Tokyo date -d "${TARGET_MONTH}-15 -${i} month" +'%Y/%m')
+  months+=("$m")
+done
+
+WORKDIR="$(mktemp -d -t monthly-weights.XXXXXX)"
+cleanup() {
+  rm -rf "${WORKDIR}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+cd "${WORKDIR}"
+
+REMOTE_WITH_TOKEN="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
+REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
+
+log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, target=${TARGET_MONTH}, months=${#months[@]})"
+git clone \
+  --depth 1 \
+  --filter=blob:none \
+  --no-checkout \
+  --no-tags \
+  --single-branch \
+  --branch "${GIT_BRANCH}" \
+  "${REMOTE_WITH_TOKEN}" \
+  repo
+
+cd repo
+
+# sparse-checkout: 静的部分 + 月単位データ × N ヶ月。
+paths=(
+  scripts
+  .boatrace
+  data/estimate/stadium
+)
+for ym in "${months[@]}"; do
+  paths+=(
+    "data/results/daily/${ym}"
+    "data/programs/race_cards/${ym}"
+    "data/programs/recent_national/${ym}"
+    "data/programs/recent_local/${ym}"
+    "data/programs/motor_stats/${ym}"
+  )
+done
+
+git sparse-checkout init --cone
+git sparse-checkout set "${paths[@]}"
+
+git checkout "${GIT_BRANCH}"
+
+# committer / credential 設定。
+git config --local user.name "${GIT_USER_NAME}"
+git config --local user.email "${GIT_USER_EMAIL}"
+git config --local --replace-all "url.${REMOTE_WITH_TOKEN}.insteadOf" "${REMOTE_PUBLIC}"
+git remote set-url origin "${REMOTE_PUBLIC}"
+
+mkdir -p logs
+
+# ---------------------------------------------------------------------------
+# build_weights.py 実行
+# ---------------------------------------------------------------------------
+log "Building monthly weights for ${TARGET_MONTH}"
+python scripts/build_weights.py --month "${TARGET_MONTH}"
+
+# ---------------------------------------------------------------------------
+# build_weights.py は CSV 出力のみで git にコミットしないため、bash 側で
+# commit + push する。旧 GHA workflow の "Commit Weights" ステップ相当。
+# 差分が無ければ no-op (再実行時の冪等性)。
+# ---------------------------------------------------------------------------
+git add data/estimate/stadium/index_weights/
+if git diff --cached --quiet; then
+  log "No weights changes to commit for ${TARGET_MONTH}"
+else
+  git commit -m "Update monthly index weights (${TARGET_MONTH})"
+  git push origin "${GIT_BRANCH}"
+  log "Pushed weights for ${TARGET_MONTH}"
+fi
+
+log "Done"

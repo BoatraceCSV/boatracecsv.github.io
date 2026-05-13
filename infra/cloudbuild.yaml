@@ -25,6 +25,7 @@ substitutions:
   _IMAGE: preview-realtime
   _JOB_NAME: preview-realtime
   _JOB_NAME_DAILY: daily-sync
+  _JOB_NAME_MONTHLY: monthly-weights
   _PROJECT_ID: boatrace-487212
   _RUNNER_SA: preview-realtime-runner
   _SECRET_NAME: github-token
@@ -128,6 +129,41 @@ steps:
       - --command=/app/run-daily-sync.sh
       - --set-secrets=GITHUB_TOKEN=${_SECRET_NAME}:latest
       - --set-env-vars=GITHUB_REPO=${_GITHUB_REPO},GIT_BRANCH=${_GIT_BRANCH},BOATRACE_GCS_CSV_BUCKET=${_GCS_CSV_BUCKET},BOATRACE_PUBSUB_TOPIC=${_PUBSUB_TOPIC}
+      - --max-retries=0
+      - --task-timeout=3600s
+      - --parallelism=1
+      - --tasks=1
+      - --cpu=2
+      - --memory=2Gi
+
+  # monthly-weights Job: 旧 .github/workflows/monthly-weights.yml を置き換える。
+  # 毎月 1 日 JST 06:00 に Cloud Scheduler から起動される。
+  #
+  # daily-sync (07:30 JST) より前に終わらせることで、境界日 (毎月 1 日) の
+  # daily index と realtime index が同一 weights で計算される。
+  # 詳細トレードオフは infra/monthly-weights-migration-plan.md §5 を参照。
+  #
+  # daily-sync と異なる点:
+  #   - --command:         /app/run-monthly-weights.sh
+  #   - --set-env-vars:    GCS / Pub/Sub 系を含めない。weights は fun-site が
+  #                        直接読むファミリではないので publish 不要。
+  # 他の Job spec パラメータ (timeout, cpu, memory) は daily-sync と同じ値で
+  # 開始し、初回実行の実測でチューニングする。
+  - id: deploy-job-monthly-weights
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - deploy
+      - ${_JOB_NAME_MONTHLY}
+      - --image=${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --project=${_PROJECT_ID}
+      - --service-account=${_RUNNER_SA}@${_PROJECT_ID}.iam.gserviceaccount.com
+      - --command=/app/run-monthly-weights.sh
+      - --set-secrets=GITHUB_TOKEN=${_SECRET_NAME}:latest
+      - --set-env-vars=GITHUB_REPO=${_GITHUB_REPO},GIT_BRANCH=${_GIT_BRANCH}
       - --max-retries=0
       - --task-timeout=3600s
       - --parallelism=1

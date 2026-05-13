@@ -49,10 +49,12 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # 1 イメージ・複数 Job 構成:
 # - preview-realtime Job → --command=/app/run.sh
 # - daily-sync       Job → --command=/app/run-daily-sync.sh
-# どちらも依存関係 (requirements.txt) を共有するため、イメージは 1 本にまとめ、
+# - monthly-weights  Job → --command=/app/run-monthly-weights.sh
+# いずれも依存関係 (requirements.txt) を共有するため、イメージは 1 本にまとめ、
 # Cloud Run Job 側の `--command` で切り替える。
-COPY --chmod=0755 infra/run.sh            /app/run.sh
-COPY --chmod=0755 infra/run-daily-sync.sh /app/run-daily-sync.sh
+COPY --chmod=0755 infra/run.sh                 /app/run.sh
+COPY --chmod=0755 infra/run-daily-sync.sh      /app/run-daily-sync.sh
+COPY --chmod=0755 infra/run-monthly-weights.sh /app/run-monthly-weights.sh
 
 # Cloud Run Jobs run as root by default; we drop to an unprivileged user. The
 # user needs a writable home for git's HTTP credential / config files.
