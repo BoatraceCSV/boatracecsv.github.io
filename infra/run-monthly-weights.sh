@@ -86,10 +86,19 @@ fi
 #   - data/programs/recent_national/<YM>/<DD>.csv    (recent 特徴量)
 #   - data/programs/recent_local/<YM>/<DD>.csv       (recent 特徴量)
 #   - data/programs/motor_stats/<YM>/<DD>.csv        (motor 特徴量、7日fallback あり)
+#   - data/previews/sui/<YM>/<DD>.csv                (気象 = weather 特徴量)
+#   - data/previews/tkz/<YM>/<DD>.csv                (展示タイム = exhibit 特徴量)
+#   - data/previews/stt/<YM>/<DD>.csv                (進入コース)
+#   - data/previews/original_exhibition/<YM>/<DD>.csv (展示値1〜3 = exhibit 特徴量)
 #   - data/results/daily/<YM>/<DD>.csv               (target = 7 - 着順)
 # さらに index_features.py が固定で読む:
 #   - data/estimate/stadium/win_rate.csv
 #   - data/estimate/stadium/sui_params.csv
+#
+# data/previews/* を入れ忘れると _load_realtime_preview_by_code が空 dict を
+# 返し、`exhibit` と `weather` 特徴量が全レースで NaN になる。すると
+# fit_one の dropna(subset=["waku","racer","exhibit","weather","着順"]) で
+# 全行が落ちて n=0 FALLBACK が 24 場分発生する。
 #
 # target 当月の出力先 (data/estimate/stadium/index_weights/) は
 # data/estimate/stadium/ に含まれるため別途列挙不要。
@@ -144,6 +153,10 @@ for ym in "${months[@]}"; do
     "data/programs/recent_national/${ym}"
     "data/programs/recent_local/${ym}"
     "data/programs/motor_stats/${ym}"
+    "data/previews/sui/${ym}"
+    "data/previews/tkz/${ym}"
+    "data/previews/stt/${ym}"
+    "data/previews/original_exhibition/${ym}"
   )
 done
 

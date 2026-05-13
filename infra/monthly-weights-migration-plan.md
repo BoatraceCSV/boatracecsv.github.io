@@ -38,13 +38,19 @@ GitHub Actions 側の `monthly-weights.yml` は段階的に削除する：
 | `scripts/` | `build_weights.py` + `boatrace/index_features.py` |
 | `.boatrace/` | 実行時設定 (load_config) |
 | `data/estimate/stadium/` | `win_rate.csv` / `sui_params.csv` / `index_weights/` (read + 出力先) |
-| `data/results/daily/<YM>/` × 7 ヶ月 | 着順 (target = 7-着順) |
-| `data/programs/race_cards/<YM>/` × 7 ヶ月 | レース宇宙 (universe) |
-| `data/programs/recent_national/<YM>/` × 7 ヶ月 | recent 特徴量 |
-| `data/programs/recent_local/<YM>/` × 7 ヶ月 | recent 特徴量 |
-| `data/programs/motor_stats/<YM>/` × 7 ヶ月 + 8 ヶ月目 | motor 特徴量 + 月初 7 日 fallback |
+| `data/results/daily/<YM>/` × 8 ヶ月 | 着順 (target = 7-着順) |
+| `data/programs/race_cards/<YM>/` × 8 ヶ月 | レース宇宙 (universe) |
+| `data/programs/recent_national/<YM>/` × 8 ヶ月 | recent 特徴量 (`racer` 列) |
+| `data/programs/recent_local/<YM>/` × 8 ヶ月 | recent 特徴量 (`racer` 列) |
+| `data/programs/motor_stats/<YM>/` × 8 ヶ月 | motor 特徴量 + 月初 7 日 fallback |
+| `data/previews/sui/<YM>/` × 8 ヶ月 | 気象 (`weather` 特徴量) |
+| `data/previews/tkz/<YM>/` × 8 ヶ月 | 展示タイム (`exhibit` 特徴量) |
+| `data/previews/stt/<YM>/` × 8 ヶ月 | 進入コース (course 補正) |
+| `data/previews/original_exhibition/<YM>/` × 8 ヶ月 | 展示値 1〜3 (`exhibit` 特徴量) |
 
-7 ヶ月分の cone を bash で生成する（target_month を含むため、6 ヶ月前 → target の前月 → target 月の月初 = 6+1 = 7 ヶ月。motor の fallback はさらに 1 ヶ月前を含める）：
+> ⚠️ **学んだ教訓**: 初回実装時に `data/previews/*` 4 ファミリを入れ忘れて手動実行したところ、`_load_realtime_preview_by_code` が空 dict を返し `exhibit` と `weather` 特徴量が全行 NaN になった結果、`fit_one` の `dropna(subset=["waku","racer","exhibit","weather","着順"])` で全行ドロップ → 24 場すべて n=0 FALLBACK の症状が出た。4 ファミリは必須。
+
+8 ヶ月分の cone を bash で生成する（target_month を含むため、6 ヶ月前 → target の前月 → target 月の月初 = 6+1 = 7 ヶ月。motor の 7 日 fallback はさらに 1 ヶ月前を含めて計 8 ヶ月）：
 
 ```bash
 # 月初 1 日に target_month を計算する場合は、TZ=Asia/Tokyo で当月を取り、
@@ -73,6 +79,10 @@ for ym in "${months[@]}"; do
     "data/programs/recent_national/${ym}" \
     "data/programs/recent_local/${ym}" \
     "data/programs/motor_stats/${ym}" \
+    "data/previews/sui/${ym}" \
+    "data/previews/tkz/${ym}" \
+    "data/previews/stt/${ym}" \
+    "data/previews/original_exhibition/${ym}" \
   )
 done
 git sparse-checkout init --cone
