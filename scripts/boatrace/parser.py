@@ -698,8 +698,10 @@ def parse_racer_frame_line(line: str) -> Optional[RacerFrame]:
             rest_text = remaining[i:].strip()
             parts = rest_text.split()
             
-            if len(parts) < 8:
-                # Need at least: win, place, local_win, local_place, motor#, motor_rate_boat, boat_rate, results
+            if len(parts) < 7:
+                # Need at least: 全国勝率, 全国2連, 当地勝率, 当地2連,
+                # モーター番号, モーター2連+ボート番号, ボート2連.
+                # 今節成績 / 早見 は初日などで欠けることがあるので任意扱い。
                 return None
             
             idx = 0
