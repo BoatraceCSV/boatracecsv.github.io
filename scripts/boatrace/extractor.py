@@ -1,5 +1,6 @@
 """Extract LZH-compressed files."""
 
+import warnings
 from typing import Dict, Optional
 from io import BytesIO
 from . import logger as logging_module
@@ -127,12 +128,26 @@ def extract_k_file(lzh_bytes: bytes) -> Optional[str]:
 def extract_b_file(lzh_bytes: bytes) -> Optional[str]:
     """Extract B-file (program) from LZH archive.
 
+    .. deprecated::
+        B-file (mbrace.or.jp の出走表 .lzh) は production パイプラインから
+        撤去済み。当日のレース一覧は ``boatrace.holding_list`` 経由で
+        boatcast.jp の getHoldingList2 API を一次ソースに、title CSV を
+        フォールバックに使う構成に移行しました。本関数は K-file 系
+        (``extract_k_file``) を残すための ``extract_lzh`` 共有目的で残置
+        しているのみで、新規呼び出しは追加しないでください。
+
     Args:
         lzh_bytes: LZH file content
 
     Returns:
         B-file text content or None on failure
     """
+    warnings.warn(
+        "extract_b_file is deprecated; the B-file pipeline has been "
+        "replaced by boatrace.holding_list (getHoldingList2 API).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     files = extract_lzh(lzh_bytes)
     if not files:
         return None

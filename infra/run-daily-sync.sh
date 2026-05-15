@@ -178,11 +178,24 @@ run_step "result"      python scripts/result.py --force
 #      boatcast 側の更新が間に合わない可能性があるが、失敗しても次回
 #      (翌日 07:30) で再試行されるので EXIT_AGGREGATE には反映するが
 #      後続ステップは続行する。
+#
+# 実行順:
+#   1. race-title       → data/programs/title/<YM>/<DD>.csv を先に書く。
+#                         以降の race-card / recent-form / motor-stats は
+#                         getHoldingList2 API を一次ソースに使い、API が
+#                         落ちている時のみ title CSV にフォールバックする
+#                         (boatrace.holding_list.load_holding_from_title_csv)。
+#                         先に title CSV を書いておけばネットワーク無しの
+#                         過去日再生成や API 不通時にも完走できる。
+#   2. race-card        → race_cards CSV。recent-form が艇↔登録番号マッピングを
+#                         この CSV から読むため、recent-form より前に走らせる。
+#   3. recent-form      → race-card の出力を消費する。
+#   4. motor-stats      → 独立。
 # ---------------------------------------------------------------------------
+run_step "race-title"  python scripts/race-title.py  --date "${TODAY_JST}" --force
 run_step "race-card"   python scripts/race-card.py   --date "${TODAY_JST}" --force
 run_step "recent-form" python scripts/recent-form.py --date "${TODAY_JST}" --force
 run_step "motor-stats" python scripts/motor-stats.py --date "${TODAY_JST}" --force
-run_step "race-title"  python scripts/race-title.py  --date "${TODAY_JST}" --force
 
 # ---------------------------------------------------------------------------
 # 6. 当日 daily index バッチ生成

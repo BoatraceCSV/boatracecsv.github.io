@@ -1,6 +1,7 @@
 """Parse fixed-width text format files from boatrace."""
 
 import re
+import warnings
 from typing import List, Optional
 from .models import RaceResult, RaceProgram, RacerResult, RacerFrame
 from . import logger as logging_module
@@ -394,6 +395,15 @@ def parse_racer_result_line(line: str) -> Optional[RacerResult]:
 def parse_program_file(content: str, date: str = "") -> List[RaceProgram]:
     """Parse B-file (program) from actual boat racing format.
 
+    .. deprecated::
+        B-file (mbrace.or.jp の出走表 .lzh) 依存は撤去済み。本関数および
+        :func:`parse_racer_frame_line` は production パイプライン
+        (race-card / recent-form / motor-stats) から呼ばれていません。
+        固定幅テキストの脆さ (初日に早見が無い行や、ボート2連=100.00 で
+        セパレータが消えるなど) で芦屋 11R 単独表示バグの原因になった
+        経緯があるため、レース一覧は ``boatrace.holding_list`` (boatcast.jp の
+        getHoldingList2 API + title CSV フォールバック) を使用してください。
+
     Handles the actual B-file format from boatrace.or.jp:
     - STARTB header
     - Multiple venues with "番組表" sections
@@ -408,6 +418,12 @@ def parse_program_file(content: str, date: str = "") -> List[RaceProgram]:
     Returns:
         List of RaceProgram objects
     """
+    warnings.warn(
+        "parse_program_file is deprecated; use boatrace.holding_list "
+        "(getHoldingList2 API + title CSV fallback) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     programs = []
 
     try:
@@ -613,6 +629,10 @@ def parse_program_file(content: str, date: str = "") -> List[RaceProgram]:
 
 def parse_racer_frame_line(line: str) -> Optional[RacerFrame]:
     """Parse a single racer frame line from actual B-file format.
+
+    .. deprecated::
+        See :func:`parse_program_file`. B-file 固定幅パースは production
+        から外しています。
 
     Format example (mixed fixed-width and space-separated):
     1 4488小山　勉39埼玉53A1 6.08 41.67 6.58 66.67 13 33.97170 29.94 63331 35    10
