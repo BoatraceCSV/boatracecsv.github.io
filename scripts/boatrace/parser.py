@@ -1,5 +1,6 @@
 """Parse fixed-width text format files from boatrace."""
 
+import re
 from typing import List, Optional
 from .models import RaceResult, RaceProgram, RacerResult, RacerFrame
 from . import logger as logging_module
@@ -697,7 +698,24 @@ def parse_racer_frame_line(line: str) -> Optional[RacerFrame]:
             
             rest_text = remaining[i:].strip()
             parts = rest_text.split()
-            
+
+            # 固定幅フォーマットで「モーター2連 + ボート番号 + ボート2連」が
+            # スペース無しに連結されるケースを救う。
+            # 通常: ["65.00146", "20.83"] (モーター率+ボート番号 / ボート率)
+            # ボート率が 100.00 (6桁) のとき間のスペースが消えるため
+            # ["50.00159100.00"] のように 1 トークンに潰れる。
+            #  → 末尾の "###.##" を切り出して 2 トークンに分割する。
+            expanded_parts: List[str] = []
+            for token in parts:
+                if token.count(".") >= 2:
+                    m = re.match(r"^(\d{1,3}\.\d{2}\d{1,3})(\d{1,3}\.\d{2})$", token)
+                    if m:
+                        expanded_parts.append(m.group(1))
+                        expanded_parts.append(m.group(2))
+                        continue
+                expanded_parts.append(token)
+            parts = expanded_parts
+
             if len(parts) < 7:
                 # Need at least: 全国勝率, 全国2連, 当地勝率, 当地2連,
                 # モーター番号, モーター2連+ボート番号, ボート2連.
