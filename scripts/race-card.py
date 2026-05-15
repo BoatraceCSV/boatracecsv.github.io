@@ -2,8 +2,9 @@
 """Scrape race-card detail (出走表詳細) from race.boatcast.jp.
 
 For a given date, this script:
-  1. Downloads the same-day B-file from mbrace.or.jp to determine which
-     races exist (mirroring the original-exhibition.py flow).
+  1. Resolves the day's open (stadium, race) list from
+     boatcast.jp's ``getHoldingList2`` JSON API (with the locally
+     written title CSV as a fallback). No B-file / LZH dependency.
   2. Fetches the per-race ``bc_j_str3`` TSV from race.boatcast.jp for each
      race.
   3. Writes one CSV per date to ``data/programs/race_cards/YYYY/MM/DD.csv``.
@@ -23,10 +24,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from boatrace import logger as logging_module
 from boatrace import git_operations
-from boatrace.converter import VENUE_CODES, race_cards_to_csv
-from boatrace.downloader import RateLimiter, download_file
-from boatrace.extractor import extract_b_file
-from boatrace.parser import parse_program_file
+from boatrace.converter import race_cards_to_csv
+from boatrace.downloader import RateLimiter
+from boatrace.holding_list import (
+    HoldingListError,
+    fetch_holding_list,
+    load_holding_from_title_csv,
+)
 from boatrace.race_card_scraper import RaceCardScraper
 from boatrace.storage import write_csv
 
@@ -37,80 +41,32 @@ OUTPUT_DIR = "data/programs/race_cards"
 def _collect_actual_races(date_str: str, config: dict, rate_limiter: RateLimiter):
     """Return a set of (stadium_code, race_number) for the given date.
 
-    Uses the same-day B-file from mbrace.or.jp. The same logic as
-    ``original-exhibition.py`` so behaviour stays consistent across the
-    boatcast-derived datasets.
+    Pulls the canonical open-race list from boatcast.jp's
+    ``getHoldingList2`` JSON API. If the API is unreachable, falls back
+    to the locally-written title CSV (produced by ``race-title.py``).
+    Cancelled / postponed races are filtered out.
     """
-    actual_races = set()
-
-    year = date_str[0:4]
-    month = date_str[5:7]
-    day = date_str[8:10]
-    year_short = year[2:]
-    file_date = f"{year_short}{month}{day}"
-    year_month = f"{year}{month}"
-
-    base_url = "https://www1.mbrace.or.jp/od2"
-    b_file_url = f"{base_url}/B/{year_month}/b{file_date}.lzh"
-
-    logging_module.info(
-        "race_card_b_file_downloading",
-        date=date_str,
-        url=b_file_url,
-    )
-
-    b_content, _b_status = download_file(
-        b_file_url,
-        max_retries=config.get("max_retries", 3),
-        rate_limiter=rate_limiter,
-    )
-
-    if not b_content:
-        logging_module.warning("race_card_b_file_missing", date=date_str)
-        return actual_races
+    project_root = Path(__file__).parent.parent
 
     try:
-        b_text = extract_b_file(b_content)
-    except Exception as e:
+        races = fetch_holding_list(date_str, rate_limiter=rate_limiter)
+    except HoldingListError as exc:
         logging_module.warning(
-            "race_card_b_file_extract_error",
+            "race_card_holding_list_fallback",
             date=date_str,
-            error=str(e),
+            error=str(exc),
         )
-        return actual_races
+        races = load_holding_from_title_csv(project_root, date_str)
 
-    if not b_text:
-        return actual_races
+    if not races:
+        logging_module.warning("race_card_holding_list_empty", date=date_str)
+        return set()
 
-    try:
-        programs = parse_program_file(b_text, date=date_str)
-    except Exception as e:
-        logging_module.warning(
-            "race_card_b_file_parse_error",
-            date=date_str,
-            error=str(e),
-        )
-        return actual_races
-
-    if not programs:
-        return actual_races
-
-    for program in programs:
-        stadium_code = VENUE_CODES.get(program.stadium)
-        if not stadium_code:
-            continue
-        try:
-            if not program.race_round:
-                continue
-            race_round_num = program.race_round.rstrip("R")
-            race_number = int(race_round_num)
-            if race_number < 1 or race_number > 12:
-                continue
-            actual_races.add((int(stadium_code), race_number))
-        except (ValueError, IndexError, AttributeError):
-            continue
-
-    return actual_races
+    return {
+        (r.stadium_code, r.race_number)
+        for r in races
+        if r.is_open and 1 <= r.race_number <= 12
+    }
 
 
 def process_race_cards(

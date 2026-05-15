@@ -2,8 +2,8 @@
 """Scrape motor period statistics (モーター期成績) from race.boatcast.jp.
 
 For a given date, this script:
-  1. Downloads the same-day B-file from mbrace.or.jp to determine which
-     stadiums have races (so we only fetch motor data for open stadiums).
+  1. Resolves the day's open stadiums from boatcast.jp's
+     ``getHoldingList2`` JSON API (with title CSV fallback). No B-file.
   2. For each open stadium, fetches ``bc_mst`` (motor period start date)
      followed by ``bc_mdc_{period}_{jo}`` (one row per motor at the stadium).
   3. Aggregates all stadium-motor rows into a single CSV at
@@ -28,12 +28,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from boatrace import logger as logging_module
 from boatrace import git_operations
-from boatrace.converter import VENUE_CODES, motor_stats_to_csv
-from boatrace.downloader import RateLimiter, download_file
-from boatrace.extractor import extract_b_file
+from boatrace.converter import motor_stats_to_csv
+from boatrace.downloader import RateLimiter
+from boatrace.holding_list import (
+    HoldingListError,
+    fetch_holding_list,
+    load_holding_from_title_csv,
+)
 from boatrace.models import MotorStat
 from boatrace.motor_stats_scraper import MotorStatsScraper
-from boatrace.parser import parse_program_file
 from boatrace.storage import write_csv
 
 
@@ -43,68 +46,30 @@ OUTPUT_DIR = "data/programs/motor_stats"
 def _collect_open_stadiums(
     date_str: str, config: dict, rate_limiter: RateLimiter
 ) -> Set[int]:
-    """Return the set of stadium codes (1..24) that hold races on the date."""
-    open_stadiums: Set[int] = set()
+    """Return the set of stadium codes (1..24) that hold races on the date.
 
-    year = date_str[0:4]
-    month = date_str[5:7]
-    day = date_str[8:10]
-    year_short = year[2:]
-    file_date = f"{year_short}{month}{day}"
-    year_month = f"{year}{month}"
-
-    base_url = "https://www1.mbrace.or.jp/od2"
-    b_file_url = f"{base_url}/B/{year_month}/b{file_date}.lzh"
-
-    logging_module.info(
-        "motor_stats_b_file_downloading",
-        date=date_str,
-        url=b_file_url,
-    )
-
-    b_content, _b_status = download_file(
-        b_file_url,
-        max_retries=config.get("max_retries", 3),
-        rate_limiter=rate_limiter,
-    )
-
-    if not b_content:
-        logging_module.warning("motor_stats_b_file_missing", date=date_str)
-        return open_stadiums
+    Pulls the canonical list from boatcast.jp's ``getHoldingList2`` JSON
+    API; falls back to the locally-written title CSV when the API is
+    unreachable. A stadium counts as open when at least one of its races
+    is not cancelled / postponed.
+    """
+    project_root = Path(__file__).parent.parent
 
     try:
-        b_text = extract_b_file(b_content)
-    except Exception as e:
+        races = fetch_holding_list(date_str, rate_limiter=rate_limiter)
+    except HoldingListError as exc:
         logging_module.warning(
-            "motor_stats_b_file_extract_error",
+            "motor_stats_holding_list_fallback",
             date=date_str,
-            error=str(e),
+            error=str(exc),
         )
-        return open_stadiums
+        races = load_holding_from_title_csv(project_root, date_str)
 
-    if not b_text:
-        return open_stadiums
+    if not races:
+        logging_module.warning("motor_stats_holding_list_empty", date=date_str)
+        return set()
 
-    try:
-        programs = parse_program_file(b_text, date=date_str)
-    except Exception as e:
-        logging_module.warning(
-            "motor_stats_b_file_parse_error",
-            date=date_str,
-            error=str(e),
-        )
-        return open_stadiums
-
-    for program in programs:
-        stadium_code_str = VENUE_CODES.get(program.stadium)
-        if not stadium_code_str:
-            continue
-        try:
-            open_stadiums.add(int(stadium_code_str))
-        except ValueError:
-            continue
-
-    return open_stadiums
+    return {r.stadium_code for r in races if r.is_open}
 
 
 def process_motor_stats(

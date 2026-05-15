@@ -2,14 +2,16 @@
 """Scrape recent-form data (全国・当地近況成績) from race.boatcast.jp.
 
 For a given date, this script:
-  1. Downloads the same-day B-file from mbrace.or.jp to determine which
-     races exist and which racer is in which boat (entry_number ↔
-     registration_number).
-  2. For each open stadium, fetches both ``bc_zensou`` (全国近況5節) and
+  1. Resolves the day's open (stadium, race) list from boatcast.jp's
+     ``getHoldingList2`` JSON API (B-file 不要)。
+  2. Reads the boat ↔ registration-number mapping from the
+     ``race_cards`` CSV that ``race-card.py`` writes earlier in the
+     daily-sync pipeline.
+  3. For each open stadium, fetches both ``bc_zensou`` (全国近況5節) and
      ``bc_zensou_touchi`` (当地近況5節) from race.boatcast.jp once each.
-  3. Joins by registration number to produce per-race, per-boat
+  4. Joins by registration number to produce per-race, per-boat
      :class:`RecentForm` objects.
-  4. Writes two CSV files for the date:
+  5. Writes two CSV files for the date:
        - ``data/programs/recent_national/YYYY/MM/DD.csv``
        - ``data/programs/recent_local/YYYY/MM/DD.csv``
 
@@ -18,6 +20,7 @@ so the converter is shared between variants.
 """
 
 import argparse
+import csv
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -29,82 +32,137 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from boatrace import logger as logging_module
 from boatrace import git_operations
-from boatrace.converter import VENUE_CODES, recent_forms_to_csv
-from boatrace.downloader import RateLimiter, download_file
-from boatrace.extractor import extract_b_file
+from boatrace.converter import recent_forms_to_csv
+from boatrace.downloader import RateLimiter
+from boatrace.holding_list import (
+    HoldingListError,
+    fetch_holding_list,
+    load_holding_from_title_csv,
+)
 from boatrace.models import RecentForm, RecentFormBoat, RecentFormSession
-from boatrace.parser import parse_program_file
 from boatrace.recent_form_scraper import RecentFormScraper, RecentFormRow
 from boatrace.storage import write_csv
 
 
 OUTPUT_DIR_NATIONAL = "data/programs/recent_national"
 OUTPUT_DIR_LOCAL = "data/programs/recent_local"
+RACE_CARDS_DIR = "data/programs/race_cards"
 
 
 def _race_code(date_str: str, stadium_code: int, race_number: int) -> str:
     return f"{date_str.replace('-', '')}{stadium_code:02d}{race_number:02d}"
 
 
-def _collect_programs(
-    date_str: str, config: dict, rate_limiter: RateLimiter
-):
-    """Return the list of ``RaceProgram`` objects for the given date.
+def _load_boat_to_reg_map(
+    project_root: Path,
+    date_str: str,
+) -> Dict[Tuple[int, int], Dict[int, str]]:
+    """Read race_cards CSV and return ``{(stadium, race): {boat: reg}}``.
 
-    Same B-file flow as ``original-exhibition.py`` and ``race-card.py``,
-    but we keep the ``RaceProgram`` objects (not just race tuples)
-    because we need each boat's registration number for the JOIN.
+    Empty dict when the file does not exist yet (e.g. if ``race-card.py``
+    has not been run for this date).
     """
-    year = date_str[0:4]
-    month = date_str[5:7]
-    day = date_str[8:10]
-    year_short = year[2:]
-    file_date = f"{year_short}{month}{day}"
-    year_month = f"{year}{month}"
+    year, month, day = date_str.split("-")
+    path = (
+        project_root
+        / RACE_CARDS_DIR
+        / year
+        / month
+        / f"{day}.csv"
+    )
+    if not path.exists():
+        logging_module.warning(
+            "recent_form_race_cards_csv_missing",
+            date=date_str,
+            path=str(path),
+        )
+        return {}
 
-    base_url = "https://www1.mbrace.or.jp/od2"
-    b_file_url = f"{base_url}/B/{year_month}/b{file_date}.lzh"
+    mapping: Dict[Tuple[int, int], Dict[int, str]] = {}
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    stadium_code = int((row.get("レース場コード") or "").strip())
+                except (TypeError, ValueError):
+                    continue
+                if stadium_code < 1 or stadium_code > 24:
+                    continue
+                race_str = (row.get("レース回") or "").strip().rstrip("R")
+                try:
+                    race_number = int(race_str)
+                except ValueError:
+                    continue
+                if not (1 <= race_number <= 12):
+                    continue
+                boat_to_reg: Dict[int, str] = {}
+                for slot in range(1, 7):
+                    reg = (row.get(f"艇{slot}_登録番号") or "").strip()
+                    if reg:
+                        boat_to_reg[slot] = reg
+                if boat_to_reg:
+                    mapping[(stadium_code, race_number)] = boat_to_reg
+    except OSError as exc:
+        logging_module.warning(
+            "recent_form_race_cards_csv_read_error",
+            path=str(path),
+            error=str(exc),
+        )
+        return {}
 
     logging_module.info(
-        "recent_form_b_file_downloading",
+        "recent_form_race_cards_csv_loaded",
         date=date_str,
-        url=b_file_url,
+        path=str(path),
+        races=len(mapping),
     )
+    return mapping
 
-    b_content, _b_status = download_file(
-        b_file_url,
-        max_retries=config.get("max_retries", 3),
-        rate_limiter=rate_limiter,
-    )
 
-    if not b_content:
-        logging_module.warning("recent_form_b_file_missing", date=date_str)
-        return []
+def _collect_race_inputs(
+    date_str: str,
+    config: dict,
+    rate_limiter: RateLimiter,
+) -> Dict[int, List[Tuple[int, Dict[int, str]]]]:
+    """Return ``{stadium_code: [(race_number, {boat: reg}), ...]}``.
+
+    Combines (stadium, race) list from the holding-list API/title CSV
+    with the boat ↔ registration mapping that ``race-card.py`` already
+    wrote into ``data/programs/race_cards/YYYY/MM/DD.csv``.
+    """
+    project_root = Path(__file__).parent.parent
 
     try:
-        b_text = extract_b_file(b_content)
-    except Exception as e:
+        races = fetch_holding_list(date_str, rate_limiter=rate_limiter)
+    except HoldingListError as exc:
         logging_module.warning(
-            "recent_form_b_file_extract_error",
+            "recent_form_holding_list_fallback",
             date=date_str,
-            error=str(e),
+            error=str(exc),
         )
-        return []
+        races = load_holding_from_title_csv(project_root, date_str)
 
-    if not b_text:
-        return []
-
-    try:
-        programs = parse_program_file(b_text, date=date_str)
-    except Exception as e:
+    if not races:
         logging_module.warning(
-            "recent_form_b_file_parse_error",
-            date=date_str,
-            error=str(e),
+            "recent_form_holding_list_empty", date=date_str
         )
-        return []
+        return {}
 
-    return programs
+    boat_map = _load_boat_to_reg_map(project_root, date_str)
+
+    races_by_stadium: Dict[int, List[Tuple[int, Dict[int, str]]]] = {}
+    for r in races:
+        if not r.is_open:
+            continue
+        if not (1 <= r.race_number <= 12):
+            continue
+        boat_to_reg = boat_map.get((r.stadium_code, r.race_number), {})
+        races_by_stadium.setdefault(r.stadium_code, []).append(
+            (r.race_number, boat_to_reg)
+        )
+
+    return races_by_stadium
 
 
 def _build_recent_forms(
@@ -220,32 +278,9 @@ def process_recent_forms(
 
     logging_module.info("recent_form_processing_start", date=date_str)
 
-    programs = _collect_programs(date_str, config, rate_limiter)
-    if not programs:
-        logging_module.info("recent_form_skipped_no_programs", date=date_str)
-        return stats, []
-
-    # Build (stadium_code -> [(race_number, {boat: reg})]) map.
-    races_by_stadium: Dict[int, List[Tuple[int, Dict[int, str]]]] = {}
-    for program in programs:
-        stadium_code_str = VENUE_CODES.get(program.stadium)
-        if not stadium_code_str:
-            continue
-        try:
-            race_number = int(program.race_round.rstrip("R"))
-        except (ValueError, AttributeError):
-            continue
-        if not (1 <= race_number <= 12):
-            continue
-        boat_to_reg: Dict[int, str] = {}
-        for frame in program.racer_frames:
-            if frame.entry_number and frame.registration_number:
-                boat_to_reg[int(frame.entry_number)] = frame.registration_number
-        races_by_stadium.setdefault(int(stadium_code_str), []).append(
-            (race_number, boat_to_reg)
-        )
-
+    races_by_stadium = _collect_race_inputs(date_str, config, rate_limiter)
     if not races_by_stadium:
+        logging_module.info("recent_form_skipped_no_races", date=date_str)
         return stats, []
 
     scraper = RecentFormScraper(
