@@ -12,6 +12,7 @@ This module is invoked at the very end of ``preview-realtime.py`` to:
    * ``data/previews/stt/YYYY/MM/DD.csv`` (preview-realtime が追記)
    * ``data/estimate/index/YYYY/MM/DD.csv`` (preview-realtime が更新)
    * ``data/results/realtime/YYYY/MM/DD.csv`` (preview-realtime が追記)
+   * ``data/results/payouts/YYYY/MM/DD.csv`` (preview-realtime が追記)
 
    Each object is uploaded only when its content (md5) differs from the
    currently-stored object. This keeps GCS object generations stable and
@@ -70,7 +71,7 @@ JST = dt.timezone(dt.timedelta(hours=9))
 class CsvUploadSpec:
     """One CSV file to mirror to GCS."""
 
-    csv_type: str  # "title" / "race_cards" / "stt" / "index"
+    csv_type: str  # "title" / "race_cards" / "stt" / "index" / "results" / "payouts"
     repo_relative_path: str  # "data/programs/title/2026/05/06.csv" 等
 
 
@@ -126,10 +127,12 @@ def _gcs_md5_hex(blob) -> Optional[str]:
 
 
 def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
-    """fun-site が当日ビルドで読む 5 種類の CSV のローカル相対パスを列挙。
+    """fun-site が当日ビルドで読む 6 種類の CSV のローカル相対パスを列挙。
 
     ``results`` は preview-realtime が当日確定直後に追記する realtime 結果
-    CSV (``data/results/realtime/YYYY/MM/DD.csv``)。K-file 由来の翌日確定
+    CSV (``data/results/realtime/YYYY/MM/DD.csv``)。``payouts`` は同じく
+    確定直後に bc_rs2 から追記する払戻 CSV
+    (``data/results/payouts/YYYY/MM/DD.csv``)。K-file 由来の翌日確定
     CSV (``data/results/daily/...``) はここでは扱わない。
     """
     ymd = f"{day:%Y}/{day:%m}/{day:%d}"
@@ -139,6 +142,7 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
         CsvUploadSpec("stt", f"data/previews/stt/{ymd}.csv"),
         CsvUploadSpec("index", f"data/estimate/index/{ymd}.csv"),
         CsvUploadSpec("results", f"data/results/realtime/{ymd}.csv"),
+        CsvUploadSpec("payouts", f"data/results/payouts/{ymd}.csv"),
     ]
 
 
@@ -252,6 +256,7 @@ def assemble_updated_races(
     upload_results: List[UploadResult],
     realtime_updated_codes: Iterable[str],
     result_updated_codes: Optional[Iterable[str]] = None,
+    payout_updated_codes: Optional[Iterable[str]] = None,
     *,
     realtime_index_state: str = "realtime",
 ) -> Tuple[List[UpdatedRace], str]:
@@ -264,8 +269,9 @@ def assemble_updated_races(
     * Otherwise, include races present in ``realtime_updated_codes``
       (preview-realtime が今サイクルで preview 行を追記したレース) and/or
       ``result_updated_codes`` (今サイクルで realtime 結果行を追記した
-      レース)。「結果のみ」が更新されたサイクルでも payload が空にならない
-      ように、``result_updated_codes`` は独立した軸で扱う。
+      レース) and/or ``payout_updated_codes`` (今サイクルで払戻行を追記
+      したレース)。「結果のみ」「払戻のみ」が更新されたサイクルでも
+      payload が空にならないように、各軸を独立に扱う。
     """
     changed_types: Set[str] = {r.spec.csv_type for r in upload_results if r.changed}
 
@@ -297,11 +303,14 @@ def assemble_updated_races(
                 entry.index_state = "daily"
             if "results" in changed_types:
                 entry.csv_types.add("results")
+            if "payouts" in changed_types:
+                entry.csv_types.add("payouts")
 
     # 直前バッチで実際に更新されたレースは csvTypes を上書き / 追加し、index は realtime 扱い
     realtime_set = {code for code in realtime_updated_codes if code}
     result_set = {code for code in (result_updated_codes or ()) if code}
-    if realtime_set or result_set:
+    payout_set = {code for code in (payout_updated_codes or ()) if code}
+    if realtime_set or result_set or payout_set:
         ymd = f"{day:%Y}/{day:%m}/{day:%d}"
         race_card_index: Dict[str, Tuple[str, int]] = {
             code: (sid, num)
@@ -343,6 +352,22 @@ def assemble_updated_races(
             )
             if "results" in changed_types:
                 entry.csv_types.add("results")
+
+        for code in sorted(payout_set):
+            sid_num = race_card_index.get(code)
+            if not sid_num:
+                continue  # race_cards に存在しない race_code は無視
+            stadium_id, race_number = sid_num
+            entry = by_code.setdefault(
+                code,
+                UpdatedRace(
+                    race_code=code,
+                    stadium_id=stadium_id,
+                    race_number=race_number,
+                ),
+            )
+            if "payouts" in changed_types:
+                entry.csv_types.add("payouts")
 
     return sorted(by_code.values(), key=lambda r: (r.stadium_id, r.race_number)), trigger
 

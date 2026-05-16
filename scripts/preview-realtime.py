@@ -17,7 +17,13 @@ Each invocation:
    ``bc_j_tkz`` / ``bc_j_stt`` / ``bc_sui`` / ``bc_oriten`` and appends one
    row per source to the matching daily CSV under
    ``data/previews/{tkz,stt,sui,original_exhibition}/``.
-4. Commits and pushes the changes (one commit per invocation, only when
+4. For each race whose deadline has already passed, scrapes ``bc_rs1_2``
+   (finishes / ST / weather) and ``bc_rs2`` (払戻金) and appends rows to
+   ``data/results/realtime/`` and ``data/results/payouts/`` respectively.
+   The two are fetched independently — a race may show up in one CSV
+   first and the other a sub-second later, and each subsequent
+   invocation will fill the gap.
+5. Commits and pushes the changes (one commit per invocation, only when
    rows were actually appended).
 
 The eligibility window is intentionally wider than five minutes because
@@ -75,6 +81,14 @@ from boatrace.result_realtime import (  # noqa: E402
     build_result_row,
     csv_path_for as result_csv_path_for,
     existing_race_codes as result_existing_race_codes,
+)
+from boatrace.payout_realtime import (  # noqa: E402
+    PAYOUT_HEADERS,
+    PayoutRealtimeFetcher,
+    append_rows as append_payout_rows,
+    build_payout_row,
+    csv_path_for as payout_csv_path_for,
+    existing_race_codes as payout_existing_race_codes,
 )
 from boatrace.gcs_publisher import (  # noqa: E402
     assemble_updated_races,
@@ -450,11 +464,52 @@ def fetch_and_build_result_rows(
     return rows
 
 
+def fetch_and_build_payout_rows(
+    fetcher: PayoutRealtimeFetcher,
+    candidates: List[HoldingRace],
+    date_str: str,
+    fetched_at_iso: str,
+) -> List[List[str]]:
+    """Fetch and convert each candidate's bc_rs2 into a CSV row.
+
+    Independent of ``fetch_and_build_result_rows``: a race that has its
+    bc_rs1_2 ready but bc_rs2 not yet (or vice versa) is simply skipped
+    here and retried next cycle. Returns rows ready for
+    :func:`append_payout_rows`.
+    """
+    rows: List[List[str]] = []
+    for race in candidates:
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        payouts = fetcher.fetch_race_payouts(
+            date_str, race.stadium_code, race.race_number
+        )
+        if payouts is None:
+            logging_module.info(
+                "payout_realtime_skip",
+                race_code=race_code,
+                reason="not_ready_or_missing",
+            )
+            continue
+        rows.append(
+            build_payout_row(
+                race_code=race_code,
+                date_str=date_str,
+                stadium_code=race.stadium_code,
+                race_number=race.race_number,
+                deadline_time=race.deadline_time,
+                fetched_at_iso=fetched_at_iso,
+                payouts=payouts,
+            )
+        )
+    return rows
+
+
 def commit_changes(
     paths: List[Path],
     date_str: str,
     eligible: List[HoldingRace],
     finished: Optional[List[HoldingRace]] = None,
+    payout_finished: Optional[List[HoldingRace]] = None,
 ) -> bool:
     """Stage paths, commit, push. Returns True on success / no-op."""
     if not paths:
@@ -474,6 +529,14 @@ def commit_changes(
             for r in sorted(finished, key=lambda r: (r.stadium_code, r.race_number))
         )
         parts.append(f"result {result_summary}")
+    if payout_finished:
+        payout_summary = ",".join(
+            f"{r.stadium_code:02d}-{r.race_number:02d}"
+            for r in sorted(
+                payout_finished, key=lambda r: (r.stadium_code, r.race_number)
+            )
+        )
+        parts.append(f"payout {payout_summary}")
     summary = " | ".join(parts) if parts else "no-op"
     message = f"Update realtime: {date_str} [{summary}]"
     return git_operations.commit_and_push(rel_paths, message)
@@ -541,6 +604,11 @@ def parse_args() -> argparse.Namespace:
         "--skip-results",
         action="store_true",
         help="Run preview fetch but skip the result-realtime step.",
+    )
+    parser.add_argument(
+        "--skip-payouts",
+        action="store_true",
+        help="Run preview fetch but skip the payout-realtime (bc_rs2) step.",
     )
     parser.add_argument(
         "--dry-run",
@@ -705,6 +773,21 @@ def main() -> int:
                     error=str(exc),
                 )
 
+    # --- 5c & 5d shared: finished-race source list -------------------
+    # The live holding list rewrites a race's ``deadline_time`` to
+    # "締切" / "確定" the moment its deadline passes, which makes
+    # :func:`select_finished_races` drop every post-deadline race
+    # (parse_hhmm fails). For results / payouts we therefore prefer the
+    # daily-sync snapshot in ``data/programs/title/.../DD.csv``,
+    # which preserves the original ``HH:MM`` deadlines for all 12
+    # races at every venue. Falls back to the live holding list when
+    # the title CSV is missing (e.g. daily-sync hasn't run yet).
+    result_source_races: Optional[List[HoldingRace]] = None
+    if not (args.skip_results and args.skip_payouts):
+        result_source_races = (
+            load_holding_from_title_csv(PROJECT_ROOT, date_str) or races
+        )
+
     # --- 5c. Fetch & append realtime results -------------------------
     # For races whose deadline has already passed, try to fetch
     # bc_rs1_2 and append a row to data/results/realtime/YYYY/MM/DD.csv.
@@ -713,21 +796,9 @@ def main() -> int:
     # ~30 minutes" results.
     finished_candidates: List[HoldingRace] = []
     result_rows: List[List[str]] = []
-    if not args.skip_results:
+    if not args.skip_results and result_source_races is not None:
         result_path = result_csv_path_for(PROJECT_ROOT, date_str)
         already_results = result_existing_race_codes(result_path)
-
-        # The live holding list rewrites a race's ``deadline_time`` to
-        # "締切" / "確定" the moment its deadline passes, which makes
-        # :func:`select_finished_races` drop every post-deadline race
-        # (parse_hhmm fails). For result-realtime we therefore prefer the
-        # daily-sync snapshot in ``data/programs/title/.../DD.csv``,
-        # which preserves the original ``HH:MM`` deadlines for all 12
-        # races at every venue. Falls back to the live holding list when
-        # the title CSV is missing (e.g. daily-sync hasn't run yet).
-        result_source_races = (
-            load_holding_from_title_csv(PROJECT_ROOT, date_str) or races
-        )
 
         finished_candidates = select_finished_races(
             result_source_races,
@@ -782,9 +853,74 @@ def main() -> int:
             written=len(result_rows),
         )
 
+    # --- 5d. Fetch & append realtime payouts -------------------------
+    # bc_rs2 (払戻金) is published independently of bc_rs1_2 — usually
+    # within seconds of one another, but either can be ready while the
+    # other isn't. Each CSV is appended on its own ``existing_race_codes``
+    # check so a partial cycle naturally retries the missing side next
+    # invocation.
+    finished_payout_candidates: List[HoldingRace] = []
+    payout_rows: List[List[str]] = []
+    if not args.skip_payouts and result_source_races is not None:
+        payout_path = payout_csv_path_for(PROJECT_ROOT, date_str)
+        already_payouts = payout_existing_race_codes(payout_path)
+
+        finished_payout_candidates = select_finished_races(
+            result_source_races,
+            now_jst,
+            date_str,
+            args.result_window_min,
+            args.result_window_max,
+            already_payouts,
+        )
+
+        logging_module.info(
+            "payout_realtime_candidates",
+            date=date_str,
+            candidate_count=len(finished_payout_candidates),
+            candidates=[
+                f"{r.stadium_code:02d}-{r.race_number:02d}@{r.deadline_time}"
+                for r in finished_payout_candidates
+            ],
+        )
+
+        if finished_payout_candidates:
+            payout_fetcher = PayoutRealtimeFetcher(
+                timeout_seconds=config.get("request_timeout_seconds", 30),
+                rate_limiter=rate_limiter,
+            )
+            payout_rows = fetch_and_build_payout_rows(
+                payout_fetcher,
+                finished_payout_candidates,
+                date_str,
+                fetched_at_iso,
+            )
+
+        if payout_rows:
+            if args.dry_run:
+                logging_module.info(
+                    "payout_realtime_csv_dry_run",
+                    path=str(payout_path),
+                    rows=len(payout_rows),
+                )
+                paths.append(payout_path)
+            else:
+                written = append_payout_rows(
+                    payout_path, PAYOUT_HEADERS, payout_rows
+                )
+                if written > 0:
+                    paths.append(payout_path)
+
+        logging_module.info(
+            "payout_realtime_complete",
+            date=date_str,
+            candidates=len(finished_payout_candidates),
+            written=len(payout_rows),
+        )
+
     # --- 6. Commit & push ---------------------------------------------
     if not (args.dry_run or args.no_commit or not paths):
-        # Only include the candidates whose result row was actually built
+        # Only include the candidates whose row was actually built
         # (a subset — others returned 403 / partial).
         finished_written_codes = {row[0] for row in result_rows}
         finished_for_msg = [
@@ -792,7 +928,19 @@ def main() -> int:
             if build_race_code(date_str, r.stadium_code, r.race_number)
             in finished_written_codes
         ]
-        if not commit_changes(paths, date_str, eligible, finished=finished_for_msg):
+        payout_written_codes = {row[0] for row in payout_rows}
+        payout_finished_for_msg = [
+            r for r in finished_payout_candidates
+            if build_race_code(date_str, r.stadium_code, r.race_number)
+            in payout_written_codes
+        ]
+        if not commit_changes(
+            paths,
+            date_str,
+            eligible,
+            finished=finished_for_msg,
+            payout_finished=payout_finished_for_msg,
+        ):
             logging_module.error("preview_realtime_commit_failed")
             return 1
 
@@ -804,16 +952,19 @@ def main() -> int:
         try:
             day = datetime.strptime(date_str, "%Y-%m-%d").date()
             upload_results = upload_csvs(PROJECT_ROOT, day)
-            # 今サイクルで realtime 結果行が追記されたレースコード集合。
-            # preview 行が無く結果のみが更新されたケースでも updated_races
-            # が空にならないよう、preview 系 (updated_codes) と独立に渡す。
+            # 今サイクルで結果 / 払戻行が追記されたレースコード集合。
+            # preview 行が無く結果のみ / 払戻のみが更新されたケースでも
+            # updated_races が空にならないよう、preview 系 (updated_codes)
+            # と独立に渡す。
             result_updated_codes = {row[0] for row in result_rows}
+            payout_updated_codes = {row[0] for row in payout_rows}
             updated_races, trigger = assemble_updated_races(
                 PROJECT_ROOT,
                 day,
                 upload_results,
                 realtime_updated_codes=updated_codes,
                 result_updated_codes=result_updated_codes,
+                payout_updated_codes=payout_updated_codes,
             )
             if updated_races:
                 publish_realtime_completed(

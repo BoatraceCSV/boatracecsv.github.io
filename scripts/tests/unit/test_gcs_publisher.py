@@ -59,14 +59,22 @@ def _make_upload_results(*changed_csv_types: str) -> list[UploadResult]:
 
 
 def test_build_csv_specs_includes_results():
-    """``_build_csv_specs`` must include the realtime results CSV so
-    fun-site can read finished-race data via the GCS mirror."""
+    """``_build_csv_specs`` must include the realtime results and payouts
+    CSVs so fun-site can read finished-race data via the GCS mirror."""
     specs = _build_csv_specs(Path("/tmp"), dt.date(2026, 5, 7))
     csv_types = [s.csv_type for s in specs]
 
     assert "results" in csv_types
-    # All five expected types are present in stable order.
-    assert csv_types == ["title", "race_cards", "stt", "index", "results"]
+    assert "payouts" in csv_types
+    # All six expected types are present in stable order.
+    assert csv_types == [
+        "title",
+        "race_cards",
+        "stt",
+        "index",
+        "results",
+        "payouts",
+    ]
 
 
 def test_build_csv_specs_results_path():
@@ -75,6 +83,14 @@ def test_build_csv_specs_results_path():
     by_type = {s.csv_type: s for s in specs}
 
     assert by_type["results"].repo_relative_path == "data/results/realtime/2026/05/07.csv"
+
+
+def test_build_csv_specs_payouts_path():
+    """payouts spec must point at ``data/results/payouts/YYYY/MM/DD.csv``."""
+    specs = _build_csv_specs(Path("/tmp"), dt.date(2026, 5, 7))
+    by_type = {s.csv_type: s for s in specs}
+
+    assert by_type["payouts"].repo_relative_path == "data/results/payouts/2026/05/07.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +185,50 @@ def test_assemble_results_changed_but_no_codes_yields_empty(tmp_path):
 
     assert trigger == "realtime"
     assert updated == []
+
+
+def test_assemble_with_payout_updated_codes_only(tmp_path):
+    """払戻のみが更新されたサイクル: payout_updated_codes でレースが
+    列挙され、csvTypes に "payouts" が立つこと。"""
+    day = dt.date(2026, 5, 7)
+    _write_race_cards(tmp_path, day, [("202605070101", "01", "01")])
+
+    upload_results = _make_upload_results("payouts")
+    updated, trigger = assemble_updated_races(
+        tmp_path,
+        day,
+        upload_results,
+        realtime_updated_codes=[],
+        result_updated_codes=[],
+        payout_updated_codes=["202605070101"],
+    )
+
+    assert trigger == "realtime"
+    assert len(updated) == 1
+    entry = updated[0]
+    assert entry.race_code == "202605070101"
+    assert entry.csv_types == {"payouts"}
+    assert entry.index_state is None
+
+
+def test_assemble_with_result_and_payout_codes(tmp_path):
+    """同じレースに対して結果と払戻の両方が来たら csvTypes に両方入る。"""
+    day = dt.date(2026, 5, 7)
+    _write_race_cards(tmp_path, day, [("202605070101", "01", "01")])
+
+    upload_results = _make_upload_results("results", "payouts")
+    updated, trigger = assemble_updated_races(
+        tmp_path,
+        day,
+        upload_results,
+        realtime_updated_codes=[],
+        result_updated_codes=["202605070101"],
+        payout_updated_codes=["202605070101"],
+    )
+
+    assert trigger == "realtime"
+    assert len(updated) == 1
+    assert updated[0].csv_types == {"results", "payouts"}
 
 
 # ---------------------------------------------------------------------------
