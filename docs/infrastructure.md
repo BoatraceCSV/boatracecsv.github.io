@@ -41,7 +41,8 @@ monthly-weights:  python scripts/build_weights.py --month YYYY-MM + commit
    │   ├─ git commit && git push origin main   (boatrace.git_operations / bash)
    │   ├─ ★ GCS mirror upload (boatrace.gcs_publisher.upload_csvs)        ← preview-realtime / daily-sync のみ
    │   │     gs://${BOATRACE_GCS_CSV_BUCKET}/data/{programs/title,programs/race_cards,
-   │   │                                            previews/stt,estimate/index,results/realtime}/...
+   │   │                                            previews/stt,estimate/index,
+   │   │                                            results/realtime,results/payouts}/...
    │   └─ ★ Pub/Sub publish (boatrace.gcs_publisher.publish_realtime_completed) ← preview-realtime / daily-sync のみ
    │         topic: ${BOATRACE_PUBSUB_TOPIC} (e.g. fun-site-realtime-completed)
    │         trigger: "daily-bootstrap" (daily-sync) / "realtime" (preview-realtime)
@@ -88,6 +89,7 @@ Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`prev
 | `data/programs/motor_stats/<YYYY/MM>/` + `<前月>/` | モーター期成績(前月分は7日fallback用) |
 | `data/previews/{tkz,stt,sui,original_exhibition}/<YYYY/MM>/` | 直前バッチの追記対象 |
 | `data/results/realtime/<YYYY/MM>/` | bc_rs1_2 由来の realtime 結果 CSV(締切後の追記対象)。cone 外だと git add が無視され永続化されない |
+| `data/results/payouts/<YYYY/MM>/` | bc_rs2 由来の払戻金 CSV(締切後の追記対象)。同じく cone 外だと git add が無視され永続化されない |
 
 ### sparse-checkout 対象 (daily-sync / `run-daily-sync.sh`)
 

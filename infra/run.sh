@@ -86,6 +86,10 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #                                       (existing CSV for dedup + write target).
 #                                       cone 外だと git add が無視され、
 #                                       ファイルが永続化されない。
+#   - data/results/payouts/<YYYY>/<MM>/         bc_rs2 由来の払戻金 CSV
+#                                       (existing CSV for dedup + write target).
+#                                       results/realtime と同じく cone 外だと
+#                                       git add が無視されて永続化されない。
 #   - data/programs/title/<YYYY>/<MM>/        GCS ミラー対象 (fun-site が読む)
 #   - data/programs/race_cards/<YYYY>/<MM>/   GCS ミラー対象 (fun-site が読む)
 #
@@ -121,6 +125,7 @@ git sparse-checkout set \
   "data/previews/sui/${TODAY_YM}" \
   "data/previews/original_exhibition/${TODAY_YM}" \
   "data/results/realtime/${TODAY_YM}" \
+  "data/results/payouts/${TODAY_YM}" \
   "data/programs/title/${TODAY_YM}" \
   "data/programs/race_cards/${TODAY_YM}"
 
