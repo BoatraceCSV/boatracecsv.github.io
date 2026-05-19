@@ -39,8 +39,13 @@ from boatrace.index_features import (  # noqa: E402
 # 1. Pull historical results 着順 per (race, 枠番)
 # ─────────────────────────────────────────────────────────────────────
 def load_results_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
-    """Long-format (レースコード, 枠番, 着順) for one day."""
-    p = repo / "data" / "results" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    """Long-format (レースコード, 枠番, 着順) for one day.
+
+    Reads from ``data/results/realtime/`` (race.boatcast.jp 由来の準リアルタイム
+    結果) — K-file 由来の ``data/results/daily/`` ではない。両者の ``N着_艇番``
+    列は意味的に等価のため、学習目的では realtime で十分。
+    """
+    p = repo / "data" / "results" / "realtime" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     if not p.exists():
         return pd.DataFrame(columns=["レースコード", "枠番", "着順"])
     df = pd.read_csv(p, dtype=str)

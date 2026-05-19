@@ -298,11 +298,11 @@ python scripts/build_weights.py --month 2026-03
 ```bash
 # 24場分の気象線形回帰パラメータを実データから再学習
 python scripts/build_sui_params.py \
-  --start-date 2025-01-01 --end-date 2026-04-30 \
+  --start-date 2025-11-01 --end-date 2026-04-30 \
   --out data/estimate/stadium/sui_params.csv
 ```
 
-`previews + results` を結合して場×コース別に線形回帰し、波・風(追い/向かい)・気温水温差・天候から有利pt変動を推定。
+`previews + results` を結合して場×コース別に線形回帰し、波・風(追い/向かい)・気温水温差・天候から有利pt変動を推定。結合対象の results は `data/results/realtime/`(`preview-realtime.py` が当日中に追記する準リアルタイム結果)。`--start-date` の下限は realtime CSV の収録開始日 (2025-11-01) に合わせる。
 
 ---
 

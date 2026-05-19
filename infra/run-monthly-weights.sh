@@ -15,10 +15,13 @@
 #
 # The monthly-weights schedule is intentionally placed BEFORE daily-sync
 # (07:30 JST) so that the boundary day's daily index and realtime index are
-# both computed with the freshly-updated weights. Trade-off: previous month's
-# last day K-file is not yet ingested at 06:00 (daily-sync ingests it at
-# 07:30), so the training window loses 1/180 days. See
-# infra/monthly-weights-migration-plan.md §5 Open Question #3.
+# both computed with the freshly-updated weights. Training results come from
+# data/results/realtime/ (appended during each race day at 締切+3〜30分),
+# so by 06:00 JST on day-1 of the next month the previous month's last day
+# is already fully written — no boundary-day loss. (Until 2026-05 the
+# training set used K-file results from data/results/daily/, which were
+# ingested by daily-sync at 07:30 and therefore not yet present at 06:00,
+# costing 1/180 days; the realtime switch eliminates that trade-off.)
 #
 # Required env (injected by the Cloud Run Job spec):
 #   GITHUB_TOKEN  - fine-grained PAT with Contents:Write on the repo (from
@@ -90,7 +93,7 @@ fi
 #   - data/previews/tkz/<YM>/<DD>.csv                (展示タイム = exhibit 特徴量)
 #   - data/previews/stt/<YM>/<DD>.csv                (進入コース)
 #   - data/previews/original_exhibition/<YM>/<DD>.csv (展示値1〜3 = exhibit 特徴量)
-#   - data/results/daily/<YM>/<DD>.csv               (target = 7 - 着順)
+#   - data/results/realtime/<YM>/<DD>.csv            (target = 7 - 着順)
 # さらに index_features.py が固定で読む:
 #   - data/estimate/stadium/win_rate.csv
 #   - data/estimate/stadium/sui_params.csv
@@ -148,7 +151,7 @@ paths=(
 )
 for ym in "${months[@]}"; do
   paths+=(
-    "data/results/daily/${ym}"
+    "data/results/realtime/${ym}"
     "data/programs/race_cards/${ym}"
     "data/programs/recent_national/${ym}"
     "data/programs/recent_local/${ym}"

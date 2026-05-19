@@ -3,9 +3,14 @@
 Fit sui_params.csv from real historical race data for all 24 stadiums.
 
 Joins data/previews/sui/YYYY/MM/DD.csv (weather snapshot from the realtime
-per-source CSV family) with data/results/daily/YYYY/MM/DD.csv
+per-source CSV family) with data/results/realtime/YYYY/MM/DD.csv
 (course + finish) by レースコード, then fits a per-(stadium, course) linear
 regression in advantage-point space.
+
+The realtime results CSV does not carry a direct ``N着_進入コース`` column
+(unlike the K-file ``data/results/daily/...`` family), so course→finish is
+reconstructed by cross-referencing ``Nコース_艇番`` against ``N着_艇番``
+via 枠番.
 
 Historical sui coverage starts at 2025-11-01 (it was reconstructed from
 the previously-existing legacy combined preview CSV before that file
@@ -85,7 +90,7 @@ def load_day(repo_root: Path, day: dt.date) -> list[dict]:
     preview-realtime.py). Days without a ``sui`` file are silently skipped.
     """
     prev_path = repo_root / "data" / "previews" / "sui" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
-    res_path = repo_root / "data" / "results" / "daily" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+    res_path = repo_root / "data" / "results" / "realtime" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     if not prev_path.exists() or not res_path.exists():
         return []
 
@@ -132,20 +137,33 @@ def load_day(repo_root: Path, day: dt.date) -> list[dict]:
         if wind_deg is None:
             continue
 
-        # Build (course -> finish) map from results 1..6着
-        course_to_finish = {}  # course (1..6) -> finish position (1..6)
+        # Build (course -> finish) map from realtime results.
+        # Realtime CSV has no ``N着_進入コース`` column, so we cross-reference:
+        #   - Nコース_艇番 → 枠番 entering at course N
+        #   - N着_艇番     → 枠番 finishing at rank N
+        # then join by 枠番 to recover course→finish.
+        course_to_waku = {}
+        waku_to_finish = {}
         valid = True
-        for rank in range(1, 7):
+        for n in range(1, 7):
             try:
-                course = int(float(r[f"{rank}着_進入コース"]))
+                waku_course = int(float(r[f"{n}コース_艇番"]))
+                waku_finish = int(float(r[f"{n}着_艇番"]))
             except (ValueError, TypeError, KeyError):
                 valid = False
                 break
-            if course < 1 or course > 6:
+            if not (1 <= waku_course <= 6) or not (1 <= waku_finish <= 6):
                 valid = False
                 break
-            course_to_finish[course] = rank
-        if not valid or len(course_to_finish) != 6:
+            course_to_waku[n] = waku_course
+            waku_to_finish[waku_finish] = n
+        if not valid or len(course_to_waku) != 6 or len(waku_to_finish) != 6:
+            continue
+        course_to_finish = {
+            c: waku_to_finish[w] for c, w in course_to_waku.items()
+            if w in waku_to_finish
+        }
+        if len(course_to_finish) != 6:
             continue
 
         for course, finish in course_to_finish.items():
