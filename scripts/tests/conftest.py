@@ -8,39 +8,6 @@ from unittest.mock import MagicMock
 
 
 @pytest.fixture
-def sample_k_file_content():
-    """Provide sample K-file (results) content for testing."""
-    # This is a minimal example - in real testing, use actual file samples
-    return "K-file content here (fixed-width format)"
-
-
-@pytest.fixture
-def sample_b_file_content():
-    """Provide sample B-file (program) content for testing."""
-    # This is a minimal example - in real testing, use actual file samples
-    return "B-file content here (fixed-width format)"
-
-
-@pytest.fixture
-def sample_race_result():
-    """Provide sample RaceResult object for testing."""
-    return {
-        "date": "2025-12-01",
-        "stadium": "唐津",
-        "race_round": "01R",
-        "title": "第１０回ｏｄｄｓｏｎ杯",
-        "racers": [
-            {"number": 1, "name": "太郎", "result": 1},
-            {"number": 2, "name": "次郎", "result": 2},
-            {"number": 3, "name": "三郎", "result": 3},
-            {"number": 4, "name": "四郎", "result": 4},
-            {"number": 5, "name": "五郎", "result": 5},
-            {"number": 6, "name": "六郎", "result": 6},
-        ],
-    }
-
-
-@pytest.fixture
 def sample_race_program():
     """Provide sample RaceProgram object for testing."""
     return {
@@ -65,7 +32,7 @@ def mock_logger(monkeypatch):
 @pytest.fixture
 def temp_csv_directory(tmp_path):
     """Provide temporary directory for CSV file output during tests."""
-    results_dir = tmp_path / "data" / "results" / "daily" / "2025" / "12"
+    results_dir = tmp_path / "data" / "results" / "realtime" / "2025" / "12"
     results_dir.mkdir(parents=True, exist_ok=True)
     return tmp_path
 

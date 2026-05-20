@@ -96,35 +96,6 @@ def extract_lzh(lzh_bytes: bytes) -> Optional[Dict[str, str]]:
         return None
 
 
-def extract_k_file(lzh_bytes: bytes) -> Optional[str]:
-    """Extract K-file (results) from LZH archive.
-
-    Args:
-        lzh_bytes: LZH file content
-
-    Returns:
-        K-file text content or None on failure
-    """
-    files = extract_lzh(lzh_bytes)
-    if not files:
-        return None
-
-    # Find K-file (typically K??????.TXT)
-    for filename, content in files.items():
-        if filename.startswith("K") and filename.endswith(".TXT"):
-            logging_module.info(
-                "k_file_found",
-                filename=filename,
-            )
-            return content
-
-    logging_module.error(
-        "k_file_not_found",
-        available_files=list(files.keys()),
-    )
-    return None
-
-
 def extract_b_file(lzh_bytes: bytes) -> Optional[str]:
     """Extract B-file (program) from LZH archive.
 
@@ -132,9 +103,8 @@ def extract_b_file(lzh_bytes: bytes) -> Optional[str]:
         B-file (mbrace.or.jp の出走表 .lzh) は production パイプラインから
         撤去済み。当日のレース一覧は ``boatrace.holding_list`` 経由で
         boatcast.jp の getHoldingList2 API を一次ソースに、title CSV を
-        フォールバックに使う構成に移行しました。本関数は K-file 系
-        (``extract_k_file``) を残すための ``extract_lzh`` 共有目的で残置
-        しているのみで、新規呼び出しは追加しないでください。
+        フォールバックに使う構成に移行しました。本関数は新規呼び出しを
+        追加しないでください。
 
     Args:
         lzh_bytes: LZH file content

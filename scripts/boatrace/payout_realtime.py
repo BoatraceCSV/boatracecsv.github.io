@@ -34,14 +34,13 @@ Each section's row count is variable but its position is fixed::
     §7 複勝 (1-3 rows)       boat, payout, ``円``
                               Order: 1着, 2着, (3着 if same-time)
 
-The flat row written to ``data/results/payouts/{YYYY}/{MM}/{DD}.csv``
-mirrors the column layout of the K-file daily payout CSV
-(``data/results/daily/...``) so downstream consumers can swap between
-realtime and confirmed without changing parsers.
+The flat row is written to ``data/results/payouts/{YYYY}/{MM}/{DD}.csv``
+with one row per race, containing 単勝 / 複勝 / 2連単 / 2連複 / 拡連複 /
+3連単 / 3連複 の払戻金・組番・人気。
 
 Idempotency is the same model as :mod:`result_realtime`: the caller
 looks up :func:`existing_race_codes` first and only fetches races whose
-``レースコード`` isn't yet in the daily CSV.
+``レースコード`` isn't yet in the payouts CSV.
 """
 
 from __future__ import annotations

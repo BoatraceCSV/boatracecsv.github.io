@@ -36,7 +36,6 @@ pip install -r scripts/requirements.txt
 
 ```bash
 # 当日 JST のデータを一通り取り込む (daily-sync.yml と同じ並び)
-python scripts/result.py --force                                       # K-file 由来 (前日確定結果)
 python scripts/race-card.py --date "$(date +%Y-%m-%d)" --force         # bc_j_str3 (race_cards)
 python scripts/recent-form.py --date "$(date +%Y-%m-%d)" --force       # bc_zensou (recent_form)
 python scripts/motor-stats.py --date "$(date +%Y-%m-%d)" --force       # bc_mst / bc_mdc (motor_stats)
@@ -99,8 +98,8 @@ data/                            # Published data (created at runtime)
 │   ├── sui/YYYY/MM/DD.csv                  # realtime: 水面気象スナップショット
 │   └── original_exhibition/YYYY/MM/DD.csv  # realtime: オリジナル展示
 ├── results/
-│   ├── daily/YYYY/MM/DD.csv                # K-file 由来の翌日確定結果
-│   └── realtime/YYYY/MM/DD.csv             # bc_rs1_2 由来の締切後5〜30分スナップショット
+│   ├── realtime/YYYY/MM/DD.csv             # bc_rs1_2 由来の締切後5〜30分スナップショット
+│   └── payouts/YYYY/MM/DD.csv              # bc_rs2 由来の締切後5〜30分払戻金スナップショット
 └── estimate/
     ├── index/YYYY/MM/DD.csv                # 派生: 強さポイント (5要素偏差値+寄与+合計)
     └── stadium/
@@ -131,9 +130,6 @@ logs/
 毎日 JST 07:30 に `daily-sync.yml` が自動で同等の処理を実行しますが、特定日を再 fetch したい場合は対応するスクリプトを個別に呼び出します。
 
 ```bash
-# Results (K-file, 前日確定結果)
-python scripts/result.py --force
-
 # boatcast 由来のサイドカー (引数 --date で対象日を指定)
 python scripts/race-card.py    --date 2026-05-12 --force
 python scripts/recent-form.py  --date 2026-05-12 --force

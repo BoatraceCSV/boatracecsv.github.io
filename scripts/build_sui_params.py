@@ -7,10 +7,9 @@ per-source CSV family) with data/results/realtime/YYYY/MM/DD.csv
 (course + finish) by レースコード, then fits a per-(stadium, course) linear
 regression in advantage-point space.
 
-The realtime results CSV does not carry a direct ``N着_進入コース`` column
-(unlike the K-file ``data/results/daily/...`` family), so course→finish is
-reconstructed by cross-referencing ``Nコース_艇番`` against ``N着_艇番``
-via 枠番.
+The realtime results CSV does not carry a direct ``N着_進入コース`` column,
+so course→finish is reconstructed by cross-referencing ``Nコース_艇番``
+against ``N着_艇番`` via 枠番.
 
 Historical sui coverage starts at 2025-11-01 (it was reconstructed from
 the previously-existing legacy combined preview CSV before that file

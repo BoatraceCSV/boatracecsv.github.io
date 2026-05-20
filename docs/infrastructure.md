@@ -1,8 +1,8 @@
 # Infrastructure(Cloud Run Jobs)
 
-`scripts/preview-realtime.py` および `scripts/result.py` ほか daily-sync 系
-スクリプトの起動を GitHub Actions schedule から Cloud Scheduler + Cloud Run Jobs
-に移すためのインフラ一式です。
+`scripts/preview-realtime.py` ほか daily-sync 系スクリプトの起動を
+GitHub Actions schedule から Cloud Scheduler + Cloud Run Jobs に移すための
+インフラ一式です。
 
 GitHub Actions の `schedule:` イベントは混雑時に間引かれ、5 分粒度では
 事実上 1 時間に 1 回しか発火しないことがあるため、より精度の高いトリガとして
@@ -95,16 +95,14 @@ Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`prev
 
 daily-sync は preview-realtime とは別系統の入出力を扱うため、`run-daily-sync.sh`
 側で別の sparse-checkout リストを持っています(`data/previews/` や
-`data/results/realtime/` は不要、代わりに `data/results/daily/` や
-`data/programs/race_cards/` 等が必要)。
+`data/results/realtime/` は不要、代わりに `data/programs/race_cards/` 等が必要)。
 
 | 取得対象 | 用途 |
 | --- | --- |
-| `scripts/` | result.py / race-card.py / recent-form.py / motor-stats.py / race-title.py / build_index.py / boatrace パッケージ |
+| `scripts/` | race-card.py / recent-form.py / motor-stats.py / race-title.py / build_index.py / boatrace パッケージ |
 | `.boatrace/` | 実行時設定 (load_config) |
 | `data/estimate/stadium/` | win_rate.csv, sui_params.csv, index_weights/*.csv (build_index 入力) |
 | `data/estimate/index/<YYYY/MM>/` | build_index --mode daily の出力先 (commit 対象) |
-| `data/results/daily/<YYYY/MM>/` | result.py (K-file) の出力先 |
 | `data/programs/race_cards/<YYYY/MM>/` | race-card.py の出力先 (GCS ミラー対象) |
 | `data/programs/recent_national/<YYYY/MM>/` | recent-form.py の出力先 / build_index 特徴量 |
 | `data/programs/recent_local/<YYYY/MM>/` | recent-form.py の出力先 / build_index 特徴量 |

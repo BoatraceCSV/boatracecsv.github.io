@@ -107,14 +107,13 @@ git clone \
 
 cd repo
 
-# sparse-checkout: daily-sync の 6 スクリプトが読み書きする全パス。
+# sparse-checkout: daily-sync の 5 スクリプトが読み書きする全パス。
 #
 #   - scripts/                                python sources
 #   - .boatrace/                              runtime config (load_config)
 #   - data/estimate/stadium/                  win_rate.csv / sui_params.csv /
 #                                              index_weights/*.csv (build_index 入力)
 #   - data/estimate/index/<YM>/               build_index 出力 (write 専用、要 cone)
-#   - data/results/daily/<YM>/                result.py (K-file) 出力
 #   - data/programs/race_cards/<YM>/          race-card.py 出力 (GCS ミラー対象)
 #   - data/programs/recent_national/<YM>/     recent-form.py 出力 (build_index 特徴量)
 #   - data/programs/recent_local/<YM>/        recent-form.py 出力
@@ -127,7 +126,6 @@ git sparse-checkout set \
   .boatrace \
   data/estimate/stadium \
   "data/estimate/index/${TODAY_YM}" \
-  "data/results/daily/${TODAY_YM}" \
   "data/programs/race_cards/${TODAY_YM}" \
   "data/programs/recent_national/${TODAY_YM}" \
   "data/programs/recent_local/${TODAY_YM}" \
@@ -169,15 +167,14 @@ run_step() {
 }
 
 # ---------------------------------------------------------------------------
-# 1. K-file 結果取り込み (前日分の確定結果)
-# ---------------------------------------------------------------------------
-run_step "result"      python scripts/result.py --force
-
-# ---------------------------------------------------------------------------
-# 2-5. 当日 JST のデータ取得
+# 1-4. 当日 JST のデータ取得
 #      boatcast 側の更新が間に合わない可能性があるが、失敗しても次回
 #      (翌日 07:30) で再試行されるので EXIT_AGGREGATE には反映するが
 #      後続ステップは続行する。
+#
+#      前日確定結果 (K-file) の取り込みは 2026-05 に廃止済み。代替の
+#      準リアルタイム結果は preview-realtime.py が締切+3〜30 分の窓で
+#      data/results/{realtime,payouts}/ に逐次追記している。
 #
 # 実行順:
 #   1. race-title       → data/programs/title/<YM>/<DD>.csv を先に書く。
@@ -198,7 +195,7 @@ run_step "recent-form" python scripts/recent-form.py --date "${TODAY_JST}" --for
 run_step "motor-stats" python scripts/motor-stats.py --date "${TODAY_JST}" --force
 
 # ---------------------------------------------------------------------------
-# 6. 当日 daily index バッチ生成
+# 5. 当日 daily index バッチ生成
 #    枠番・選手・モーター・暫定強さpt を埋めた index CSV を生成する。
 #    展示・気象は 50 で補完 (状態=daily)。preview-realtime が JST 08:00 に
 #    最初のサイクルを開始する前に完了させたい。

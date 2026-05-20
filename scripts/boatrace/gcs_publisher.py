@@ -132,8 +132,7 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
     ``results`` は preview-realtime が当日確定直後に追記する realtime 結果
     CSV (``data/results/realtime/YYYY/MM/DD.csv``)。``payouts`` は同じく
     確定直後に bc_rs2 から追記する払戻 CSV
-    (``data/results/payouts/YYYY/MM/DD.csv``)。K-file 由来の翌日確定
-    CSV (``data/results/daily/...``) はここでは扱わない。
+    (``data/results/payouts/YYYY/MM/DD.csv``)。
     """
     ymd = f"{day:%Y}/{day:%m}/{day:%d}"
     return [

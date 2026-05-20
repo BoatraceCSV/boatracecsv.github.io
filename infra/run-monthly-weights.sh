@@ -18,10 +18,7 @@
 # both computed with the freshly-updated weights. Training results come from
 # data/results/realtime/ (appended during each race day at 締切+3〜30分),
 # so by 06:00 JST on day-1 of the next month the previous month's last day
-# is already fully written — no boundary-day loss. (Until 2026-05 the
-# training set used K-file results from data/results/daily/, which were
-# ingested by daily-sync at 07:30 and therefore not yet present at 06:00,
-# costing 1/180 days; the realtime switch eliminates that trade-off.)
+# is already fully written — no boundary-day loss.
 #
 # Required env (injected by the Cloud Run Job spec):
 #   GITHUB_TOKEN  - fine-grained PAT with Contents:Write on the repo (from
