@@ -573,7 +573,192 @@ def weather_advantage(params: dict, stadium_name: str, weather: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 6. Per-day feature computation
+# 6. FeatureContext: バッチ呼出し向け共有キャッシュ
+# ─────────────────────────────────────────────────────────────────────
+class FeatureContext:
+    """Shared cache for ``compute_features_for_day`` across a date window.
+
+    Single-day callers (``build_index.py``) can ignore this entirely; the
+    convenience entry point ``compute_features_for_day`` will construct a
+    per-call context implicitly. Multi-day callers (``build_weights.py``)
+    construct one context up-front covering ``[window_start, window_end]``,
+    so static tables and file reads are amortized across days.
+
+    Cache scope:
+      * static tables (``waku_table`` / ``motor_score_table`` / ``sui_params``)
+        — loaded once on first access, never refreshed for the lifetime of
+        the Context.
+      * ``race_cards`` / ``title`` per-day DataFrame caches — unbounded.
+        Memory cost is ~7 MB for an 8-month window (~30 KB/file × ~240 files).
+      * ``session_end_days`` — derived from a window-wide pre-computed
+        ``session_index`` (built lazily on first ``motor_history`` call).
+      * ``extract_runs_for_session`` — memoized per ``(stadium, session_end)``.
+      * ``load_motor_period_starts`` — memoized per ``day``.
+
+    NOTE: Not thread-safe. mutable dict キャッシュにロックを持たない。
+    将来 multiprocessing を入れる場合は worker ごとに別 Context を持つこと。
+
+    See ``docs/design/feature_context_refactor.md`` for the design rationale.
+    """
+
+    def __init__(self, repo: Path, *, window_start: dt.date, window_end: dt.date):
+        if window_end < window_start:
+            raise ValueError(
+                f"window_end={window_end} must be >= window_start={window_start}"
+            )
+        self.repo = repo
+        self.window_start = window_start
+        self.window_end = window_end
+        self._all_stadiums: list[str] = [
+            f"{i:02d}" for i in sorted(STADIUM_NAMES.keys())
+        ]
+        # 静的テーブル(遅延ロード、1 回のみ)
+        self._waku_table: dict | None = None
+        self._motor_score_table: dict[tuple[str, str], list[int]] | None = None
+        self._sui_params: dict | None = None
+        # キャッシュ付きファイルアクセサ(無制限キャッシュ)
+        self._race_cards_cache: dict[dt.date, pd.DataFrame | None] = {}
+        self._title_cache: dict[dt.date, pd.DataFrame | None] = {}
+        # session_index は遅延構築(初回 motor_history 呼出し時)
+        self._session_index: dict[str, list[dt.date]] | None = None
+        # extract_runs_for_session の memoize
+        self._runs_cache: dict[tuple[str, dt.date], list[MotorRun]] = {}
+        # load_motor_period_starts の per-day memoize
+        self._period_starts_cache: dict[dt.date, dict[tuple[str, int], dt.date]] = {}
+
+    # ─── 静的テーブル ──────────────────────────────────────────
+    def waku_table(self) -> dict:
+        if self._waku_table is None:
+            self._waku_table = load_waku_table(self.repo)
+        return self._waku_table
+
+    def motor_score_table(self) -> dict[tuple[str, str], list[int]]:
+        if self._motor_score_table is None:
+            self._motor_score_table = load_motor_score_table(self.repo)
+        return self._motor_score_table
+
+    def sui_params(self) -> dict:
+        if self._sui_params is None:
+            self._sui_params = load_sui_params(self.repo)
+        return self._sui_params
+
+    # ─── キャッシュ付きファイルアクセサ ────────────────────────
+    def race_cards_for(self, day: dt.date) -> pd.DataFrame | None:
+        if day not in self._race_cards_cache:
+            p = _race_cards_path(self.repo, day)
+            self._race_cards_cache[day] = (
+                pd.read_csv(p, dtype=str) if p.exists() else None
+            )
+        return self._race_cards_cache[day]
+
+    def title_for(self, day: dt.date) -> pd.DataFrame | None:
+        if day not in self._title_cache:
+            p = _title_path(self.repo, day)
+            self._title_cache[day] = (
+                pd.read_csv(p, dtype=str) if p.exists() else None
+            )
+        return self._title_cache[day]
+
+    # ─── モーター履歴 ─────────────────────────────────────────
+    def _build_session_index(self) -> dict[str, list[dt.date]]:
+        """全 24 場について window 内で参照しうる全 open-day を列挙。
+
+        リード範囲:
+          earliest = window_start - MOTOR_HISTORY_LOOKBACK_DAYS (90)
+          latest   = window_end  - 1 day  (target_day 当日は除外設計)
+        """
+        earliest = self.window_start - dt.timedelta(days=MOTOR_HISTORY_LOOKBACK_DAYS)
+        latest = self.window_end - dt.timedelta(days=1)
+        out: dict[str, list[dt.date]] = {s: [] for s in self._all_stadiums}
+        d = earliest
+        while d <= latest:
+            rc = self.race_cards_for(d)
+            if rc is not None and not rc.empty and "レースコード" in rc.columns:
+                codes = rc["レースコード"].dropna().astype(str)
+                present = set(codes.str[8:10].unique())
+                for s in present:
+                    if s in out:
+                        out[s].append(d)
+            d += dt.timedelta(days=1)
+        return out
+
+    def session_end_days_for(
+        self, target_day: dt.date, stadium: str,
+    ) -> list[dt.date]:
+        """``detect_session_end_days(repo, stadium, target_day)`` と byte-equivalent。
+
+        事前構築した ``session_index`` から派生させてファイル再走査を回避する。
+        """
+        if self._session_index is None:
+            self._session_index = self._build_session_index()
+        cutoff_min = target_day - dt.timedelta(days=MOTOR_HISTORY_LOOKBACK_DAYS)
+        in_window = [
+            d for d in self._session_index.get(stadium, [])
+            if cutoff_min <= d < target_day
+        ]
+        if not in_window:
+            return []
+        # 連続日を 1 節として束ねる (detect_session_end_days と同一ロジック)
+        sessions: list[list[dt.date]] = []
+        cur = [in_window[0]]
+        for d in in_window[1:]:
+            if (d - cur[-1]).days <= 1:
+                cur.append(d)
+            else:
+                sessions.append(cur)
+                cur = [d]
+        sessions.append(cur)
+        last_days = [s[-1] for s in sessions]
+        return last_days[-MOTOR_HISTORY_LOOKBACK_MAX_SESSIONS:][::-1]
+
+    def _extract_runs_for_session_cached(
+        self, stadium: str, session_end: dt.date,
+    ) -> list[MotorRun]:
+        """``(stadium, session_end)`` 単位で ``extract_runs_for_session`` を memoize。
+
+        既存関数をそのまま呼ぶので race_cards/title の二重読みは発生するが、
+        呼出し回数は window × 24 場 × 5 節 ≒ 1,350 件で抑えられる。
+        """
+        key = (stadium, session_end)
+        if key not in self._runs_cache:
+            self._runs_cache[key] = extract_runs_for_session(
+                self.repo, stadium, session_end,
+            )
+        return self._runs_cache[key]
+
+    def _period_starts(self, day: dt.date) -> dict[tuple[str, int], dt.date]:
+        if day not in self._period_starts_cache:
+            self._period_starts_cache[day] = load_motor_period_starts(
+                self.repo, day,
+            )
+        return self._period_starts_cache[day]
+
+    def motor_history(
+        self, day: dt.date,
+    ) -> dict[tuple[str, int], list[list[MotorRun]]]:
+        """``load_motor_history(repo, day)`` と byte-equivalent。Context キャッシュ経由。"""
+        period_starts = self._period_starts(day)
+        out: dict[tuple[str, int], list[list[MotorRun]]] = defaultdict(list)
+        for stadium in self._all_stadiums:
+            session_ends = self.session_end_days_for(day, stadium)
+            per_motor: dict[int, list[list[MotorRun]]] = defaultdict(list)
+            for sess_end in session_ends:
+                grouped: dict[int, list[MotorRun]] = defaultdict(list)
+                for r in self._extract_runs_for_session_cached(stadium, sess_end):
+                    grouped[r.motor_num].append(r)
+                for m, runs in grouped.items():
+                    per_motor[m].append(runs)
+            for m, sessions in per_motor.items():
+                ps = period_starts.get((stadium, m))
+                if ps is not None:
+                    sessions = [s for s in sessions if s and s[0].session_end >= ps]
+                if sessions:
+                    out[(stadium, m)] = sessions[:MOTOR_HISTORY_SESSIONS]
+        return out
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 7. Per-day feature computation
 # ─────────────────────────────────────────────────────────────────────
 def parse_orig_exhibit_row(row) -> dict:
     out = {}
@@ -696,7 +881,9 @@ def _load_realtime_preview_by_code(repo: Path, day: dt.date) -> dict:
     return out
 
 
-def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
+def compute_features_for_day(
+    repo: Path, day: dt.date, *, ctx: "FeatureContext | None" = None,
+) -> pd.DataFrame:
     """Return a long-format DataFrame: one row per (race × boat 1..6).
 
     Columns: レースコード, レース日, レース場コード(2桁), レース回, 枠番,
@@ -719,22 +906,40 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
 
     Missing previews / motor history / recent form fall back to NaN in the
     relevant columns.
+
+    Parameters
+    ----------
+    ctx : FeatureContext, optional
+        Shared cache for batch invocation across a date window. When omitted
+        (single-day callers), a per-call Context is constructed implicitly
+        with ``window=[day, day]``. When supplied, ``day`` must lie within
+        ``[ctx.window_start, ctx.window_end]`` or ``ValueError`` is raised
+        (the session_index would not cover the day's lookback otherwise).
+        See ``docs/design/feature_context_refactor.md``.
     """
+    if ctx is None:
+        ctx = FeatureContext(repo, window_start=day, window_end=day)
+    elif not (ctx.window_start <= day <= ctx.window_end):
+        raise ValueError(
+            f"day={day} is outside ctx window "
+            f"[{ctx.window_start}, {ctx.window_end}]. "
+            f"Construct a Context covering the day, or omit ctx for single-day use."
+        )
+
     season = SEASON_BY_MONTH[day.month]
 
-    waku_tab = load_waku_table(repo)
-    motor_score_table = load_motor_score_table(repo)
-    motor_history = load_motor_history(repo, day)
-    sui = load_sui_params(repo)
+    waku_tab = ctx.waku_table()
+    motor_score_table = ctx.motor_score_table()
+    motor_history = ctx.motor_history(day)
+    sui = ctx.sui_params()
 
-    prog_path = repo / "data" / "programs" / "race_cards" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
-    if not prog_path.exists():
+    prog = ctx.race_cards_for(day)
+    if prog is None:
         return pd.DataFrame()
 
     rn_path   = repo / "data" / "programs" / "recent_national" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
     rl_path   = repo / "data" / "programs" / "recent_local"   / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
 
-    prog = pd.read_csv(prog_path, dtype=str)
     rn   = pd.read_csv(rn_path, dtype=str)   if rn_path.exists()   else pd.DataFrame()
     rl   = pd.read_csv(rl_path, dtype=str)   if rl_path.exists()   else pd.DataFrame()
 
