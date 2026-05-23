@@ -183,13 +183,53 @@ python scripts/build_weights.py --month "${TARGET_MONTH}"
 # build_weights.py は CSV 出力のみで git にコミットしないため、bash 側で
 # commit + push する。旧 GHA workflow の "Commit Weights" ステップ相当。
 # 差分が無ければ no-op (再実行時の冪等性)。
+#
+# preview-realtime ジョブが JST 08:00〜22:59 の間 5 分ごとに main へ push
+# しているため、bare push は non-fast-forward で reject されることが多い。
+# fetch + rebase で取り込んでから push し、競合があれば最大数回までリトライ。
+#
+# weights CSV (data/estimate/stadium/index_weights/) は preview-realtime が
+# 触る path (data/previews/, data/results/, data/estimate/index/) と完全に
+# 別なので、rebase は conflict なしで成立する想定。万一 conflict が出た場合
+# は abort して fail する (人手調査が必要)。
 # ---------------------------------------------------------------------------
+push_with_rebase() {
+  local max_attempts=5
+  local attempt=1
+  while (( attempt <= max_attempts )); do
+    log "Push attempt ${attempt}/${max_attempts}"
+    if ! git fetch origin "${GIT_BRANCH}"; then
+      log "fetch failed on attempt ${attempt}; retrying after backoff"
+      attempt=$((attempt + 1))
+      sleep $((attempt * 2))
+      continue
+    fi
+    if ! git rebase "origin/${GIT_BRANCH}"; then
+      log "Rebase conflict (unexpected — weights path is disjoint from realtime paths)"
+      git rebase --abort || true
+      return 1
+    fi
+    if git push origin "${GIT_BRANCH}"; then
+      log "Push succeeded on attempt ${attempt}"
+      return 0
+    fi
+    log "Push rejected; remote moved during rebase. Retrying after backoff"
+    attempt=$((attempt + 1))
+    sleep $((attempt * 2))
+  done
+  log "Push failed after ${max_attempts} attempts"
+  return 1
+}
+
 git add data/estimate/stadium/index_weights/
 if git diff --cached --quiet; then
   log "No weights changes to commit for ${TARGET_MONTH}"
 else
   git commit -m "Update monthly index weights (${TARGET_MONTH})"
-  git push origin "${GIT_BRANCH}"
+  if ! push_with_rebase; then
+    log "ABORT: failed to push weights for ${TARGET_MONTH} after retries"
+    exit 1
+  fi
   log "Pushed weights for ${TARGET_MONTH}"
 fi
 
