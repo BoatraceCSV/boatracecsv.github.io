@@ -31,7 +31,7 @@ from scipy.optimize import minimize
 # Local import — reuse build_index feature builders
 sys.path.insert(0, str(Path(__file__).parent))
 from boatrace.index_features import (  # noqa: E402
-    COMPONENT_KEYS, STADIUM_NAMES, compute_features_for_day,
+    COMPONENT_KEYS, STADIUM_NAMES, FeatureContext, compute_features_for_day,
 )
 
 
@@ -72,10 +72,14 @@ def iter_dates(start: dt.date, end: dt.date):
 
 
 def build_training_table(repo: Path, start: dt.date, end: dt.date) -> pd.DataFrame:
+    # FeatureContext を window 全体で共有することで、static テーブル・race_cards
+    # ・title・session_index・period_starts を amortize する。詳細は
+    # docs/design/feature_context_refactor.md を参照。
+    ctx = FeatureContext(repo, window_start=start, window_end=end)
     parts = []
     n_days = (end - start).days + 1
     for i, day in enumerate(iter_dates(start, end)):
-        feat = compute_features_for_day(repo, day)
+        feat = compute_features_for_day(repo, day, ctx=ctx)
         if feat.empty:
             continue
         res = load_results_for_day(repo, day)
@@ -87,6 +91,18 @@ def build_training_table(repo: Path, start: dt.date, end: dt.date) -> pd.DataFra
             n_rows = sum(len(p) for p in parts)
             print(f"  loaded {i+1}/{n_days} days, {n_rows:,} boat-rows so far",
                   file=sys.stderr)
+    # FeatureContext のキャッシュ統計を出力(本番デプロイ後の効果検証用)。
+    # 期待値(6 ヶ月 window): race_cards≒270, title≒270, runs≒1,350,
+    # period_starts≒181。これらから大きく乖離している場合は何かが
+    # おかしい(キャッシュ無効化、window 不一致など)。
+    print(
+        f"  FeatureContext stats: "
+        f"race_cards={len(ctx._race_cards_cache)} "
+        f"title={len(ctx._title_cache)} "
+        f"runs={len(ctx._runs_cache)} "
+        f"period_starts={len(ctx._period_starts_cache)}",
+        file=sys.stderr,
+    )
     if not parts:
         return pd.DataFrame()
     return pd.concat(parts, ignore_index=True)

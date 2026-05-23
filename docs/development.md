@@ -300,6 +300,8 @@ python scripts/build_weights.py --month 2026-03
 
 学習窓は `[対象月 - 6ヶ月, 対象月 - 1日]`(対象月のデータは含まない=リーケージなし)。場ごとに非負・合計1の制約で SLSQP 最適化。モーターpt は「直近5節 × 級別×グレード得点平均」(モーター期起算日でリセット)なので、race_cards の収録履歴が短い場合は motor 重みが小さくなる傾向あり。
 
+`build_weights.py` は 6 ヶ月 ≒ 181 日を直列に処理するため、`boatrace.index_features.FeatureContext` を `build_training_table` で構築して `compute_features_for_day(repo, day, ctx=ctx)` に渡し、静的テーブル(`win_rate.csv` / `motor_ability_score.csv` / `sui_params.csv`)と `race_cards` / `title` 読込、`detect_session_end_days` の節境界検出をバッチ全体で amortize している。単発呼出し(`build_index.py`)は `ctx` を省略するだけで従来通り動く。設計詳細は [`docs/design/feature_context_refactor.md`](./design/feature_context_refactor.md) を参照。
+
 ### Build Stadium Weather Params (sui_params.csv)
 
 ```bash
