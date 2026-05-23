@@ -65,6 +65,15 @@ from boatrace.index_features import (  # noqa: E402
 STATE_DAILY = "daily"
 STATE_REALTIME = "realtime"
 
+# 元データ欠損時の偏差値pt補完値。
+# 通常は平均値 50 で補完するが、選手pt(racer)については「新人」「長期離脱
+# 明け」など実力が低い前提のケースが多く、平均扱いだと過大評価になりやすい。
+# そのため選手ptのみ 30 で補完する。
+MISSING_PT_FALLBACK = 50.0
+MISSING_PT_FALLBACK_BY_COMPONENT = {
+    "racer": 30.0,
+}
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Weights file lookup
@@ -187,7 +196,11 @@ def _build_one_race_row(
             else:
                 v = raw[k]
                 if pd.isna(v):
-                    hensachi_pt = 50.0
+                    # 欠損は通常 50 で補完するが、選手pt は新人/長期離脱明け
+                    # を 50 扱いすると過大評価になりやすいため 30 を用いる。
+                    hensachi_pt = MISSING_PT_FALLBACK_BY_COMPONENT.get(
+                        k, MISSING_PT_FALLBACK,
+                    )
                 else:
                     z = (float(v) - mu_st[k]) / sigma_st[k] if sigma_st[k] > 0 else 0.0
                     hensachi_pt = 50.0 + 10.0 * z

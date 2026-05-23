@@ -21,6 +21,7 @@ import build_index  # type: ignore[import-not-found]
 from build_index import (
     STATE_DAILY,
     STATE_REALTIME,
+    _build_one_race_row,
     atomic_write_csv,
     index_columns,
     index_csv_path,
@@ -213,6 +214,52 @@ def test_empty_race_codes_returns_zero(tmp_path, patched_features):
 
     assert n == 0
     assert csv_path.read_bytes() == before_bytes
+
+
+def test_missing_racer_pt_falls_back_to_30_not_50():
+    """選手pt が欠損(新人 / 長期離脱明け)の場合は 30 で補完する。
+
+    通常の欠損補完値は 50(平均扱い)だが、選手ptを 50 扱いすると
+    出走履歴が無い新人を平均的な選手として過大評価してしまう。
+    回帰防止のためのテスト。
+    """
+    code = "202605231201"
+    boats_rows = []
+    for w in range(1, 7):
+        boats_rows.append({
+            "レースコード": code,
+            "レース日": "2026-05-23",
+            "レース場コード": "12",
+            "レース回": "1",
+            "枠番": w,
+            "waku":    50.0,
+            # 1枠だけ 選手pt 欠損(=新人想定)、他は通常値
+            "racer":   float("nan") if w == 1 else 60.0,
+            "motor":   50.0,
+            # 2枠だけ 展示pt 欠損 → これは従来通り 50 補完
+            "exhibit": float("nan") if w == 2 else 50.0,
+            "weather": 50.0,
+        })
+    boats = pd.DataFrame(boats_rows)
+    weights = {
+        "住之江": {
+            "mu":    {"waku": 50, "racer": 50, "motor": 50, "exhibit": 50, "weather": 50},
+            "sigma": {"waku": 10, "racer": 10, "motor": 10, "exhibit": 10, "weather": 10},
+            "w":     {"waku": 0.2, "racer": 0.2, "motor": 0.2, "exhibit": 0.2, "weather": 0.2},
+        },
+    }
+
+    row = _build_one_race_row(
+        code=code, meta_row=boats.iloc[0], boats=boats,
+        weights=weights, state=STATE_REALTIME, skip_preview=False,
+    )
+
+    # 1枠は選手pt欠損 → 30で補完される(50ではない)
+    assert row["1枠_選手pt"] == 30.0
+    # 寄与は w(=0.2) × 30 = 6.0
+    assert row["1枠_寄与_選手pt"] == 6.0
+    # 2枠の展示pt欠損は従来通り 50 補完(racer以外は変更なし)
+    assert row["2枠_展示pt"] == 50.0
 
 
 def test_output_is_sorted_by_race_code_then_state(tmp_path, patched_features):
