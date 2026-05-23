@@ -8,6 +8,8 @@ stay in lockstep.
 from __future__ import annotations
 
 import datetime as dt
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -170,42 +172,333 @@ def racer_pt_for_boat(boat_records: list[tuple[str, str]]) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 3. モーターポイント
+# 3. モーターポイント(モーター能力指数)
 # ─────────────────────────────────────────────────────────────────────
-def load_motor_table_for_day(repo: Path, day: dt.date) -> dict:
-    """Returns {(場コード2桁, モーター番号int): 勝率float}; falls back to up to 7 prior days."""
-    p = repo / "data" / "programs" / "motor_stats" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
+# 直近 N 節の出走実績を「級別 × グレード分類」のスコアテーブルで得点化し、
+# 平均値を返す。詳細設計は docs/design/motor_ability_index.md 参照。
+#
+# 着順トークン分類(モーター固有ルール):
+#   - "1"〜"6"            → スコアテーブルの値(+1 打点)
+#   - 転 / 落 / 沈 / エ   → 機材起因 → -100 点(+1 打点)
+#   - F / L / 失 / 妨     → 選手起因 → 集計除外(分子分母とも 0)
+#   - 欠 / 不             → 無効走  → 集計除外
+MOTOR_NEGATIVE_TOKENS: set[str] = {"転", "落", "沈", "エ"}
+MOTOR_NEGATIVE_SCORE: int = -100
+MOTOR_SKIP_TOKENS: set[str] = {"F", "L", "失", "妨", "欠", "不"}
+
+MOTOR_HISTORY_SESSIONS: int = 5            # 直近 5 節
+MOTOR_HISTORY_LOOKBACK_MAX_SESSIONS: int = 10  # 期境界で剪定する前に取得する節数の上限
+MOTOR_HISTORY_LOOKBACK_DAYS: int = 90      # 各場の節検出のために遡る日数
+MOTOR_PERIOD_FALLBACK_DAYS: int = 14       # motor_stats が当日無いときの fallback 日数
+
+_VALID_FINISH_TOKENS: set[str] = (
+    {"1", "2", "3", "4", "5", "6"}
+    | MOTOR_NEGATIVE_TOKENS
+    | MOTOR_SKIP_TOKENS
+    | {"沈", "失"}  # 重複だが明示
+)
+_ZEN_TO_HAN_FINISH = ZEN_TO_HAN_DIGIT
+
+
+@dataclass(frozen=True)
+class MotorRun:
+    """モーター 1 走分のレコード(履歴ビルダーの内部表現)。"""
+    session_end: dt.date   # 当該走を含む節の最終開催日
+    stadium: str           # "01"〜"24"
+    motor_num: int         # 物理モーター番号
+    grade_bucket: str      # "SG_G1" / "G2_G3_一般" / "全"
+    racer_class: str       # "A1" / "A2" / "B1" / "B2"
+    finish: str            # 正規化済 着順トークン
+
+
+# --- スコアテーブル -------------------------------------------------------
+def load_motor_score_table(repo: Path) -> dict[tuple[str, str], list[int]]:
+    """Returns {(級別, グレード分類): [1着pt..6着pt]}.
+
+    `data/estimate/motor_ability_score.csv` を読み込む。ファイル不在は
+    `RuntimeError` で fail-fast(モーターpt の意味が変わるため検知重視)。
+    """
+    p = repo / "data" / "estimate" / "motor_ability_score.csv"
     if not p.exists():
-        for back in range(1, 8):
-            alt = day - dt.timedelta(days=back)
-            p_alt = repo / "data" / "programs" / "motor_stats" / f"{alt:%Y}" / f"{alt:%m}" / f"{alt:%d}.csv"
-            if p_alt.exists():
-                p = p_alt
-                break
-    table: dict[tuple[str, int], float] = {}
-    if not p.exists():
-        return table
-    df = pd.read_csv(p, dtype=str)
-    for _, r in df.iterrows():
-        try:
-            code = str(r["場コード"]).zfill(2)
-            num = int(float(r["モーター番号"]))
-            rate = float(r["勝率"]) if r["勝率"] not in (None, "", "nan") else 0.0
-        except (ValueError, TypeError):
-            continue
-        table[(code, num)] = rate
+        raise RuntimeError(
+            f"motor_ability_score.csv not found at {p}. "
+            "This file is required for モーターpt 計算. See docs/data/motor_ability_score.md."
+        )
+    df = pd.read_csv(p)
+    table: dict[tuple[str, str], list[int]] = {}
+    for _, row in df.iterrows():
+        key = (str(row["級別"]).strip(), str(row["グレード分類"]).strip())
+        table[key] = [int(row[f"{k}着pt"]) for k in range(1, 7)]
     return table
 
 
-def motor_pt(table: dict, stadium_code2: str, motor_num: int) -> float:
-    """モーター勝率を返す。データなし or 勝率0 (モーター交換直後で実績ゼロ) の
-    場合は NaN を返す。重み学習時は dropna で除外され、index 出力時もそのまま
-    NaN として伝播する(欠損は欠損として明示)。
+def grade_bucket_for_grade(grade_raw: str) -> str:
+    """`title.csv` の `グレード` 列 → "SG_G1" / "G2_G3_一般"."""
+    s = (grade_raw or "").strip()
+    for tag in ("SG", "ＳＧ", "PG", "ＰＧ", "G1", "Ｇ１", "ＧⅠ"):
+        if tag in s:
+            return "SG_G1"
+    return "G2_G3_一般"
+
+
+def resolve_grade_bucket(racer_class: str, race_grade_bucket: str) -> str:
+    """級別が B1/B2 ならグレードに関わらず '全' を返す。"""
+    if racer_class in ("B1", "B2"):
+        return "全"
+    return race_grade_bucket
+
+
+def normalize_finish_token(raw) -> str | None:
+    """race_cards 14スロットの `着順` を正規化。未知/未充填は None."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s.lower() == "nan":
+        return None
+    if s in _ZEN_TO_HAN_FINISH:
+        return str(_ZEN_TO_HAN_FINISH[s])
+    # 数値形式("4" / "4.0" 等)
+    try:
+        i = int(float(s))
+        if 1 <= i <= 6:
+            return str(i)
+    except (ValueError, TypeError):
+        pass
+    s = s.replace("Ｆ", "F").replace("Ｌ", "L")
+    return s if s in _VALID_FINISH_TOKENS else None
+
+
+# --- 1 走スコアリング -----------------------------------------------------
+def score_motor_run(
+    table: dict[tuple[str, str], list[int]], run: MotorRun
+) -> tuple[int, int] | None:
+    """Returns (得点, 分母増分=1) or None (=分母にも乗らない)."""
+    bucket = run.grade_bucket if run.racer_class in ("A1", "A2") else "全"
+    pts = table.get((run.racer_class, bucket))
+    if pts is None:
+        return None
+    f = run.finish
+    if f in ("1", "2", "3", "4", "5", "6"):
+        return pts[int(f) - 1], 1
+    if f in MOTOR_NEGATIVE_TOKENS:
+        return MOTOR_NEGATIVE_SCORE, 1
+    return None  # MOTOR_SKIP_TOKENS / 未知トークン
+
+
+# --- モーター期起算日テーブル -------------------------------------------
+def load_motor_period_starts(
+    repo: Path, target_day: dt.date,
+    fallback_days: int = MOTOR_PERIOD_FALLBACK_DAYS,
+) -> dict[tuple[str, int], dt.date]:
+    """Returns {(場コード2桁, モーター番号): モーター期起算日}.
+
+    `data/programs/motor_stats/YYYY/MM/DD.csv` を target_day から遡って読む。
+    motor_stats は当日開催のある場のみ収録するため、場ごとに「最初に見つかった
+    スナップショット = 最新スナップショット」だけを採用する。
     """
-    rate = table.get((stadium_code2, motor_num))
-    if rate is None or rate == 0:
+    out: dict[tuple[str, int], dt.date] = {}
+    seen_stadiums: set[str] = set()
+    base = repo / "data" / "programs" / "motor_stats"
+    for back in range(0, fallback_days + 1):
+        d = target_day - dt.timedelta(days=back)
+        p = base / f"{d:%Y}" / f"{d:%m}" / f"{d:%d}.csv"
+        if not p.exists():
+            continue
+        df = pd.read_csv(p, dtype=str)
+        if df.empty:
+            continue
+        new_stadiums: set[str] = set()
+        for _, row in df.iterrows():
+            try:
+                stadium = str(row["場コード"]).zfill(2)
+            except (KeyError, ValueError):
+                continue
+            if stadium in seen_stadiums:
+                continue
+            try:
+                num = int(float(row["モーター番号"]))
+                start = dt.date.fromisoformat(str(row["モーター期起算日"]).strip())
+            except (ValueError, TypeError, KeyError):
+                continue
+            key = (stadium, num)
+            if key not in out:
+                out[key] = start
+            new_stadiums.add(stadium)
+        seen_stadiums |= new_stadiums
+    return out
+
+
+# --- 節境界検出 ----------------------------------------------------------
+def _race_cards_path(repo: Path, day: dt.date) -> Path:
+    return (repo / "data" / "programs" / "race_cards"
+            / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv")
+
+
+def _title_path(repo: Path, day: dt.date) -> Path:
+    return (repo / "data" / "programs" / "title"
+            / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv")
+
+
+def _has_races_at(repo: Path, day: dt.date, stadium: str) -> bool:
+    p = _race_cards_path(repo, day)
+    if not p.exists():
+        return False
+    try:
+        df = pd.read_csv(p, dtype=str, usecols=["レースコード"])
+    except (ValueError, KeyError):
+        return False
+    if df.empty:
+        return False
+    codes = df["レースコード"].dropna().astype(str)
+    return bool((codes.str[8:10] == stadium).any())
+
+
+def detect_session_end_days(
+    repo: Path, stadium: str, window_end: dt.date,
+    max_sessions: int = MOTOR_HISTORY_LOOKBACK_MAX_SESSIONS,
+    window_days: int = MOTOR_HISTORY_LOOKBACK_DAYS,
+) -> list[dt.date]:
+    """場 stadium の直近 max_sessions 節分の「節最終日」を新→旧で返す。
+
+    window_end は除外(当日を含む節は計算対象から外す)。
+    連続開催日(日差 1 日)を 1 節として束ねる。
+    """
+    open_days: list[dt.date] = []
+    for back in range(1, window_days + 1):
+        d = window_end - dt.timedelta(days=back)
+        if _has_races_at(repo, d, stadium):
+            open_days.append(d)
+    if not open_days:
+        return []
+    open_days.sort()  # 古→新
+
+    sessions: list[list[dt.date]] = []
+    cur: list[dt.date] = []
+    for d in open_days:
+        if not cur or (d - cur[-1]).days <= 1:
+            cur.append(d)
+        else:
+            sessions.append(cur)
+            cur = [d]
+    if cur:
+        sessions.append(cur)
+
+    last_days = [s[-1] for s in sessions]
+    return last_days[-max_sessions:][::-1]  # 新→旧
+
+
+# --- 1 節分の MotorRun 抽出 ---------------------------------------------
+def extract_runs_for_session(
+    repo: Path, stadium: str, session_end: dt.date,
+) -> list[MotorRun]:
+    """節最終日の race_cards + title から MotorRun のリストを生成。"""
+    rc_path = _race_cards_path(repo, session_end)
+    if not rc_path.exists():
+        return []
+    rc = pd.read_csv(rc_path, dtype=str)
+
+    # 当該節当該場のグレード(節内一定)
+    tt_path = _title_path(repo, session_end)
+    grade_bucket = "G2_G3_一般"
+    if tt_path.exists():
+        tt = pd.read_csv(tt_path, dtype=str)
+        if not tt.empty:
+            match = tt[tt["レースコード"].astype(str).str[8:10] == stadium]
+            if not match.empty:
+                grade_bucket = grade_bucket_for_grade(
+                    str(match.iloc[0].get("グレード", "")))
+
+    # 当該場の全レースを舐めて (motor_num → (級別, slot dict)) 辞書を作る(先勝ち)
+    motor_rows: dict[int, tuple[str, dict[str, object]]] = {}
+    for _, row in rc.iterrows():
+        code = str(row.get("レースコード", ""))
+        if len(code) < 10 or code[8:10] != stadium:
+            continue
+        for n in range(1, 7):
+            motor_raw = row.get(f"艇{n}_モーター番号")
+            racer_class = str(row.get(f"艇{n}_級別") or "").strip()
+            try:
+                motor_num = int(float(motor_raw))
+            except (ValueError, TypeError):
+                continue
+            if not racer_class or motor_num in motor_rows:
+                continue
+            slots: dict[str, object] = {}
+            for d in range(1, 8):
+                for s in (1, 2):
+                    slots[f"D{d}走{s}"] = row.get(f"艇{n}_節D{d}走{s}_着順")
+            motor_rows[motor_num] = (racer_class, slots)
+
+    runs: list[MotorRun] = []
+    for motor_num, (racer_class, slots) in motor_rows.items():
+        eff_bucket = resolve_grade_bucket(racer_class, grade_bucket)
+        for d in range(1, 8):
+            for s in (1, 2):
+                token = normalize_finish_token(slots[f"D{d}走{s}"])
+                if token is None:
+                    continue
+                runs.append(MotorRun(
+                    session_end=session_end, stadium=stadium,
+                    motor_num=motor_num, grade_bucket=eff_bucket,
+                    racer_class=racer_class, finish=token,
+                ))
+    return runs
+
+
+# --- 全場横断履歴ローダ -------------------------------------------------
+def load_motor_history(
+    repo: Path, target_day: dt.date,
+    period_starts: dict[tuple[str, int], dt.date] | None = None,
+) -> dict[tuple[str, int], list[list[MotorRun]]]:
+    """Returns {(場, モーター番号): [節1 MotorRun[], 節2, ...]} を新→旧で。
+
+    各リストが 1 節分。最大 MOTOR_HISTORY_SESSIONS (=5) 件。
+    period_starts が与えられた場合、節最終日 < モーター期起算日 の節は剪定する。
+    """
+    if period_starts is None:
+        period_starts = load_motor_period_starts(repo, target_day)
+
+    out: dict[tuple[str, int], list[list[MotorRun]]] = defaultdict(list)
+    for stadium in (f"{i:02d}" for i in sorted(STADIUM_NAMES.keys())):
+        session_ends = detect_session_end_days(repo, stadium, target_day)
+        per_motor: dict[int, list[list[MotorRun]]] = defaultdict(list)
+        for sess_end in session_ends:  # 新→旧
+            sess_runs = extract_runs_for_session(repo, stadium, sess_end)
+            grouped: dict[int, list[MotorRun]] = defaultdict(list)
+            for r in sess_runs:
+                grouped[r.motor_num].append(r)
+            for motor_num, runs in grouped.items():
+                per_motor[motor_num].append(runs)
+        for motor_num, sessions in per_motor.items():
+            period_start = period_starts.get((stadium, motor_num))
+            if period_start is not None:
+                sessions = [s for s in sessions
+                            if s and s[0].session_end >= period_start]
+            if sessions:
+                out[(stadium, motor_num)] = sessions[:MOTOR_HISTORY_SESSIONS]
+    return out
+
+
+def motor_ability_pt(
+    history: dict[tuple[str, int], list[list[MotorRun]]],
+    score_table: dict[tuple[str, str], list[int]],
+    stadium_code2: str, motor_num: int,
+) -> float:
+    """直近 5 節のスコア平均を返す。データなしは NaN(z 化で 50 補完)。"""
+    sessions = history.get((stadium_code2, motor_num))
+    if not sessions:
         return float("nan")
-    return rate
+    total_pt, total_runs = 0, 0
+    for sess in sessions:
+        for run in sess:
+            r = score_motor_run(score_table, run)
+            if r is None:
+                continue
+            total_pt += r[0]
+            total_runs += r[1]
+    if total_runs == 0:
+        return float("nan")
+    return total_pt / total_runs
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -420,13 +713,18 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
     after its historical coverage was reconstructed into the per-source
     families.
 
-    Missing previews / motor stats / recent form fall back to NaN in the
+    Motor pts: ``モーターpt`` = average of (級別×グレード得点) over the motor's
+    last 5 節 at the same stadium, with motor period boundary (`モーター期起算日`)
+    enforced. See ``docs/design/motor_ability_index.md`` for details.
+
+    Missing previews / motor history / recent form fall back to NaN in the
     relevant columns.
     """
     season = SEASON_BY_MONTH[day.month]
 
     waku_tab = load_waku_table(repo)
-    motor_tab = load_motor_table_for_day(repo, day)
+    motor_score_table = load_motor_score_table(repo)
+    motor_history = load_motor_history(repo, day)
     sui = load_sui_params(repo)
 
     prog_path = repo / "data" / "programs" / "race_cards" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv"
@@ -503,7 +801,8 @@ def compute_features_for_day(repo: Path, day: dt.date) -> pd.DataFrame:
             motor_raw = prog_row.get(f"艇{waku}_モーター番号", "")
             try:
                 m_num = int(float(motor_raw))
-                mpt = motor_pt(motor_tab, stadium_code2, m_num)
+                mpt = motor_ability_pt(
+                    motor_history, motor_score_table, stadium_code2, m_num)
             except (ValueError, TypeError):
                 mpt = float("nan")
 

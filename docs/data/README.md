@@ -17,6 +17,7 @@
 | 結果 | Realtime Payouts | `data/results/payouts/YYYY/MM/DD.csv` | [results.md#realtime-payouts](./results.md#realtime-payouts) |
 | 派生 | Strength Index | `data/estimate/index/YYYY/MM/DD.csv` | [estimate.md#strength-index](./estimate.md#strength-index) |
 | 派生 | Stadium Parameters | `data/estimate/stadium/*.csv` | [estimate.md#stadium-parameters](./estimate.md#stadium-parameters) |
+| 派生 | Motor Ability Score | `data/estimate/motor_ability_score.csv` | [motor_ability_score.md](./motor_ability_score.md) |
 
 ## ファイル間の関係性
 

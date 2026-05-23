@@ -257,6 +257,17 @@ The script fetches `bc_mst` (motor period start date) and `bc_mdc` (per-motor st
 
 ### Build Strength Index(強さポイント)
 
+**依存データ**(`compute_features_for_day` が参照する CSV):
+
+- `data/programs/race_cards/YYYY/MM/DD.csv` — レース集合・モーター番号・級別・節間14スロット成績
+- `data/programs/recent_national/` + `recent_local/YYYY/MM/DD.csv` — 選手pt の着順時系列
+- `data/programs/motor_stats/YYYY/MM/DD.csv` — モーターpt の **モーター期起算日**(履歴リセット境界)
+- `data/programs/title/YYYY/MM/DD.csv` — モーターpt のグレード分類(任意。無い場合は「一般」扱い)
+- `data/previews/{sui,tkz,stt,original_exhibition}/YYYY/MM/DD.csv` — 展示・気象
+- `data/estimate/motor_ability_score.csv` — **モーターpt のスコアテーブル(必須)**。
+  詳細は [`docs/data/motor_ability_score.md`](./data/motor_ability_score.md)
+- `data/estimate/stadium/win_rate.csv` / `sui_params.csv` / `index_weights/YYYY-MM.csv`
+
 ```bash
 # 当日朝に走らせる日次バッチ:
 #   枠番・選手・モーター + 暫定強さpt を埋める。展示・気象は 50 で補完。
@@ -287,7 +298,7 @@ python scripts/build_weights.py --month 2026-04
 python scripts/build_weights.py --month 2026-03
 ```
 
-学習窓は `[対象月 - 6ヶ月, 対象月 - 1日]`(対象月のデータは含まない=リーケージなし)。場ごとに非負・合計1の制約で SLSQP 最適化。motor_stats の収録履歴が短い場合、motor 重みは小さくなる傾向あり。
+学習窓は `[対象月 - 6ヶ月, 対象月 - 1日]`(対象月のデータは含まない=リーケージなし)。場ごとに非負・合計1の制約で SLSQP 最適化。モーターpt は「直近5節 × 級別×グレード得点平均」(モーター期起算日でリセット)なので、race_cards の収録履歴が短い場合は motor 重みが小さくなる傾向あり。
 
 ### Build Stadium Weather Params (sui_params.csv)
 
