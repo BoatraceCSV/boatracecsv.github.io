@@ -60,18 +60,24 @@ def _make_upload_results(*changed_csv_types: str) -> list[UploadResult]:
 
 def test_build_csv_specs_includes_results():
     """``_build_csv_specs`` must include the realtime results and payouts
-    CSVs so fun-site can read finished-race data via the GCS mirror."""
+    CSVs so fun-site can read finished-race data via the GCS mirror.
+
+    Index CSVs are now predictor-specific (``index:{predictor_id}``); one
+    spec per active predictor is inserted between ``stt`` and ``results``.
+    """
     specs = _build_csv_specs(Path("/tmp"), dt.date(2026, 5, 7))
     csv_types = [s.csv_type for s in specs]
 
     assert "results" in csv_types
     assert "payouts" in csv_types
-    # All six expected types are present in stable order.
+    # Phase 1 has only v1_basic active; the index spec uses the predictor-
+    # aware csv_type form. When new predictors are added, expect more
+    # ``index:...`` entries before ``results``.
     assert csv_types == [
         "title",
         "race_cards",
         "stt",
-        "index",
+        "index:v1_basic",
         "results",
         "payouts",
     ]
@@ -145,7 +151,7 @@ def test_assemble_with_realtime_and_result_codes(tmp_path):
         ],
     )
 
-    upload_results = _make_upload_results("stt", "index", "results")
+    upload_results = _make_upload_results("stt", "index:v1_basic", "results")
     updated, trigger = assemble_updated_races(
         tmp_path,
         day,
@@ -159,11 +165,11 @@ def test_assemble_with_realtime_and_result_codes(tmp_path):
 
     # 102 は preview なし・結果ありなので results のみ
     assert by_code["202605070102"].csv_types == {"results"}
-    # 201 は preview あり・結果なしなので stt/index
-    assert by_code["202605070201"].csv_types == {"stt", "index"}
+    # 201 は preview あり・結果なしなので stt/index:v1_basic
+    assert by_code["202605070201"].csv_types == {"stt", "index:v1_basic"}
     assert by_code["202605070201"].index_state == "realtime"
     # 101 は両方ある
-    assert by_code["202605070101"].csv_types == {"stt", "index", "results"}
+    assert by_code["202605070101"].csv_types == {"stt", "index:v1_basic", "results"}
     assert by_code["202605070101"].index_state == "realtime"
 
 
@@ -277,7 +283,7 @@ def test_assemble_without_result_updated_codes_argument(tmp_path):
     day = dt.date(2026, 5, 7)
     _write_race_cards(tmp_path, day, [("202605070101", "01", "01")])
 
-    upload_results = _make_upload_results("stt", "index")
+    upload_results = _make_upload_results("stt", "index:v1_basic")
     # Positional / keyword 両方の旧シグネチャで呼べることを確認
     updated, trigger = assemble_updated_races(
         tmp_path,
@@ -288,4 +294,4 @@ def test_assemble_without_result_updated_codes_argument(tmp_path):
 
     assert trigger == "realtime"
     assert len(updated) == 1
-    assert updated[0].csv_types == {"stt", "index"}
+    assert updated[0].csv_types == {"stt", "index:v1_basic"}

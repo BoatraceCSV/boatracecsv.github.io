@@ -27,6 +27,7 @@ from build_index import (
     index_csv_path,
     update_index_for_races,
 )
+from boatrace.predictors import predictor_by_id  # type: ignore[import-not-found]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -34,6 +35,11 @@ from build_index import (
 # ─────────────────────────────────────────────────────────────────────
 
 DAY = dt.date(2026, 5, 10)
+
+# Phase 1 のテストは v1_basic (= 現行 5 成分) に対して動作確認する。
+# 新規予想者を追加した際は、各シナリオを registry の active 予想者で
+# 反復するように `pytest.fixture(params=...)` 化を検討。
+V1 = predictor_by_id("v1_basic")
 
 
 def _make_long_df(race_codes: list[str]) -> pd.DataFrame:
@@ -67,10 +73,10 @@ def _make_long_df(race_codes: list[str]) -> pd.DataFrame:
 def _build_initial_daily_csv(repo: Path, race_codes: list[str]) -> Path:
     """Write a ``状態=daily`` CSV that the morning batch would have produced.
 
-    Schema follows ``index_columns()``. Numeric pt columns are left empty
+    Schema follows ``index_columns(V1)``. Numeric pt columns are left empty
     (equivalent to NaN) — we only care about meta columns + 状態 here.
     """
-    cols = index_columns()
+    cols = index_columns(V1)
     rows = []
     for code in race_codes:
         row = {c: "" for c in cols}
@@ -81,7 +87,7 @@ def _build_initial_daily_csv(repo: Path, race_codes: list[str]) -> Path:
         row["状態"] = STATE_DAILY
         rows.append(row)
     df = pd.DataFrame(rows, columns=cols)
-    csv_path = index_csv_path(repo, DAY)
+    csv_path = index_csv_path(repo, DAY, V1)
     atomic_write_csv(df, csv_path)
     return csv_path
 
@@ -103,7 +109,7 @@ def patched_features(monkeypatch):
         monkeypatch.setattr(
             build_index,
             "find_weights_file",
-            lambda repo, day: None,
+            lambda repo, predictor, day: None,
         )
 
     return install
@@ -126,8 +132,7 @@ def test_realtime_row_is_added_alongside_daily(tmp_path, patched_features):
     csv_path = _build_initial_daily_csv(tmp_path, [code])
     patched_features([code])
 
-    n = update_index_for_races(tmp_path, DAY, [code])
-
+    n = update_index_for_races(tmp_path, DAY, [code], V1)
     assert n == 1
     df = _read_csv(csv_path)
     assert len(df) == 2
@@ -141,9 +146,9 @@ def test_repeated_realtime_call_upserts_in_place(tmp_path, patched_features):
     csv_path = _build_initial_daily_csv(tmp_path, [code])
     patched_features([code])
 
-    update_index_for_races(tmp_path, DAY, [code])
-    update_index_for_races(tmp_path, DAY, [code])
-    update_index_for_races(tmp_path, DAY, [code])
+    update_index_for_races(tmp_path, DAY, [code], V1)
+    update_index_for_races(tmp_path, DAY, [code], V1)
+    update_index_for_races(tmp_path, DAY, [code], V1)
 
     df = _read_csv(csv_path)
     assert len(df) == 2
@@ -161,7 +166,7 @@ def test_other_races_are_byte_equivalent(tmp_path, patched_features):
     other_before = before[before["レースコード"] == other].reset_index(drop=True)
 
     patched_features([target])  # only target has fresh features
-    update_index_for_races(tmp_path, DAY, [target])
+    update_index_for_races(tmp_path, DAY, [target], V1)
 
     after = _read_csv(csv_path)
     other_after = after[after["レースコード"] == other].reset_index(drop=True)
@@ -174,18 +179,18 @@ def test_legacy_csv_without_state_column_is_treated_as_daily(
     """``状態`` 列が存在しない旧 CSV を読み込んでも壊れず daily 扱いで残る。"""
     code = "202605101508"
     # 旧 CSV: 状態列を **意図的に** 落として書き出す
-    cols = [c for c in index_columns() if c != "状態"]
+    cols = [c for c in index_columns(V1) if c != "状態"]
     row = {c: "" for c in cols}
     row["レースコード"] = code
     row["レース日"] = DAY.strftime("%Y-%m-%d")
     row["レース場コード"] = code[8:10]
     row["レース回"] = str(int(code[10:12]))
     legacy = pd.DataFrame([row], columns=cols)
-    csv_path = index_csv_path(tmp_path, DAY)
+    csv_path = index_csv_path(tmp_path, DAY, V1)
     atomic_write_csv(legacy, csv_path)
 
     patched_features([code])
-    n = update_index_for_races(tmp_path, DAY, [code])
+    n = update_index_for_races(tmp_path, DAY, [code], V1)
 
     assert n == 1
     df = _read_csv(csv_path)
@@ -198,9 +203,9 @@ def test_missing_csv_returns_zero(tmp_path, patched_features):
     """CSV が存在しない場合は no-op で 0 を返す。"""
     code = "202605101508"
     patched_features([code])
-    n = update_index_for_races(tmp_path, DAY, [code])
+    n = update_index_for_races(tmp_path, DAY, [code], V1)
     assert n == 0
-    assert not index_csv_path(tmp_path, DAY).exists()
+    assert not index_csv_path(tmp_path, DAY, V1).exists()
 
 
 def test_empty_race_codes_returns_zero(tmp_path, patched_features):
@@ -210,7 +215,7 @@ def test_empty_race_codes_returns_zero(tmp_path, patched_features):
     before_bytes = csv_path.read_bytes()
 
     patched_features([code])
-    n = update_index_for_races(tmp_path, DAY, [])
+    n = update_index_for_races(tmp_path, DAY, [], V1)
 
     assert n == 0
     assert csv_path.read_bytes() == before_bytes
@@ -251,7 +256,8 @@ def test_missing_racer_pt_falls_back_to_30_not_50():
 
     row = _build_one_race_row(
         code=code, meta_row=boats.iloc[0], boats=boats,
-        weights=weights, state=STATE_REALTIME, skip_preview=False,
+        weights=weights, state=STATE_REALTIME, predictor=V1,
+        skip_preview=False,
     )
 
     # 1枠は選手pt欠損 → 30で補完される(50ではない)
@@ -269,7 +275,7 @@ def test_output_is_sorted_by_race_code_then_state(tmp_path, patched_features):
     csv_path = _build_initial_daily_csv(tmp_path, [b, a])  # わざと逆順で投入
 
     patched_features([a, b])
-    update_index_for_races(tmp_path, DAY, [a, b])
+    update_index_for_races(tmp_path, DAY, [a, b], V1)
 
     df = _read_csv(csv_path)
     pairs = list(zip(df["レースコード"].tolist(), df["状態"].tolist()))

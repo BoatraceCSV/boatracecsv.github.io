@@ -10,7 +10,8 @@ This module is invoked at the very end of ``preview-realtime.py`` to:
    * ``data/programs/title/YYYY/MM/DD.csv`` (daily-sync の成果物)
    * ``data/programs/race_cards/YYYY/MM/DD.csv`` (daily-sync の成果物)
    * ``data/previews/stt/YYYY/MM/DD.csv`` (preview-realtime が追記)
-   * ``data/estimate/index/YYYY/MM/DD.csv`` (preview-realtime が更新)
+   * ``data/estimate/{predictor_id}/YYYY/MM/DD.csv`` (各 active 予想者 1 件ずつ。
+     csv_type は ``index:{predictor_id}`` 形式)
    * ``data/results/realtime/YYYY/MM/DD.csv`` (preview-realtime が追記)
    * ``data/results/payouts/YYYY/MM/DD.csv`` (preview-realtime が追記)
 
@@ -43,6 +44,12 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from . import logger as logging_module
+from .predictors import active_predictors
+
+# 予想者別 index CSV の csv_type プリフィックス。
+# csv_type = f"{INDEX_CSV_TYPE_PREFIX}{predictor_id}"
+# 例: "index:v1_basic" / "index:v2_tenkai"
+INDEX_CSV_TYPE_PREFIX = "index:"
 
 # Imports are deferred so that the module can be imported even if the GCP
 # client libraries are not yet installed (e.g. during pure-Python unit tests).
@@ -69,10 +76,28 @@ JST = dt.timezone(dt.timedelta(hours=9))
 
 @dataclass
 class CsvUploadSpec:
-    """One CSV file to mirror to GCS."""
+    """One CSV file to mirror to GCS.
 
-    csv_type: str  # "title" / "race_cards" / "stt" / "index" / "results" / "payouts"
+    ``csv_type`` is a stable identifier used by fun-site (via Pub/Sub) to
+    decide which CSV to re-fetch. Predictor-specific index CSVs encode the
+    predictor id as ``"index:<predictor_id>"`` (e.g. ``"index:v1_basic"``);
+    fun-site parses this to map back to its own predictor registry.
+    """
+
+    csv_type: str  # "title" / "race_cards" / "stt" / "index:<pred>" / "results" / "payouts"
     repo_relative_path: str  # "data/programs/title/2026/05/06.csv" 等
+
+
+def is_index_csv_type(csv_type: str) -> bool:
+    """``csv_type`` が予想者別 index CSV (``index:...``) か判定。"""
+    return csv_type.startswith(INDEX_CSV_TYPE_PREFIX)
+
+
+def predictor_id_from_index_csv_type(csv_type: str) -> str:
+    """``"index:v1_basic"`` → ``"v1_basic"``。``index:`` プリフィックスを剥がす。"""
+    if not is_index_csv_type(csv_type):
+        raise ValueError(f"Not an index csv_type: {csv_type!r}")
+    return csv_type[len(INDEX_CSV_TYPE_PREFIX):]
 
 
 @dataclass
@@ -127,22 +152,32 @@ def _gcs_md5_hex(blob) -> Optional[str]:
 
 
 def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
-    """fun-site が当日ビルドで読む 6 種類の CSV のローカル相対パスを列挙。
+    """fun-site が当日ビルドで読む CSV のローカル相対パスを列挙。
 
     ``results`` は preview-realtime が当日確定直後に追記する realtime 結果
     CSV (``data/results/realtime/YYYY/MM/DD.csv``)。``payouts`` は同じく
     確定直後に bc_rs2 から追記する払戻 CSV
     (``data/results/payouts/YYYY/MM/DD.csv``)。
+
+    Index CSV はレジストリの active 予想者ぶん列挙され、それぞれ
+    csv_type=``index:{predictor_id}`` でアップロードされる。
     """
     ymd = f"{day:%Y}/{day:%m}/{day:%d}"
-    return [
+    specs: List[CsvUploadSpec] = [
         CsvUploadSpec("title", f"data/programs/title/{ymd}.csv"),
         CsvUploadSpec("race_cards", f"data/programs/race_cards/{ymd}.csv"),
         CsvUploadSpec("stt", f"data/previews/stt/{ymd}.csv"),
-        CsvUploadSpec("index", f"data/estimate/index/{ymd}.csv"),
+    ]
+    for predictor in active_predictors():
+        specs.append(CsvUploadSpec(
+            csv_type=f"{INDEX_CSV_TYPE_PREFIX}{predictor.predictor_id}",
+            repo_relative_path=f"data/estimate/{predictor.predictor_id}/{ymd}.csv",
+        ))
+    specs.extend([
         CsvUploadSpec("results", f"data/results/realtime/{ymd}.csv"),
         CsvUploadSpec("payouts", f"data/results/payouts/{ymd}.csv"),
-    ]
+    ])
+    return specs
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +308,9 @@ def assemble_updated_races(
       payload が空にならないように、各軸を独立に扱う。
     """
     changed_types: Set[str] = {r.spec.csv_type for r in upload_results if r.changed}
+    changed_index_types: Set[str] = {
+        t for t in changed_types if is_index_csv_type(t)
+    }
 
     by_code: Dict[str, UpdatedRace] = {}
 
@@ -297,8 +335,9 @@ def assemble_updated_races(
                     entry.csv_types.add(t)
             if "stt" in changed_types:
                 entry.csv_types.add("stt")
-            if "index" in changed_types:
-                entry.csv_types.add("index")
+            if changed_index_types:
+                # 予想者別 index CSV をそれぞれ csv_types に追加。
+                entry.csv_types.update(changed_index_types)
                 entry.index_state = "daily"
             if "results" in changed_types:
                 entry.csv_types.add("results")
@@ -332,8 +371,8 @@ def assemble_updated_races(
             )
             if "stt" in changed_types:
                 entry.csv_types.add("stt")
-            if "index" in changed_types:
-                entry.csv_types.add("index")
+            if changed_index_types:
+                entry.csv_types.update(changed_index_types)
                 entry.index_state = realtime_index_state
 
         for code in sorted(result_set):

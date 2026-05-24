@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Fit per-stadium 5-component weights from the last 6 months of data.
+Fit per-stadium component weights from the last 6 months of data.
 
-For each stadium:
-    1. Compute (waku, racer, motor, exhibit, weather) raw pts on-the-fly
-       for every race in [target_month - 6mo, target_month - 1day].
+For each (predictor, stadium):
+    1. Compute the predictor's raw component pts on-the-fly for every race
+       in [target_month - 6mo, target_month - 1day].
     2. Join with results to get the actual finish (1..6) per boat.
     3. Standardize each feature by stadium-wide (μ, σ) over that window.
     4. Solve the constrained optimization
@@ -12,10 +12,14 @@ For each stadium:
             subject to  w ≥ 0,  Σ w = 1
        where y_std = standardized (7 − finish).
 
-Output: data/estimate/stadium/index_weights/YYYY-MM.csv (one row per stadium).
+Output: data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv
+(one row per stadium, with mu_{k}/sigma_{k}/w_{k} for each k in the
+predictor's ``component_keys``).
 
 Usage:
     python scripts/build_weights.py --month 2026-05
+    python scripts/build_weights.py --month 2026-05 --predictor v1_basic
+    python scripts/build_weights.py --month 2026-05 --all-active
 """
 from __future__ import annotations
 
@@ -28,11 +32,24 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
-# Local import — reuse build_index feature builders
+# Local import — reuse build_index feature builders & predictor registry
 sys.path.insert(0, str(Path(__file__).parent))
 from boatrace.index_features import (  # noqa: E402
-    COMPONENT_KEYS, STADIUM_NAMES, FeatureContext, compute_features_for_day,
+    STADIUM_NAMES, FeatureContext, compute_features_for_day,
 )
+from boatrace.predictors import (  # noqa: E402
+    PredictorSpec, active_predictors, predictor_by_id,
+)
+
+
+DEFAULT_PREDICTOR_ID = "v1_basic"
+
+# 6 ヶ月 backfill が揃わない (= 訓練ウィンドウ全体で値を取れない可能性が高い)
+# 成分。fit_one での欠損処理を component_keys に対して動的に分岐する。
+# motor は motor_stats CSV が当日開催のある場のみ収録するため期境界以前の
+# データが手に入らず、長期 backfill が原理的にできない。
+# 新しい "短期成分" を追加する場合はここに追記する。
+SHORT_HISTORY_COMPONENTS: frozenset[str] = frozenset({"motor"})
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -111,23 +128,30 @@ def build_training_table(repo: Path, start: dt.date, end: dt.date) -> pd.DataFra
 # ─────────────────────────────────────────────────────────────────────
 # 3. Per-stadium fit: standardize then constrained NNLS
 # ─────────────────────────────────────────────────────────────────────
-def fit_one(df_st: pd.DataFrame) -> dict:
-    """df_st has columns: waku, racer, motor, exhibit, weather, 着順.
+def fit_one(df_st: pd.DataFrame, component_keys: tuple[str, ...]) -> dict:
+    """Per-stadium SLSQP weight fit for an arbitrary component list.
+
+    ``df_st`` must contain raw feature columns for every ``component_keys`` plus
+    the ``着順`` outcome column.
 
     Returns dict with: mu, sigma per feature, w per feature, mu_y, sigma_y,
     n_samples, mse, r2, fallback (bool).
 
     Per-column μ, σ are computed using ONLY non-NaN rows of that column —
-    this lets motor (whose data window is shorter) keep its scale even
-    when the SLSQP fit can only use rows where all 5 features are present.
+    this lets short-history components (``SHORT_HISTORY_COMPONENTS``) keep
+    their scale even when the SLSQP fit can only use rows where all features
+    are present.
     """
+    n_components = len(component_keys)
+    fallback_weight = 1.0 / n_components
+
     # Per-column statistics — keep each feature's μ/σ on its own valid window.
-    # motor especially has a much shorter history (motor_stats backfill is not
-    # possible), so other features' μ/σ should not be limited by motor's NaN rows.
+    # Short-history components (e.g. motor: motor_stats only backfills a few
+    # days) would otherwise truncate every other feature's training window.
     mus: dict[str, float] = {}
     sigmas: dict[str, float] = {}
-    for k in COMPONENT_KEYS:
-        col = df_st[k].dropna()
+    for k in component_keys:
+        col = df_st[k].dropna() if k in df_st.columns else pd.Series(dtype=float)
         if len(col) > 0:
             mus[k] = float(col.mean())
             sigmas[k] = max(float(col.std(ddof=0)), 1e-9)
@@ -135,26 +159,30 @@ def fit_one(df_st: pd.DataFrame) -> dict:
             mus[k] = 0.0
             sigmas[k] = 1.0
 
-    # For SLSQP fitting, require at minimum 着順 + the 4 features that backfill
-    # the entire 6-month window. motor only goes back a handful of days; rather
-    # than dropping those rows, impute its missing values with μ_motor (Z=0).
-    needed = ["waku", "racer", "exhibit", "weather", "着順"]
+    # For SLSQP fitting, require at minimum 着順 + every long-history feature
+    # (everything except SHORT_HISTORY_COMPONENTS) to be non-NaN. Short-history
+    # features are imputed with their own μ (standardised z=0) so the row
+    # contributes neutrally rather than being dropped.
+    long_history = [k for k in component_keys if k not in SHORT_HISTORY_COMPONENTS]
+    needed = long_history + ["着順"]
     sub = df_st.dropna(subset=needed).copy()
     sub["着順"] = sub["着順"].astype(int)
     sub = sub[(sub["着順"] >= 1) & (sub["着順"] <= 6)]
-    sub["motor"] = sub["motor"].fillna(mus["motor"])  # impute → standardised z=0
+    for k in component_keys:
+        if k in SHORT_HISTORY_COMPONENTS and k in sub.columns:
+            sub[k] = sub[k].fillna(mus[k])  # impute → standardised z=0
     n = len(sub)
 
     if n < 60:
         # Insufficient joint data — fall back to equal weights but keep
         # the per-column μ/σ we already computed
-        w = {k: 0.2 for k in COMPONENT_KEYS}
+        w = {k: fallback_weight for k in component_keys}
         return dict(mu=mus, sigma=sigmas, w=w, mu_y=3.5, sigma_y=1.0,
                     n_samples=n, mse=float("nan"), r2=float("nan"), fallback=True)
 
     # Use the per-column μ, σ we already computed (above)
     Z = np.column_stack([
-        (sub[k].values - mus[k]) / sigmas[k] for k in COMPONENT_KEYS
+        (sub[k].values - mus[k]) / sigmas[k] for k in component_keys
     ])
 
     # Target: 7 - 着順 (higher = better), then standardize
@@ -171,15 +199,15 @@ def fit_one(df_st: pd.DataFrame) -> dict:
         return 2.0 * Z.T @ (Z @ w - y) / len(y)
 
     constraints = ({"type": "eq", "fun": lambda w: float(np.sum(w) - 1.0)},)
-    bounds = [(0.0, 1.0)] * len(COMPONENT_KEYS)
-    w0 = np.full(len(COMPONENT_KEYS), 1.0 / len(COMPONENT_KEYS))
+    bounds = [(0.0, 1.0)] * n_components
+    w0 = np.full(n_components, fallback_weight)
 
     res = minimize(objective, w0, jac=grad, method="SLSQP",
                    bounds=bounds, constraints=constraints,
                    options={"maxiter": 200, "ftol": 1e-9})
     w_arr = np.clip(res.x, 0.0, None)
     s = w_arr.sum()
-    w_arr = w_arr / s if s > 0 else np.full_like(w_arr, 1.0 / len(COMPONENT_KEYS))
+    w_arr = w_arr / s if s > 0 else np.full_like(w_arr, fallback_weight)
 
     # Metrics on standardized scale
     pred = Z @ w_arr
@@ -188,7 +216,7 @@ def fit_one(df_st: pd.DataFrame) -> dict:
     ss_tot = float(np.sum((y - y.mean()) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
-    w = {k: float(v) for k, v in zip(COMPONENT_KEYS, w_arr)}
+    w = {k: float(v) for k, v in zip(component_keys, w_arr)}
     return dict(mu=mus, sigma=sigmas, w=w, mu_y=mu_y, sigma_y=sigma_y,
                 n_samples=n, mse=mse, r2=r2, fallback=False)
 
@@ -196,12 +224,14 @@ def fit_one(df_st: pd.DataFrame) -> dict:
 # ─────────────────────────────────────────────────────────────────────
 # 4. Output schema
 # ─────────────────────────────────────────────────────────────────────
-def _flatten_row(stadium: str, fit: dict) -> dict:
-    row = {"stadium": stadium, "n_samples": fit["n_samples"]}
-    for k in COMPONENT_KEYS:
+def _flatten_row(
+    stadium: str, fit: dict, component_keys: tuple[str, ...],
+) -> dict:
+    row: dict = {"stadium": stadium, "n_samples": fit["n_samples"]}
+    for k in component_keys:
         row[f"mu_{k}"] = round(fit["mu"][k], 6)
         row[f"sigma_{k}"] = round(fit["sigma"][k], 6)
-    for k in COMPONENT_KEYS:
+    for k in component_keys:
         row[f"w_{k}"] = round(fit["w"][k], 6)
     row["mu_y"] = round(fit["mu_y"], 6)
     row["sigma_y"] = round(fit["sigma_y"], 6)
@@ -211,12 +241,14 @@ def _flatten_row(stadium: str, fit: dict) -> dict:
     return row
 
 
-def save_weights(path: Path, results: dict):
+def save_weights(
+    path: Path, results: dict, component_keys: tuple[str, ...],
+) -> None:
     rows = []
     # Order by canonical stadium code
     for code, name in STADIUM_NAMES.items():
         if name in results:
-            rows.append(_flatten_row(name, results[name]))
+            rows.append(_flatten_row(name, results[name], component_keys))
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(path, index=False)
 
@@ -246,13 +278,64 @@ def six_months_before(d: dt.date) -> dt.date:
     return dt.date(y, m, 1)
 
 
+def _resolve_predictors(
+    args_predictor: str | None, all_active: bool,
+) -> list[PredictorSpec]:
+    """``--predictor`` / ``--all-active`` の組合せから対象予想者を解決する。"""
+    if all_active:
+        if args_predictor:
+            sys.exit("--predictor and --all-active are mutually exclusive")
+        actives = active_predictors()
+        if not actives:
+            sys.exit("No active predictors in registry; nothing to do.")
+        return list(actives)
+    return [predictor_by_id(args_predictor or DEFAULT_PREDICTOR_ID)]
+
+
+def _fit_predictor(
+    repo: Path, training_df: pd.DataFrame, predictor: PredictorSpec,
+    target: dt.date, out_override: Path | None,
+) -> None:
+    """1 予想者ぶんの per-stadium fit & save。"""
+    print(
+        f"\n▼ Fitting [{predictor.predictor_id}] "
+        f"({len(predictor.component_keys)} components)...",
+        file=sys.stderr,
+    )
+    component_keys = predictor.component_keys
+    results: dict[str, dict] = {}
+    for code, name in STADIUM_NAMES.items():
+        sub = training_df[training_df["レース場コード"] == f"{code:02d}"]
+        fit = fit_one(sub, component_keys)
+        results[name] = fit
+        tag = " (FALLBACK)" if fit["fallback"] else ""
+        ws = "  ".join(f"{k}={fit['w'][k]:.3f}" for k in component_keys)
+        r2_str = "nan" if np.isnan(fit["r2"]) else f"{fit['r2']:.3f}"
+        print(f"  {name}: n={fit['n_samples']:>6,} R²={r2_str}  {ws}{tag}",
+              file=sys.stderr)
+
+    out_path = out_override or predictor.weights_csv_path(repo, target)
+    save_weights(out_path, results, component_keys)
+    print(
+        f"  Saved {len(results)} stadiums → {out_path}",
+        file=sys.stderr,
+    )
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--repo-root", default=str(Path(__file__).parent.parent))
     p.add_argument("--month", required=True, help="Target month YYYY-MM. Training "
                                                    "window = [month-6mo, month-1day].")
     p.add_argument("--out", default=None,
-                   help="Override output path (default: data/estimate/stadium/index_weights/YYYY-MM.csv)")
+                   help="Override output path. Only valid with a single "
+                        "--predictor (not with --all-active).")
+    p.add_argument("--predictor", default=None,
+                   help=f"Predictor ID to fit (default: {DEFAULT_PREDICTOR_ID}). "
+                        f"Mutually exclusive with --all-active.")
+    p.add_argument("--all-active", action="store_true",
+                   help="Fit every active predictor in the registry. "
+                        "Mutually exclusive with --predictor / --out.")
     args = p.parse_args()
 
     repo = Path(args.repo_root).resolve()
@@ -260,33 +343,30 @@ def main():
     end = target - dt.timedelta(days=1)            # last day before target month
     start = six_months_before(target)              # 6 months back, first of month
 
+    predictors = _resolve_predictors(args.predictor, args.all_active)
+    if args.out and len(predictors) > 1:
+        sys.exit("--out cannot be combined with --all-active")
+
     print(f"▼ Target month: {target:%Y-%m}", file=sys.stderr)
     print(f"  Training window: {start} → {end}", file=sys.stderr)
+    print(
+        f"  Predictors: {[p.predictor_id for p in predictors]}",
+        file=sys.stderr,
+    )
 
-    print("\n▼ Building training table...", file=sys.stderr)
+    # The training table is feature-agnostic: compute_features_for_day emits
+    # every known component column, so a single table feeds all predictors.
+    print("\n▼ Building training table (shared across predictors)...",
+          file=sys.stderr)
     df = build_training_table(repo, start, end)
     if df.empty:
         print("No training data; aborting.", file=sys.stderr)
         sys.exit(1)
     print(f"  Total rows: {len(df):,}", file=sys.stderr)
 
-    print("\n▼ Fitting per stadium...", file=sys.stderr)
-    results = {}
-    for code, name in STADIUM_NAMES.items():
-        sub = df[df["レース場コード"] == f"{code:02d}"]
-        fit = fit_one(sub)
-        results[name] = fit
-        tag = " (FALLBACK)" if fit["fallback"] else ""
-        ws = "  ".join(f"{k}={fit['w'][k]:.3f}" for k in COMPONENT_KEYS)
-        r2_str = "nan" if np.isnan(fit["r2"]) else f"{fit['r2']:.3f}"
-        print(f"  {name}: n={fit['n_samples']:>6,} R²={r2_str}  {ws}{tag}",
-              file=sys.stderr)
-
-    out_path = (Path(args.out) if args.out
-                else repo / "data" / "estimate" / "stadium" / "index_weights"
-                / f"{target:%Y-%m}.csv")
-    save_weights(out_path, results)
-    print(f"\n▼ Saved {len(results)} stadiums → {out_path}", file=sys.stderr)
+    out_override = Path(args.out) if args.out else None
+    for predictor in predictors:
+        _fit_predictor(repo, df, predictor, target, out_override)
 
 
 if __name__ == "__main__":

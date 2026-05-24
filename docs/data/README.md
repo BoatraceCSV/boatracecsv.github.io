@@ -15,8 +15,8 @@
 | 直前情報 | Realtime Preview (4 sources) | `data/previews/{tkz,stt,sui,original_exhibition}/YYYY/MM/DD.csv` | [previews.md](./previews.md) |
 | 結果 | Realtime Results | `data/results/realtime/YYYY/MM/DD.csv` | [results.md#realtime-results](./results.md#realtime-results) |
 | 結果 | Realtime Payouts | `data/results/payouts/YYYY/MM/DD.csv` | [results.md#realtime-payouts](./results.md#realtime-payouts) |
-| 派生 | Strength Index | `data/estimate/index/YYYY/MM/DD.csv` | [estimate.md#strength-index](./estimate.md#strength-index) |
-| 派生 | Stadium Parameters | `data/estimate/stadium/*.csv` | [estimate.md#stadium-parameters](./estimate.md#stadium-parameters) |
+| 派生 | Strength Index | `data/estimate/{predictor_id}/YYYY/MM/DD.csv` | [estimate.md#strength-index](./estimate.md#strength-index) |
+| 派生 | Stadium Parameters | `data/estimate/stadium/*.csv`, `data/estimate/stadium/weights/{predictor_id}/*.csv` | [estimate.md#stadium-parameters](./estimate.md#stadium-parameters) |
 | 派生 | Motor Ability Score | `data/estimate/motor_ability_score.csv` | [motor_ability_score.md](./motor_ability_score.md) |
 
 ## ファイル間の関係性
@@ -36,13 +36,14 @@ Motor Stats           → モーター期成績スナップショット(場×モ
      ↓
 Realtime Preview      → 締切5分前の直前情報(tkz / stt / sui / original_exhibition の per-source 追記)
      ↓
-Strength Index        → 派生:5要素を場別重みで線形結合した強さポイント
+Strength Index        → 派生:特徴量を場別重みで線形結合した強さポイント
+                         (active 予想者ごとに data/estimate/{predictor_id}/ に出力)
      ↓
 Realtime Results      → 締切+3〜30分の準リアルタイム結果(bc_rs1_2 由来)
      ↓
 Realtime Payouts      → 締切+3〜30分の払戻金(bc_rs2 由来)
 
-Stadium Parameters    → win_rate.csv / sui_params.csv / index_weights/*.csv (Index 計算の参照テーブル)
+Stadium Parameters    → win_rate.csv / sui_params.csv / weights/{predictor_id}/*.csv (Index 計算の参照テーブル)
 ```
 
 **基本的な追跡方法**: 同じ `レースコード` で各ファイルを紐付けることで、レースの事前情報から当日の展示・直前情報、最終結果までを一貫して追跡できます。

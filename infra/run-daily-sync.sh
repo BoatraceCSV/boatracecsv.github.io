@@ -9,8 +9,9 @@
 #      individual script are logged but do not abort the run (mirrors the
 #      `if: always() / continue-on-error: true` semantics of the original
 #      GitHub Actions workflow).
-#   3. Commits + pushes data/estimate/index/ (build_index.py does not
-#      self-commit, unlike the other scripts).
+#   3. Commits + pushes data/estimate/{predictor_id}/ for each active
+#      predictor (build_index.py does not self-commit, unlike the other
+#      scripts).
 #   4. Calls boatrace.gcs_publisher to mirror today's CSVs to GCS and
 #      emit one Pub/Sub message — same publisher path that
 #      preview-realtime.py uses, ensuring fun-site picks up the daily
@@ -83,6 +84,11 @@ fi
 TODAY_YM=$(TZ=Asia/Tokyo date -d "${TODAY_JST}" +'%Y/%m')
 PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date -d "${TODAY_JST}" +'%Y-%m-15') -1 month" +'%Y/%m')
 
+# Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
+# ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
+# sparse-checkout と commit パス展開、--all-active 後の add 対象に使用。
+ACTIVE_PREDICTORS=(v1_basic)
+
 WORKDIR="$(mktemp -d -t daily-sync.XXXXXX)"
 cleanup() {
   rm -rf "${WORKDIR}" 2>/dev/null || true
@@ -112,26 +118,30 @@ cd repo
 #   - scripts/                                python sources
 #   - .boatrace/                              runtime config (load_config)
 #   - data/estimate/stadium/                  win_rate.csv / sui_params.csv /
-#                                              index_weights/*.csv (build_index 入力)
-#   - data/estimate/index/<YM>/               build_index 出力 (write 専用、要 cone)
+#                                              weights/<predictor>/*.csv (build_index 入力)
+#   - data/estimate/<predictor>/<YM>/         build_index 出力 (active 予想者ぶん)
 #   - data/programs/race_cards/<YM>/          race-card.py 出力 (GCS ミラー対象)
 #   - data/programs/recent_national/<YM>/     recent-form.py 出力 (build_index 特徴量)
 #   - data/programs/recent_local/<YM>/        recent-form.py 出力
 #   - data/programs/motor_stats/<YM>/         motor-stats.py 出力 (build_index 特徴量)
 #   - data/programs/motor_stats/<PREV_YM>/    月初の 7 日 fallback 用
 #   - data/programs/title/<YM>/               race-title.py 出力 (GCS ミラー対象)
-git sparse-checkout init --cone
-git sparse-checkout set \
-  scripts \
-  .boatrace \
-  data/estimate/stadium \
-  "data/estimate/index/${TODAY_YM}" \
-  "data/programs/race_cards/${TODAY_YM}" \
-  "data/programs/recent_national/${TODAY_YM}" \
-  "data/programs/recent_local/${TODAY_YM}" \
-  "data/programs/motor_stats/${TODAY_YM}" \
-  "data/programs/motor_stats/${PREV_YM}" \
+sparse_paths=(
+  scripts
+  .boatrace
+  data/estimate/stadium
+  "data/programs/race_cards/${TODAY_YM}"
+  "data/programs/recent_national/${TODAY_YM}"
+  "data/programs/recent_local/${TODAY_YM}"
+  "data/programs/motor_stats/${TODAY_YM}"
+  "data/programs/motor_stats/${PREV_YM}"
   "data/programs/title/${TODAY_YM}"
+)
+for predictor in "${ACTIVE_PREDICTORS[@]}"; do
+  sparse_paths+=("data/estimate/${predictor}/${TODAY_YM}")
+done
+git sparse-checkout init --cone
+git sparse-checkout set "${sparse_paths[@]}"
 
 git checkout "${GIT_BRANCH}"
 
@@ -195,20 +205,24 @@ run_step "recent-form" python scripts/recent-form.py --date "${TODAY_JST}" --for
 run_step "motor-stats" python scripts/motor-stats.py --date "${TODAY_JST}" --force
 
 # ---------------------------------------------------------------------------
-# 5. 当日 daily index バッチ生成
+# 5. 当日 daily index バッチ生成 (全 active 予想者ぶん)
 #    枠番・選手・モーター・暫定強さpt を埋めた index CSV を生成する。
 #    展示・気象は 50 で補完 (状態=daily)。preview-realtime が JST 08:00 に
 #    最初のサイクルを開始する前に完了させたい。
+#    --all-active で active な予想者を全部ループする (registry 由来)。
 # ---------------------------------------------------------------------------
-run_step "build-index" python scripts/build_index.py --date "${TODAY_JST}" --mode daily
+run_step "build-index" python scripts/build_index.py --date "${TODAY_JST}" --mode daily --all-active
 
 # ---------------------------------------------------------------------------
 # build_index.py は git にコミットしないため、ここで明示 commit/push する。
 # 旧 GHA workflow の "Commit Daily Index" ステップ相当。
 # 失敗を握り潰す: コミットが無い場合は no-op、push 競合は次回で吸収。
+# 各 active 予想者の出力ディレクトリを add 対象に列挙する。
 # ---------------------------------------------------------------------------
 commit_and_push_index() {
-  git add data/estimate/index/
+  for predictor in "${ACTIVE_PREDICTORS[@]}"; do
+    git add "data/estimate/${predictor}/"
+  done
   if git diff --cached --quiet; then
     log "No daily index changes to commit"
     return 0
