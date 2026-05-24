@@ -24,6 +24,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from boatrace import index_features as ifeat  # type: ignore[import-not-found]
 from boatrace.index_features import (  # type: ignore[import-not-found]
     MOTOR_NEGATIVE_SCORE,
     MOTOR_NEGATIVE_TOKENS,
@@ -40,6 +41,22 @@ from boatrace.index_features import (  # type: ignore[import-not-found]
     resolve_grade_bucket,
     score_motor_run,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# v1 mode fixture — このファイルの既存テストは v1 算術等価モード(全フラグ OFF)
+# での挙動を確認する。v2 固有の挙動は test_motor_ability_v2.py 側で検証する。
+# ─────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def v1_mode(monkeypatch):
+    """ENABLE_DECAY / ENABLE_LANE_CORRECTION / ENABLE_SHRINKAGE を全 OFF にして
+    v1 算術等価モードに切り替える。MOTOR_HISTORY_SESSIONS も v1 値(5)に戻す。
+    """
+    monkeypatch.setattr(ifeat, "ENABLE_DECAY", False)
+    monkeypatch.setattr(ifeat, "ENABLE_LANE_CORRECTION", False)
+    monkeypatch.setattr(ifeat, "ENABLE_SHRINKAGE", False)
+    monkeypatch.setattr(ifeat, "MOTOR_HISTORY_SESSIONS", 5)
+    yield
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -198,13 +215,13 @@ def test_score_unknown_class_returns_none(score_table):
 # ─────────────────────────────────────────────────────────────────────
 # motor_ability_pt
 # ─────────────────────────────────────────────────────────────────────
-def test_motor_ability_pt_no_history_returns_nan(score_table):
+def test_motor_ability_pt_no_history_returns_nan(score_table, v1_mode):
     import math
     assert math.isnan(motor_ability_pt({}, score_table, "01", 1))
 
 
-def test_motor_ability_pt_average_with_negative_finish(score_table):
-    """B2 級で 1,2,3 着 + 転 1 回 = (125 + 100 + 75 + -100) / 4 = 50."""
+def test_motor_ability_pt_average_with_negative_finish(score_table, v1_mode):
+    """v1 mode: B2 級で 1,2,3 着 + 転 1 回 = (125 + 100 + 75 + -100) / 4 = 50."""
     history = {("01", 1): [[
         _run("B2", "全", "1"),
         _run("B2", "全", "2"),
@@ -216,8 +233,8 @@ def test_motor_ability_pt_average_with_negative_finish(score_table):
     assert val == pytest.approx(50.0)
 
 
-def test_motor_ability_pt_skip_tokens_not_in_denominator(score_table):
-    """F は分母にも分子にも加わらない。
+def test_motor_ability_pt_skip_tokens_not_in_denominator(score_table, v1_mode):
+    """v1 mode: F は分母にも分子にも加わらない。
     A1 一般で 1 着 + F → 50 / 1 = 50.0"""
     history = {("01", 1): [[
         _run("A1", "G2_G3_一般", "1"),
@@ -227,14 +244,14 @@ def test_motor_ability_pt_skip_tokens_not_in_denominator(score_table):
     assert val == pytest.approx(50.0)
 
 
-def test_motor_ability_pt_only_skip_tokens_returns_nan(score_table):
+def test_motor_ability_pt_only_skip_tokens_returns_nan(score_table, v1_mode):
     import math
     history = {("01", 1): [[_run("A1", "G2_G3_一般", "F")]]}
     assert math.isnan(motor_ability_pt(history, score_table, "01", 1))
 
 
-def test_motor_ability_pt_multiple_sessions(score_table):
-    """2 節分の走を均等に平均する(走数で重み付け)。
+def test_motor_ability_pt_multiple_sessions(score_table, v1_mode):
+    """v1 mode: 2 節分の走を均等に平均する(走数で重み付け)。
     節1: A1一般 1着 (50) + 3着 (30) = 80/2
     節2: A1一般 2着 (40) = 40/1
     全体平均 = (50+30+40) / 3 = 40.0"""

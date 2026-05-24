@@ -8,8 +8,9 @@ stay in lockstep.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -186,10 +187,32 @@ MOTOR_NEGATIVE_TOKENS: set[str] = {"転", "落", "沈", "エ"}
 MOTOR_NEGATIVE_SCORE: int = -100
 MOTOR_SKIP_TOKENS: set[str] = {"F", "L", "失", "妨", "欠", "不"}
 
-MOTOR_HISTORY_SESSIONS: int = 5            # 直近 5 節
+# v2: 取得節数を 5 → 6 に拡張(時間減衰でテール側は自然減衰)
+MOTOR_HISTORY_SESSIONS: int = 6
 MOTOR_HISTORY_LOOKBACK_MAX_SESSIONS: int = 10  # 期境界で剪定する前に取得する節数の上限
 MOTOR_HISTORY_LOOKBACK_DAYS: int = 90      # 各場の節検出のために遡る日数
 MOTOR_PERIOD_FALLBACK_DAYS: int = 14       # motor_stats が当日無いときの fallback 日数
+
+# ─────────────────────────────────────────────────────────────────────
+# v2 フィーチャーフラグ(段階リリース・ablation 用)
+# 全 False + MOTOR_HISTORY_SESSIONS=5 で v1 と算術等価
+# 詳細設計: docs/design/motor_ability_index_v2.md
+# ─────────────────────────────────────────────────────────────────────
+ENABLE_DECAY: bool = True
+ENABLE_LANE_CORRECTION: bool = True
+ENABLE_SHRINKAGE: bool = True
+
+# 時間減衰: 半減期 60 日
+DECAY_HALF_LIFE_DAYS: float = 60.0
+DECAY_LAMBDA: float = math.log(2) / DECAY_HALF_LIFE_DAYS   # ≈ 0.01155
+
+# コース補正 / z 残差
+LANE_BASELINE_MIN_SAMPLES: int = 5
+LANE_BASELINE_SD_FLOOR: float = 10.0
+
+# ベイズ収縮
+SHRINKAGE_PRIOR_K: float = 10.0
+SHRINKAGE_PRIOR_MEAN: float = 0.0
 
 _VALID_FINISH_TOKENS: set[str] = (
     {"1", "2", "3", "4", "5", "6"}
@@ -202,13 +225,30 @@ _ZEN_TO_HAN_FINISH = ZEN_TO_HAN_DIGIT
 
 @dataclass(frozen=True)
 class MotorRun:
-    """モーター 1 走分のレコード(履歴ビルダーの内部表現)。"""
+    """モーター 1 走分のレコード(履歴ビルダーの内部表現)。
+
+    v2 で追加されたフィールド:
+      - ``race_date``: この走の実日付。時間減衰の重み計算に使用。
+        slot D{D}走{S} 由来の場合は session_start + (D - 1) 日。
+        未知時は ``session_end`` をフォールバック(後方互換のためのデフォルト)。
+      - ``lane``: この走でのコース番号 1〜6。コース補正に使用。
+        race_cards の ``_進入`` 列優先、欠損なら ``_枠`` フォールバック。
+        未知時は ``0``(コース補正のスキップ用センチネル)。
+    """
     session_end: dt.date   # 当該走を含む節の最終開催日
     stadium: str           # "01"〜"24"
     motor_num: int         # 物理モーター番号
     grade_bucket: str      # "SG_G1" / "G2_G3_一般" / "全"
     racer_class: str       # "A1" / "A2" / "B1" / "B2"
     finish: str            # 正規化済 着順トークン
+    # v2 追加(デフォルト値ありで後方互換維持)
+    race_date: dt.date | None = None    # None → session_end でフォールバック
+    lane: int = 0                        # 0 → コース補正対象外(セル統計を引かない)
+
+    def __post_init__(self) -> None:
+        # race_date 未指定なら session_end で埋める(frozen dataclass の代入トリック)
+        if self.race_date is None:
+            object.__setattr__(self, "race_date", self.session_end)
 
 
 # --- スコアテーブル -------------------------------------------------------
@@ -266,6 +306,31 @@ def normalize_finish_token(raw) -> str | None:
         pass
     s = s.replace("Ｆ", "F").replace("Ｌ", "L")
     return s if s in _VALID_FINISH_TOKENS else None
+
+
+def parse_lane(raw_shinnyu, raw_waku) -> int | None:
+    """v2: race_cards スロットの ``_進入`` / ``_枠`` からコース番号を抽出。
+
+    進入を優先、欠損/不正なら枠にフォールバック。両方とも 1〜6 でなければ None。
+    """
+    for raw in (raw_shinnyu, raw_waku):
+        if raw is None:
+            continue
+        s = str(raw).strip()
+        if not s or s.lower() == "nan":
+            continue
+        # 全角数字を半角化
+        for zen, han in _ZEN_TO_HAN_FINISH.items():
+            if s == zen:
+                s = han
+                break
+        try:
+            v = int(float(s))
+            if 1 <= v <= 6:
+                return v
+        except (ValueError, TypeError):
+            pass
+    return None
 
 
 # --- 1 走スコアリング -----------------------------------------------------
@@ -353,15 +418,18 @@ def _has_races_at(repo: Path, day: dt.date, stadium: str) -> bool:
     return bool((codes.str[8:10] == stadium).any())
 
 
-def detect_session_end_days(
+def detect_sessions(
     repo: Path, stadium: str, window_end: dt.date,
     max_sessions: int = MOTOR_HISTORY_LOOKBACK_MAX_SESSIONS,
     window_days: int = MOTOR_HISTORY_LOOKBACK_DAYS,
-) -> list[dt.date]:
-    """場 stadium の直近 max_sessions 節分の「節最終日」を新→旧で返す。
+) -> list[list[dt.date]]:
+    """v2: 場 stadium の直近 max_sessions 節分の **節日リスト** を新→旧で返す。
 
+    各要素は ``[session_start, ..., session_end]`` の連続開催日。
+    ``detect_session_end_days()`` は本関数の `[-1]` 抽出ラッパとして実装。
+
+    連続開催日(日差 1 日以内)を 1 節として束ねる。
     window_end は除外(当日を含む節は計算対象から外す)。
-    連続開催日(日差 1 日)を 1 節として束ねる。
     """
     open_days: list[dt.date] = []
     for back in range(1, window_days + 1):
@@ -383,15 +451,41 @@ def detect_session_end_days(
     if cur:
         sessions.append(cur)
 
-    last_days = [s[-1] for s in sessions]
-    return last_days[-max_sessions:][::-1]  # 新→旧
+    # 新→旧で max_sessions まで
+    return sessions[-max_sessions:][::-1]
+
+
+def detect_session_end_days(
+    repo: Path, stadium: str, window_end: dt.date,
+    max_sessions: int = MOTOR_HISTORY_LOOKBACK_MAX_SESSIONS,
+    window_days: int = MOTOR_HISTORY_LOOKBACK_DAYS,
+) -> list[dt.date]:
+    """場 stadium の直近 max_sessions 節分の「節最終日」を新→旧で返す。
+
+    v2 で ``detect_sessions()`` が新設され、本関数はそのラッパとなった。
+    後方互換のため API は据え置き。
+    """
+    sessions = detect_sessions(repo, stadium, window_end,
+                                max_sessions=max_sessions,
+                                window_days=window_days)
+    return [s[-1] for s in sessions]
 
 
 # --- 1 節分の MotorRun 抽出 ---------------------------------------------
 def extract_runs_for_session(
     repo: Path, stadium: str, session_end: dt.date,
+    session_dates: list[dt.date] | None = None,
 ) -> list[MotorRun]:
-    """節最終日の race_cards + title から MotorRun のリストを生成。"""
+    """節最終日の race_cards + title から MotorRun のリストを生成。
+
+    v2 で以下を追加:
+      - `_進入` / `_枠` 列から ``MotorRun.lane`` を設定
+      - ``session_dates`` から slot D の実日付を算出して ``MotorRun.race_date`` に設定
+
+    Args:
+        session_dates: 当該節の連続開催日リスト(古→新)。
+            None の場合は session_end のみが分かる扱い(race_date は session_end になる)。
+    """
     rc_path = _race_cards_path(repo, session_end)
     if not rc_path.exists():
         return []
@@ -409,7 +503,8 @@ def extract_runs_for_session(
                     str(match.iloc[0].get("グレード", "")))
 
     # 当該場の全レースを舐めて (motor_num → (級別, slot dict)) 辞書を作る(先勝ち)
-    motor_rows: dict[int, tuple[str, dict[str, object]]] = {}
+    # v2: 各スロットは {着順, 進入, 枠} のタプル
+    motor_rows: dict[int, tuple[str, dict[str, dict[str, object]]]] = {}
     for _, row in rc.iterrows():
         code = str(row.get("レースコード", ""))
         if len(code) < 10 or code[8:10] != stadium:
@@ -423,10 +518,15 @@ def extract_runs_for_session(
                 continue
             if not racer_class or motor_num in motor_rows:
                 continue
-            slots: dict[str, object] = {}
+            slots: dict[str, dict[str, object]] = {}
             for d in range(1, 8):
                 for s in (1, 2):
-                    slots[f"D{d}走{s}"] = row.get(f"艇{n}_節D{d}走{s}_着順")
+                    key = f"D{d}走{s}"
+                    slots[key] = {
+                        "着順": row.get(f"艇{n}_節D{d}走{s}_着順"),
+                        "進入": row.get(f"艇{n}_節D{d}走{s}_進入"),
+                        "枠": row.get(f"艇{n}_節D{d}走{s}_枠"),
+                    }
             motor_rows[motor_num] = (racer_class, slots)
 
     runs: list[MotorRun] = []
@@ -434,13 +534,21 @@ def extract_runs_for_session(
         eff_bucket = resolve_grade_bucket(racer_class, grade_bucket)
         for d in range(1, 8):
             for s in (1, 2):
-                token = normalize_finish_token(slots[f"D{d}走{s}"])
+                slot = slots[f"D{d}走{s}"]
+                token = normalize_finish_token(slot["着順"])
                 if token is None:
                     continue
+                # v2: lane と race_date を確定
+                lane = parse_lane(slot["進入"], slot["枠"]) or 0
+                if session_dates and d <= len(session_dates):
+                    race_date = session_dates[d - 1]
+                else:
+                    race_date = session_end
                 runs.append(MotorRun(
                     session_end=session_end, stadium=stadium,
                     motor_num=motor_num, grade_bucket=eff_bucket,
                     racer_class=racer_class, finish=token,
+                    race_date=race_date, lane=lane,
                 ))
     return runs
 
@@ -460,10 +568,14 @@ def load_motor_history(
 
     out: dict[tuple[str, int], list[list[MotorRun]]] = defaultdict(list)
     for stadium in (f"{i:02d}" for i in sorted(STADIUM_NAMES.keys())):
-        session_ends = detect_session_end_days(repo, stadium, target_day)
+        # v2: 節日リストを取得して session_dates を渡す
+        sessions_dates_list = detect_sessions(repo, stadium, target_day)
         per_motor: dict[int, list[list[MotorRun]]] = defaultdict(list)
-        for sess_end in session_ends:  # 新→旧
-            sess_runs = extract_runs_for_session(repo, stadium, sess_end)
+        for session_dates in sessions_dates_list:  # 新→旧
+            sess_end = session_dates[-1]
+            sess_runs = extract_runs_for_session(
+                repo, stadium, sess_end, session_dates=session_dates,
+            )
             grouped: dict[int, list[MotorRun]] = defaultdict(list)
             for r in sess_runs:
                 grouped[r.motor_num].append(r)
@@ -479,26 +591,165 @@ def load_motor_history(
     return out
 
 
+# ─────────────────────────────────────────────────────────────────────
+# v2: コース baseline 算出(z 残差化)
+# ─────────────────────────────────────────────────────────────────────
+def _iter_baseline_scores(
+    all_runs,
+    score_table: dict[tuple[str, str], list[int]],
+):
+    """``compute_lane_baseline`` / ``compute_class_grade_avg`` 共通のスコア抽出。
+
+    Yields ``(racer_class, grade_bucket, lane, raw_score)`` for runs that have a
+    valid score (1〜6 / 転落沈エ)。F/L/失/妨/欠/不 は除外。
+    """
+    for run in all_runs:
+        sc = score_motor_run(score_table, run)
+        if sc is None:
+            continue
+        bucket = run.grade_bucket if run.racer_class in ("A1", "A2") else "全"
+        yield run.racer_class, bucket, run.lane, float(sc[0])
+
+
+def compute_lane_baseline(
+    all_runs,
+    score_table: dict[tuple[str, str], list[int]],
+    min_samples: int = LANE_BASELINE_MIN_SAMPLES,
+    sd_floor: float = LANE_BASELINE_SD_FLOOR,
+) -> dict[tuple[str, str, int], tuple[float, float]]:
+    """v2: ``{(racer_class, grade_bucket, lane): (μ, σ)}`` を返す。
+
+    母集団 SD。退化セル(σ < sd_floor)は σ_floor に丸める。
+    サンプル < min_samples のセルは結果に含めない。lane==0 は除外(センチネル)。
+    """
+    cells: dict[tuple[str, str, int], list[float]] = defaultdict(list)
+    for cls, bucket, lane, raw in _iter_baseline_scores(all_runs, score_table):
+        if lane == 0:
+            continue
+        cells[(cls, bucket, lane)].append(raw)
+    out: dict[tuple[str, str, int], tuple[float, float]] = {}
+    for key, scores in cells.items():
+        if len(scores) < min_samples:
+            continue
+        mean = sum(scores) / len(scores)
+        var = sum((x - mean) ** 2 for x in scores) / len(scores)  # 母集団分散
+        sd = max(math.sqrt(var), sd_floor)
+        out[key] = (mean, sd)
+    return out
+
+
+def compute_class_grade_avg(
+    all_runs,
+    score_table: dict[tuple[str, str], list[int]],
+    min_samples: int = LANE_BASELINE_MIN_SAMPLES,
+    sd_floor: float = LANE_BASELINE_SD_FLOOR,
+) -> dict[tuple[str, str], tuple[float, float]]:
+    """v2: lane baseline の第 1 フォールバック。``(racer_class, grade_bucket)`` 粒度の (μ, σ)。"""
+    cells: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for cls, bucket, _lane, raw in _iter_baseline_scores(all_runs, score_table):
+        cells[(cls, bucket)].append(raw)
+    out: dict[tuple[str, str], tuple[float, float]] = {}
+    for key, scores in cells.items():
+        if len(scores) < min_samples:
+            continue
+        mean = sum(scores) / len(scores)
+        var = sum((x - mean) ** 2 for x in scores) / len(scores)
+        sd = max(math.sqrt(var), sd_floor)
+        out[key] = (mean, sd)
+    return out
+
+
+def cell_stats(
+    lane_baseline: dict[tuple[str, str, int], tuple[float, float]],
+    class_grade_avg: dict[tuple[str, str], tuple[float, float]],
+    cls: str, grade: str, lane: int,
+) -> tuple[float, float]:
+    """v2: フォールバック階層付きセル統計取得。
+
+    1. ``(cls, grade, lane)`` セルがあればそれを返す
+    2. なければ ``(cls, grade)`` セルを返す
+    3. それも無ければ ``(0.0, 1.0)``(コース補正なし、生得点をそのまま使用)
+    """
+    if lane >= 1:
+        v = lane_baseline.get((cls, grade, lane))
+        if v is not None:
+            return v
+    v = class_grade_avg.get((cls, grade))
+    if v is not None:
+        return v
+    return (0.0, 1.0)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# v2: motor_ability_pt(時間減衰 + コース補正 + ベイズ収縮)
+# 全フラグ OFF + MOTOR_HISTORY_SESSIONS=5 で v1 と算術等価
+# 詳細設計: docs/design/motor_ability_index_v2.md
+# ─────────────────────────────────────────────────────────────────────
 def motor_ability_pt(
     history: dict[tuple[str, int], list[list[MotorRun]]],
     score_table: dict[tuple[str, str], list[int]],
     stadium_code2: str, motor_num: int,
+    *,
+    lane_baseline: dict[tuple[str, str, int], tuple[float, float]] | None = None,
+    class_grade_avg: dict[tuple[str, str], tuple[float, float]] | None = None,
+    target_day: dt.date | None = None,
 ) -> float:
-    """直近 5 節のスコア平均を返す。データなしは NaN(z 化で 50 補完)。"""
+    """v2: 履歴から該当モーターの能力点を算出する。
+
+    v1 シグネチャ ``motor_ability_pt(history, score_table, stadium, motor_num)`` は
+    位置引数互換のまま保持。新しい v2 オプション引数は keyword-only:
+      - ``lane_baseline`` / ``class_grade_avg``: コース補正用ベースライン
+        (``ENABLE_LANE_CORRECTION=True`` のとき必要)
+      - ``target_day``: 時間減衰の基準日
+        (``ENABLE_DECAY=True`` のとき必要)
+
+    フィーチャーフラグ全 OFF のとき、これらは未使用なので None で OK。
+    その状態は単純平均 ``Σraw/N`` に縮退し、v1 と算術等価になる。
+    """
     sessions = history.get((stadium_code2, motor_num))
     if not sessions:
         return float("nan")
-    total_pt, total_runs = 0, 0
+
+    use_lane = ENABLE_LANE_CORRECTION and lane_baseline is not None and class_grade_avg is not None
+    use_decay = ENABLE_DECAY and target_day is not None
+
+    sum_w = 0.0
+    sum_wr = 0.0
+    sum_w2 = 0.0
     for sess in sessions:
         for run in sess:
-            r = score_motor_run(score_table, run)
-            if r is None:
+            sc = score_motor_run(score_table, run)
+            if sc is None:
                 continue
-            total_pt += r[0]
-            total_runs += r[1]
-    if total_runs == 0:
-        return float("nan")
-    return total_pt / total_runs
+            raw = float(sc[0])
+            cls = run.racer_class
+            bucket = run.grade_bucket if cls in ("A1", "A2") else "全"
+
+            if use_lane:
+                mu, sigma = cell_stats(lane_baseline, class_grade_avg,
+                                       cls, bucket, run.lane)
+                residual = (raw - mu) / sigma
+            else:
+                residual = raw
+
+            if use_decay:
+                days_ago = max(0, (target_day - run.race_date).days)
+                w = math.exp(-DECAY_LAMBDA * days_ago)
+            else:
+                w = 1.0
+
+            sum_w += w
+            sum_wr += w * residual
+            sum_w2 += w * w
+
+    if sum_w == 0.0:
+        return float("nan")  # 下流の z 化で 50 補完
+    mean_resid = sum_wr / sum_w
+    if not ENABLE_SHRINKAGE:
+        return mean_resid
+    n_eff = (sum_w * sum_w) / sum_w2
+    # prior 平均 0 へ縮める: posterior = n_eff / (n_eff + k) × mean_resid
+    return n_eff / (n_eff + SHRINKAGE_PRIOR_K) * mean_resid
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -625,6 +876,15 @@ class FeatureContext:
         self._runs_cache: dict[tuple[str, dt.date], list[MotorRun]] = {}
         # load_motor_period_starts の per-day memoize
         self._period_starts_cache: dict[dt.date, dict[tuple[str, int], dt.date]] = {}
+        # v2: コース baseline per-day memoize
+        # value = (lane_baseline, class_grade_avg)
+        self._lane_baseline_cache: dict[
+            dt.date,
+            tuple[
+                dict[tuple[str, str, int], tuple[float, float]],
+                dict[tuple[str, str], tuple[float, float]],
+            ],
+        ] = {}
 
     # ─── 静的テーブル ──────────────────────────────────────────
     def waku_table(self) -> dict:
@@ -682,12 +942,12 @@ class FeatureContext:
             d += dt.timedelta(days=1)
         return out
 
-    def session_end_days_for(
+    def sessions_for(
         self, target_day: dt.date, stadium: str,
-    ) -> list[dt.date]:
-        """``detect_session_end_days(repo, stadium, target_day)`` と byte-equivalent。
+    ) -> list[list[dt.date]]:
+        """v2: ``detect_sessions(repo, stadium, target_day)`` と byte-equivalent。
 
-        事前構築した ``session_index`` から派生させてファイル再走査を回避する。
+        新→旧の節日リスト(各要素 = [session_start, ..., session_end])を返す。
         """
         if self._session_index is None:
             self._session_index = self._build_session_index()
@@ -698,7 +958,7 @@ class FeatureContext:
         ]
         if not in_window:
             return []
-        # 連続日を 1 節として束ねる (detect_session_end_days と同一ロジック)
+        # 連続日を 1 節として束ねる (detect_sessions と同一ロジック)
         sessions: list[list[dt.date]] = []
         cur = [in_window[0]]
         for d in in_window[1:]:
@@ -708,21 +968,31 @@ class FeatureContext:
                 sessions.append(cur)
                 cur = [d]
         sessions.append(cur)
-        last_days = [s[-1] for s in sessions]
-        return last_days[-MOTOR_HISTORY_LOOKBACK_MAX_SESSIONS:][::-1]
+        return sessions[-MOTOR_HISTORY_LOOKBACK_MAX_SESSIONS:][::-1]
+
+    def session_end_days_for(
+        self, target_day: dt.date, stadium: str,
+    ) -> list[dt.date]:
+        """``detect_session_end_days(repo, stadium, target_day)`` と byte-equivalent。
+
+        事前構築した ``session_index`` から派生させてファイル再走査を回避する。
+        """
+        return [s[-1] for s in self.sessions_for(target_day, stadium)]
 
     def _extract_runs_for_session_cached(
         self, stadium: str, session_end: dt.date,
+        session_dates: list[dt.date] | None = None,
     ) -> list[MotorRun]:
         """``(stadium, session_end)`` 単位で ``extract_runs_for_session`` を memoize。
 
         既存関数をそのまま呼ぶので race_cards/title の二重読みは発生するが、
-        呼出し回数は window × 24 場 × 5 節 ≒ 1,350 件で抑えられる。
+        呼出し回数は window × 24 場 × 6 節 ≒ 1,500 件で抑えられる。
+        v2: session_dates 経由で race_date 確定。
         """
         key = (stadium, session_end)
         if key not in self._runs_cache:
             self._runs_cache[key] = extract_runs_for_session(
-                self.repo, stadium, session_end,
+                self.repo, stadium, session_end, session_dates=session_dates,
             )
         return self._runs_cache[key]
 
@@ -736,15 +1006,22 @@ class FeatureContext:
     def motor_history(
         self, day: dt.date,
     ) -> dict[tuple[str, int], list[list[MotorRun]]]:
-        """``load_motor_history(repo, day)`` と byte-equivalent。Context キャッシュ経由。"""
+        """``load_motor_history(repo, day)`` と byte-equivalent。Context キャッシュ経由。
+
+        v2: session_dates を ``_extract_runs_for_session_cached`` に渡して
+        ``MotorRun.race_date`` を確定させる。
+        """
         period_starts = self._period_starts(day)
         out: dict[tuple[str, int], list[list[MotorRun]]] = defaultdict(list)
         for stadium in self._all_stadiums:
-            session_ends = self.session_end_days_for(day, stadium)
+            sessions_dates_list = self.sessions_for(day, stadium)
             per_motor: dict[int, list[list[MotorRun]]] = defaultdict(list)
-            for sess_end in session_ends:
+            for session_dates in sessions_dates_list:
+                sess_end = session_dates[-1]
                 grouped: dict[int, list[MotorRun]] = defaultdict(list)
-                for r in self._extract_runs_for_session_cached(stadium, sess_end):
+                for r in self._extract_runs_for_session_cached(
+                    stadium, sess_end, session_dates=session_dates,
+                ):
                     grouped[r.motor_num].append(r)
                 for m, runs in grouped.items():
                     per_motor[m].append(runs)
@@ -755,6 +1032,31 @@ class FeatureContext:
                 if sessions:
                     out[(stadium, m)] = sessions[:MOTOR_HISTORY_SESSIONS]
         return out
+
+    def lane_baselines(
+        self, day: dt.date,
+    ) -> tuple[
+        dict[tuple[str, str, int], tuple[float, float]],
+        dict[tuple[str, str], tuple[float, float]],
+    ]:
+        """v2: コース baseline (μ, σ) を per-day キャッシュ付きで返す。
+
+        ``ENABLE_LANE_CORRECTION=False`` のときは空辞書を返す
+        (motor_ability_pt 側で `use_lane` が False になるため呼ばれないが、安全側)。
+        """
+        if day not in self._lane_baseline_cache:
+            if not ENABLE_LANE_CORRECTION:
+                self._lane_baseline_cache[day] = ({}, {})
+                return self._lane_baseline_cache[day]
+            history = self.motor_history(day)
+            score_table = self.motor_score_table()
+            all_runs = [r for sess_list in history.values()
+                        for sess in sess_list for r in sess]
+            self._lane_baseline_cache[day] = (
+                compute_lane_baseline(all_runs, score_table),
+                compute_class_grade_avg(all_runs, score_table),
+            )
+        return self._lane_baseline_cache[day]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -931,6 +1233,8 @@ def compute_features_for_day(
     waku_tab = ctx.waku_table()
     motor_score_table = ctx.motor_score_table()
     motor_history = ctx.motor_history(day)
+    # v2: コース baseline(ENABLE_LANE_CORRECTION=False のときは空辞書)
+    lane_baseline, class_grade_avg = ctx.lane_baselines(day)
     sui = ctx.sui_params()
 
     prog = ctx.race_cards_for(day)
@@ -1007,7 +1311,11 @@ def compute_features_for_day(
             try:
                 m_num = int(float(motor_raw))
                 mpt = motor_ability_pt(
-                    motor_history, motor_score_table, stadium_code2, m_num)
+                    motor_history, motor_score_table, stadium_code2, m_num,
+                    lane_baseline=lane_baseline,
+                    class_grade_avg=class_grade_avg,
+                    target_day=day,
+                )
             except (ValueError, TypeError):
                 mpt = float("nan")
 
