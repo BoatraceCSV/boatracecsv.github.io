@@ -48,14 +48,25 @@ SEASON_BY_MONTH = {
     12: "冬",
 }
 
-# Order of the 5 strength components — used as canonical column ordering.
-COMPONENT_KEYS = ["waku", "racer", "motor", "exhibit", "weather"]
-COMPONENT_LABELS = {
-    "waku":    "枠番pt",
-    "racer":   "選手pt",
-    "motor":   "モーターpt",
-    "exhibit": "展示pt",
-    "weather": "気象pt",
+# ─────────────────────────────────────────────────────────────────────
+# Component キー / ラベル
+# ─────────────────────────────────────────────────────────────────────
+# 単一情報源は ``boatrace.predictors.registry`` 側の
+# ``COMPONENT_LABELS_REGISTRY`` (全予想者で共有する成分 → ラベル辞書) と
+# 各 ``PredictorSpec.component_keys`` (予想者ごとの採用成分)。
+#
+# 下記の ``COMPONENT_KEYS`` / ``COMPONENT_LABELS`` は v1_basic (= 現行
+# "A君予想") の成分順を表す互換シンボルで、旧コードから直接 import されて
+# いる。新規コードは予想者引数を取り、``predictor.component_keys`` と
+# ``boatrace.predictors.registry.component_label`` から動的に解決すること。
+from .predictors.registry import (  # noqa: E402
+    COMPONENT_LABELS_REGISTRY,
+    predictor_by_id,
+)
+
+COMPONENT_KEYS: list[str] = list(predictor_by_id("v1_basic").component_keys)
+COMPONENT_LABELS: dict[str, str] = {
+    k: COMPONENT_LABELS_REGISTRY[k] for k in COMPONENT_KEYS
 }
 
 

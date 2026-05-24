@@ -40,7 +40,7 @@ python scripts/race-card.py --date "$(date +%Y-%m-%d)" --force         # bc_j_st
 python scripts/recent-form.py --date "$(date +%Y-%m-%d)" --force       # bc_zensou (recent_form)
 python scripts/motor-stats.py --date "$(date +%Y-%m-%d)" --force       # bc_mst / bc_mdc (motor_stats)
 python scripts/race-title.py --date "$(date +%Y-%m-%d)" --force        # getHoldingList2 (title)
-python scripts/build_index.py --date "$(date +%Y-%m-%d)" --mode daily  # 強さ index バッチ
+python scripts/build_index.py --date "$(date +%Y-%m-%d)" --mode daily --all-active  # 全 active 予想者の強さ index
 ```
 
 ---
@@ -54,8 +54,8 @@ scripts/
 ├── motor-stats.py               # Motor stats scraper (data/programs/motor_stats/)
 ├── race-card.py                 # Race-card detail scraper (data/programs/race_cards/)
 ├── recent-form.py               # Recent national/local form scraper
-├── build_index.py               # Strength Index builder (--mode daily/realtime, --update-races)
-├── build_weights.py             # Monthly weight learner (per-stadium 5-feature weights)
+├── build_index.py               # Strength Index builder (--mode daily/realtime, --update-races, --predictor / --all-active)
+├── build_weights.py             # Monthly weight learner (per-stadium per-predictor weights, --predictor / --all-active)
 ├── build_sui_params.py          # 24-stadium weather coefficient learner
 ├── boatrace/                    # Python package
 │   ├── __init__.py
@@ -65,7 +65,10 @@ scripts/
 │   ├── converter.py             # Text → CSV conversion
 │   ├── storage.py               # File I/O operations
 │   ├── git_operations.py        # Git commit/push operations
-│   ├── index_features.py        # Shared 5-feature computation (build_index/build_weights)
+│   ├── index_features.py        # Shared feature computation (build_index/build_weights)
+│   ├── predictors/              # Predictor (予想者) レジストリ
+│   │   ├── __init__.py
+│   │   └── registry.py          # PredictorSpec + active_predictors() — 新規予想者の追加点
 │   ├── preview_tsv_scraper.py   # bc_j_tkz/stt/sui/oriten TSV scraper
 │   ├── result_realtime.py       # bc_rs1_2 TSV scraper (realtime results)
 │   └── logger.py                # Structured JSON logging
@@ -171,7 +174,7 @@ python scripts/preview-realtime.py --result-window-min 5 --result-window-max 45
 Designed to run every minute via `.github/workflows/preview-realtime.yml`. On each invocation it:
 
 1. Fetches `https://race.boatcast.jp/api_txt/getHoldingList2_{YYYYMMDD}.json` to discover open venues + per-race deadline times (no caching, no persistence).
-2. **Preview pass** — selects races whose deadline falls in `[now+window-min, now+window-max]` AND that are not yet recorded in every per-source CSV. Scrapes `bc_j_tkz` / `bc_j_stt` / `bc_sui` / `bc_oriten` for each eligible race and appends one row per source. After appending, also updates the corresponding rows in `data/estimate/index/YYYY/MM/DD.csv` (展示・気象 を実値で再計算 → 状態 = `realtime`).
+2. **Preview pass** — selects races whose deadline falls in `[now+window-min, now+window-max]` AND that are not yet recorded in every per-source CSV. Scrapes `bc_j_tkz` / `bc_j_stt` / `bc_sui` / `bc_oriten` for each eligible race and appends one row per source. After appending, also updates the corresponding rows in `data/estimate/{predictor_id}/YYYY/MM/DD.csv` for every active predictor (展示・気象 を実値で再計算 → 状態 = `realtime`).
 3. **Result pass** — selects races whose deadline already passed by `[result-window-min, result-window-max]` minutes and whose `レースコード` is not yet in `data/results/realtime/YYYY/MM/DD.csv`. Scrapes `bc_rs1_2` for each candidate and appends one row to the realtime results CSV (skips silently when the file is not yet published).
 4. **Payout pass** — same eligibility window as the result pass but keyed off `data/results/payouts/YYYY/MM/DD.csv`. Scrapes `bc_rs2` and appends one row per race. Independent of the result pass: a race may show up in one CSV first and the other a cycle later.
 5. Commits & pushes the changes in a single commit (preview + result + payout + index updates batched). Nothing is committed when no rows were appended.
@@ -266,36 +269,45 @@ The script fetches `bc_mst` (motor period start date) and `bc_mdc` (per-motor st
 - `data/previews/{sui,tkz,stt,original_exhibition}/YYYY/MM/DD.csv` — 展示・気象
 - `data/estimate/motor_ability_score.csv` — **モーターpt のスコアテーブル(必須)**。
   詳細は [`docs/data/motor_ability_score.md`](./data/motor_ability_score.md)
-- `data/estimate/stadium/win_rate.csv` / `sui_params.csv` / `index_weights/YYYY-MM.csv`
+- `data/estimate/stadium/win_rate.csv` / `sui_params.csv` / `weights/{predictor_id}/YYYY-MM.csv`
+
+予想者の宣言は [`scripts/boatrace/predictors/registry.py`](../scripts/boatrace/predictors/registry.py) で行う(`PREDICTORS` タプルに `PredictorSpec` を追加。詳細は [`docs/data/estimate.md`](./data/estimate.md#予想者predictorレジストリ))。
 
 ```bash
-# 当日朝に走らせる日次バッチ:
+# 当日朝に走らせる日次バッチ(active な全予想者ぶん):
 #   枠番・選手・モーター + 暫定強さpt を埋める。展示・気象は 50 で補完。
-python scripts/build_index.py --date 2026-05-03 --mode daily
+python scripts/build_index.py --date 2026-05-03 --mode daily --all-active
+
+# 特定予想者のみ:
+python scripts/build_index.py --date 2026-05-03 --mode daily --predictor v1_basic
 
 # 過去日のバックフィル(全要素揃った状態で計算):
-python scripts/build_index.py --date 2026-05-03 --mode realtime
+python scripts/build_index.py --date 2026-05-03 --mode realtime --all-active
 
 # 一部レースだけ展示・気象を再計算して状態を realtime に更新
 # (preview-realtime.py から内部呼び出しされる)
 python scripts/build_index.py --date 2026-05-03 \
+  --predictor v1_basic \
   --update-races 202605030101,202605030102
 
 # 過去月のバックフィル例(月毎に重みファイルが必要):
 for d in $(seq -w 1 31); do
-  python scripts/build_index.py --date 2026-05-${d} --mode realtime
+  python scripts/build_index.py --date 2026-05-${d} --mode realtime --all-active
 done
 ```
 
 ### Build Monthly Weights(場別重み)
 
 ```bash
-# 対象月の重みを直近6ヶ月のデータから学習
-python scripts/build_weights.py --month 2026-05
+# 対象月の重みを active な全予想者ぶん、直近6ヶ月のデータから学習
+python scripts/build_weights.py --month 2026-05 --all-active
+
+# 特定予想者のみ:
+python scripts/build_weights.py --month 2026-05 --predictor v1_basic
 
 # 過去月の重みを生成(walk-forward 検証用)
-python scripts/build_weights.py --month 2026-04
-python scripts/build_weights.py --month 2026-03
+python scripts/build_weights.py --month 2026-04 --all-active
+python scripts/build_weights.py --month 2026-03 --all-active
 ```
 
 学習窓は `[対象月 - 6ヶ月, 対象月 - 1日]`(対象月のデータは含まない=リーケージなし)。場ごとに非負・合計1の制約で SLSQP 最適化。モーターpt は **v2 ロジック**(直近 6 節 × 級別×グレード×コースの z 残差 × 半減期 60 日の時間減衰 × prior k=10 のベイズ収縮、モーター期起算日でリセット)。フィーチャーフラグ `ENABLE_DECAY` / `ENABLE_LANE_CORRECTION` / `ENABLE_SHRINKAGE` を全 False かつ `MOTOR_HISTORY_SESSIONS=5` にすると v1 と算術等価な単純平均モードに戻る(ablation 検証用)。詳細は [`docs/design/motor_ability_index_v2.md`](./design/motor_ability_index_v2.md)。

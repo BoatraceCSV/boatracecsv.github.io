@@ -73,8 +73,10 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #
 #   - scripts/                         python sources (preview-realtime.py + build_index.py)
 #   - .boatrace/                       runtime config (load_config)
-#   - data/estimate/stadium/           win_rate.csv / sui_params.csv / index_weights/*.csv
-#   - data/estimate/index/<YYYY>/<MM>/ today's index CSV (read+write target)
+#   - data/estimate/stadium/           win_rate.csv / sui_params.csv /
+#                                      weights/<predictor>/*.csv
+#   - data/estimate/<predictor>/<YYYY>/<MM>/  active 予想者ごとの今日の index CSV
+#                                      (read+write target)
 #   - data/programs/recent_national/<YYYY>/<MM>/ feature input — 全国近況5節
 #   - data/programs/recent_local/<YYYY>/<MM>/    feature input — 当地近況5節
 #   - data/programs/motor_stats/<YYYY>/<MM>/     feature input — モーター期成績 (this month)
@@ -97,6 +99,10 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 TODAY_YM=$(TZ=Asia/Tokyo date +'%Y/%m')
 PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +'%Y-%m-15') -1 month" +'%Y/%m')
 
+# Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
+# ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
+ACTIVE_PREDICTORS=(v1_basic)
+
 log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, ym=${TODAY_YM}, prev=${PREV_YM})"
 git clone \
   --depth 1 \
@@ -110,24 +116,28 @@ git clone \
 
 cd repo
 
-git sparse-checkout init --cone
-git sparse-checkout set \
-  scripts \
-  .boatrace \
-  data/estimate/stadium \
-  "data/estimate/index/${TODAY_YM}" \
-  "data/programs/recent_national/${TODAY_YM}" \
-  "data/programs/recent_local/${TODAY_YM}" \
-  "data/programs/motor_stats/${TODAY_YM}" \
-  "data/programs/motor_stats/${PREV_YM}" \
-  "data/previews/tkz/${TODAY_YM}" \
-  "data/previews/stt/${TODAY_YM}" \
-  "data/previews/sui/${TODAY_YM}" \
-  "data/previews/original_exhibition/${TODAY_YM}" \
-  "data/results/realtime/${TODAY_YM}" \
-  "data/results/payouts/${TODAY_YM}" \
-  "data/programs/title/${TODAY_YM}" \
+sparse_paths=(
+  scripts
+  .boatrace
+  data/estimate/stadium
+  "data/programs/recent_national/${TODAY_YM}"
+  "data/programs/recent_local/${TODAY_YM}"
+  "data/programs/motor_stats/${TODAY_YM}"
+  "data/programs/motor_stats/${PREV_YM}"
+  "data/previews/tkz/${TODAY_YM}"
+  "data/previews/stt/${TODAY_YM}"
+  "data/previews/sui/${TODAY_YM}"
+  "data/previews/original_exhibition/${TODAY_YM}"
+  "data/results/realtime/${TODAY_YM}"
+  "data/results/payouts/${TODAY_YM}"
+  "data/programs/title/${TODAY_YM}"
   "data/programs/race_cards/${TODAY_YM}"
+)
+for predictor in "${ACTIVE_PREDICTORS[@]}"; do
+  sparse_paths+=("data/estimate/${predictor}/${TODAY_YM}")
+done
+git sparse-checkout init --cone
+git sparse-checkout set "${sparse_paths[@]}"
 
 # Materialize the working tree. Missing blobs are fetched on demand from the
 # promisor remote (origin) thanks to --filter=blob:none.

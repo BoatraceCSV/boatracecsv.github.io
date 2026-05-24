@@ -77,6 +77,10 @@ if ! [[ "${TARGET_MONTH}" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]]; then
   exit 1
 fi
 
+# Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
+# ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
+ACTIVE_PREDICTORS=(v1_basic)
+
 # ---------------------------------------------------------------------------
 # sparse-checkout 対象月の計算
 #
@@ -174,10 +178,12 @@ git remote set-url origin "${REMOTE_PUBLIC}"
 mkdir -p logs
 
 # ---------------------------------------------------------------------------
-# build_weights.py 実行
+# build_weights.py 実行 (active な全予想者ぶん)
+# --all-active で registry の active 予想者を全部ループ。出力先は
+# data/estimate/stadium/weights/{predictor_id}/{TARGET_MONTH}.csv。
 # ---------------------------------------------------------------------------
-log "Building monthly weights for ${TARGET_MONTH}"
-python scripts/build_weights.py --month "${TARGET_MONTH}"
+log "Building monthly weights for ${TARGET_MONTH} (predictors: ${ACTIVE_PREDICTORS[*]})"
+python scripts/build_weights.py --month "${TARGET_MONTH}" --all-active
 
 # ---------------------------------------------------------------------------
 # build_weights.py は CSV 出力のみで git にコミットしないため、bash 側で
@@ -221,7 +227,7 @@ push_with_rebase() {
   return 1
 }
 
-git add data/estimate/stadium/index_weights/
+git add data/estimate/stadium/weights/
 if git diff --cached --quiet; then
   log "No weights changes to commit for ${TARGET_MONTH}"
 else

@@ -2,25 +2,73 @@
 
 予測モデル向けに事前計算した派生データです。
 
+- [予想者(Predictor)レジストリ](#予想者predictorレジストリ) — 複数予想者の管理と CSV パス規約
 - [Strength Index](#strength-index) — レース 1 行 × 6 枠の「強さポイント」(偏差値)
 - [Stadium Parameters](#stadium-parameters) — Index 計算で参照する場別パラメータ
 
 ---
 
+## 予想者(Predictor)レジストリ
+
+このリポジトリは **複数の予想者(predictor)** を並行運用できる構造になっています。各予想者は固有 ID (`v1_basic`, `v2_tenkai`, ...) を持ち、採用する **特徴量セット (`component_keys`)** が異なります。レジストリの単一情報源は [`scripts/boatrace/predictors/registry.py`](../../scripts/boatrace/predictors/registry.py)。
+
+### ID の命名規則
+
+- 退役後も同じ ID は **再利用しない**(累計回収率の同一性のため)
+- `<バージョン>_<特徴>` 形式を推奨。例: `v1_basic`, `v2_tenkai`(展開優位pt 追加)
+
+### 出力パス規約
+
+| 種別 | パス |
+| --- | --- |
+| 予想者ごとの index CSV | `data/estimate/{predictor_id}/YYYY/MM/DD.csv` |
+| 予想者ごとの月次重み | `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` |
+| 全予想者共通の場別パラメータ | `data/estimate/stadium/win_rate.csv`, `sui_params.csv` |
+
+### 現行レジストリ
+
+| ID | 表示名 | 状態 | 開始日 | 成分 |
+| --- | --- | --- | --- | --- |
+| `v1_basic` | A君予想 | active | 2026-05-01 | waku, racer, motor, exhibit, weather (5 成分) |
+
+新規予想者を追加するときは `registry.py` の `PREDICTORS` タプルに `PredictorSpec` を追記し、`COMPONENT_LABELS_REGISTRY` に新成分のラベルを追加します。`infra/run-*.sh` の `ACTIVE_PREDICTORS` 配列も同期して更新する必要があります(sparse-checkout と commit パス展開で参照)。
+
+### CLI
+
+`build_index.py` / `build_weights.py` ともに以下の引数で予想者を選択できます。
+
+```sh
+# v1_basic のみ
+python scripts/build_index.py   --date 2026-05-24 --predictor v1_basic
+python scripts/build_weights.py --month 2026-05  --predictor v1_basic
+
+# active な全予想者をループ
+python scripts/build_index.py   --date 2026-05-24 --all-active
+python scripts/build_weights.py --month 2026-05  --all-active
+```
+
+`--predictor` を省略すると `v1_basic` がデフォルトになります(後方互換)。
+
+---
+
 ## Strength Index
 
-**強さポイント**
+**強さポイント**(各予想者の中核出力)
 
-- **ファイルパス**: `data/estimate/index/YYYY/MM/DD.csv`
-- **URL**: https://boatracecsv.github.io/data/estimate/index/2026/05/03.csv
+- **ファイルパス**: `data/estimate/{predictor_id}/YYYY/MM/DD.csv`
+- **URL 例**: https://boatracecsv.github.io/data/estimate/v1_basic/2026/05/03.csv
 
-各レース 1 行で、6 枠分の「強さポイント」を 5 要素の偏差値で表現したファイルです。**枠番**・**選手**・**モーター**・**展示**・**気象** の 5 要素を場別に学習した重みで線形結合し、平均 50・標準偏差 10 の偏差値スケールで出力します。
+各レース 1 行で、6 枠分の「強さポイント」を `component_keys` ぶんの偏差値で表現したファイルです。予想者の `component_keys` に列挙された各要素を場別に学習した重みで線形結合し、平均 50・標準偏差 10 の偏差値スケールで出力します。
+
+### v1_basic の特徴量(5 成分)
+
+**枠番**・**選手**・**モーター**・**展示**・**気象** の 5 要素を採用。
 
 ### 生成パイプライン
 
-1. **日次バッチ** (`scripts/build_index.py --mode daily`、JST 00:10): 当日のレース全件について、変動が小さい 3 要素 (枠番・選手・モーター) を計算し、展示・気象は 50 (平均) で補完。状態 = `daily`、暫定の強さpt が入る。
-2. **直前バッチ** (`scripts/preview-realtime.py` から内部呼び出し): 各レースの締切 5 分前に preview を取得した直後、対応する index 行の展示・気象を実値で再計算。状態 = `realtime`、強さpt が確定値に更新される。
-3. **月次重み学習** (`scripts/build_weights.py --month YYYY-MM`、毎月 1 日 09:00 JST): 直近 6 ヶ月のデータから 24 場 × 5 要素の重みを学習し、`data/estimate/stadium/index_weights/YYYY-MM.csv` を生成。
+1. **日次バッチ** (`scripts/build_index.py --mode daily --all-active`、JST 07:30): 当日のレース全件について、変動が小さい 3 要素 (枠番・選手・モーター) を計算し、展示・気象は 50 (平均) で補完。状態 = `daily`、暫定の強さpt が入る。
+2. **直前バッチ** (`scripts/preview-realtime.py` から内部呼び出し): 各レースの締切 5 分前に preview を取得した直後、対応する index 行の展示・気象を実値で再計算。状態 = `realtime`、強さpt が確定値に更新される。**active な全予想者ぶん**を 1 サイクルで更新。
+3. **月次重み学習** (`scripts/build_weights.py --month YYYY-MM --all-active`、毎月 1 日 06:00 JST): 直近 6 ヶ月のデータから 24 場 × `n_components` 要素の重みを学習し、`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を生成。
 
 ### サンプルデータ(1行目、抜粋)
 
@@ -53,9 +101,9 @@
 ### 補完ルール
 
 - 元データが欠損した要素の偏差値ptは **50 で補完**(平均扱い)
-- ただし **選手pt** が欠損する場合(新人 / 長期離脱明けで近5節の出走履歴が無いケースが大半)は、平均扱いだと過大評価になりやすいため **30 で補完** する
-- 5 要素のうち 1 つでも欠損があっても 強さpt は計算される
-- 重みファイル(`data/estimate/stadium/index_weights/YYYY-MM.csv`)が見つからない月のデータは、すべて NaN を出力
+- ただし **選手pt** が欠損する場合(新人 / 長期離脱明けで近5節の出走履歴が無いケースが大半)は、平均扱いだと過大評価になりやすいため **30 で補完** する。成分ごとの補完値は [`registry.py`](../../scripts/boatrace/predictors/registry.py) の `COMPONENT_MISSING_FALLBACK` で一元管理
+- どの成分が欠損しても 強さpt は計算される
+- 重みファイル(`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv`)が見つからない月のデータは、すべて NaN を出力
 
 > **用途**: 単発レースの予想に直接使えるランキング指標。`強さpt` 順で買い目を組み立てたり、寄与列でなぜ強い/弱いかを分解できる。重みは 6 ヶ月ローリングで学習されるため、季節変動を反映。
 
@@ -93,19 +141,21 @@
 
 風向は各場の `facing_deg`(スタンド方位)で正規化して 追い風/向かい風/横風 のカテゴリに分けます。場ごとの learned R² は概ね 0.05〜0.20。`scripts/build_sui_params.py` で実データから再学習可能。
 
-### `data/estimate/stadium/index_weights/YYYY-MM.csv`
+### `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv`
 
-毎月 1 日に再学習される 24 場 × 5 要素の重みファイル。学習窓は対象月の 6 ヶ月前〜前月末。各場 1 行、`stadium`, `n_samples`, 5 要素の `mu_*` / `sigma_*` / `w_*`, `mu_y`, `sigma_y`, `mse`, `r2`, `fallback` を含む。
+毎月 1 日に再学習される 24 場 × `n_components` 要素の重みファイル(予想者ごとに別ディレクトリ)。学習窓は対象月の 6 ヶ月前〜前月末。各場 1 行、`stadium`, `n_samples`, 各要素の `mu_*` / `sigma_*` / `w_*`, `mu_y`, `sigma_y`, `mse`, `r2`, `fallback` を含む。
 
 | 列 | 説明 |
 | --- | --- |
 | `stadium` | 場名(全角:桐生・戸田 等) |
 | `n_samples` | SLSQP fit に使われた行数 |
-| `mu_{key}` / `sigma_{key}` | その場の 5 要素生pt値の平均と標準偏差(偏差値変換に使用) |
+| `mu_{key}` / `sigma_{key}` | その場の各成分生pt値の平均と標準偏差(偏差値変換に使用) |
 | `w_{key}` | その要素の重み(非負・合計 1) |
 | `r2` | 着順予測の決定係数 |
-| `fallback` | 1 = サンプル不足で均等重み(0.2 ずつ)に倒した |
+| `fallback` | 1 = サンプル不足で均等重み(1/n_components ずつ)に倒した |
 
-build_index.py は実行時に **対象日の月以下で最新の重みファイル** を自動選択するため、未来日(月)用に重みファイルを事前生成しておく運用も可能。
+build_index.py は実行時に **対象日の月以下で最新の重みファイル** を予想者ごとに自動選択するため、未来日(月)用に重みファイルを事前生成しておく運用も可能。
+
+`SHORT_HISTORY_COMPONENTS` で宣言された成分(現状は `motor`)は backfill が長くできないことを許容するため、SLSQP fit では他成分が欠損していない行で imputation (z=0) して使う。
 
 > **用途**: index 計算の中間成果物。重みの場別比較をすると、たとえば桐生は気象pt の重みが大きい(波が立ちやすいレース場)、福岡は 枠番pt の重みが大きい(イン強度が高い)など、場の性格が数値で見える。

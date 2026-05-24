@@ -96,7 +96,9 @@ from boatrace.gcs_publisher import (  # noqa: E402
     upload_csvs,
 )
 
-# Per-race update of data/estimate/index/YYYY/MM/DD.csv after preview rows land.
+# Per-race update of data/estimate/{predictor_id}/YYYY/MM/DD.csv after preview
+# rows land. Each active predictor is updated independently with its own
+# component_keys and weights.
 import importlib.util  # noqa: E402
 
 _build_index_path = Path(__file__).parent / "build_index.py"
@@ -105,6 +107,8 @@ _build_index = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_build_index)
 update_index_for_races = _build_index.update_index_for_races
 index_csv_path = _build_index.index_csv_path
+
+from boatrace.predictors import active_predictors  # noqa: E402
 
 
 SOURCES = ("tkz", "stt", "sui", "original_exhibition")
@@ -740,8 +744,10 @@ def main() -> int:
         original_exhibition=len(oex_rows),
     )
 
-    # --- 5b. Update data/estimate/index/YYYY/MM/DD.csv for races whose preview --
-    #         we just appended (展示・気象を再計算 → 状態=realtime).
+    # --- 5b. Update data/estimate/{predictor_id}/YYYY/MM/DD.csv for races
+    #         whose preview we just appended (展示・気象を再計算 → 状態=realtime).
+    #         Loops over every active predictor; a single predictor's failure
+    #         is logged but doesn't block the others.
     updated_codes = sorted({
         row[0]  # 1st column = レースコード
         for source_rows in (tkz_rows, stt_rows, sui_rows, oex_rows)
@@ -749,20 +755,25 @@ def main() -> int:
     })
     if updated_codes and not args.dry_run:
         day = datetime.strptime(date_str, "%Y-%m-%d").date()
-        idx_path = index_csv_path(PROJECT_ROOT, day)
-        if not idx_path.exists():
-            logging_module.info(
-                "preview_realtime_index_skipped",
-                reason="index_csv_missing",
-                path=str(idx_path.relative_to(PROJECT_ROOT)),
-            )
-        else:
+        for predictor in active_predictors():
+            idx_path = index_csv_path(PROJECT_ROOT, day, predictor)
+            if not idx_path.exists():
+                logging_module.info(
+                    "preview_realtime_index_skipped",
+                    predictor_id=predictor.predictor_id,
+                    reason="index_csv_missing",
+                    path=str(idx_path.relative_to(PROJECT_ROOT)),
+                )
+                continue
             try:
-                n_updated = update_index_for_races(PROJECT_ROOT, day, updated_codes)
+                n_updated = update_index_for_races(
+                    PROJECT_ROOT, day, updated_codes, predictor,
+                )
                 if n_updated > 0:
                     paths.append(idx_path)
                 logging_module.info(
                     "preview_realtime_index_updated",
+                    predictor_id=predictor.predictor_id,
                     date=date_str,
                     n_updated=n_updated,
                     race_codes=updated_codes,
@@ -770,6 +781,7 @@ def main() -> int:
             except Exception as exc:  # pragma: no cover — defensive
                 logging_module.error(
                     "preview_realtime_index_update_failed",
+                    predictor_id=predictor.predictor_id,
                     error=str(exc),
                 )
 
