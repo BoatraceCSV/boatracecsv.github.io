@@ -30,6 +30,7 @@
 | ID | 表示名 | 状態 | 開始日 | 成分 |
 | --- | --- | --- | --- | --- |
 | `v1_basic` | A君予想 | active | 2026-05-01 | waku, racer, motor, exhibit, weather (5 成分) |
+| `v2_tenkai` | B君予想 | active | 2026-06-01 | waku, racer, motor, exhibit, weather, **tenkai** (6 成分) |
 
 新規予想者を追加するときは `registry.py` の `PREDICTORS` タプルに `PredictorSpec` を追記し、`COMPONENT_LABELS_REGISTRY` に新成分のラベルを追加します。`infra/run-*.sh` の `ACTIVE_PREDICTORS` 配列も同期して更新する必要があります(sparse-checkout と commit パス展開で参照)。
 
@@ -63,6 +64,21 @@ python scripts/build_weights.py --month 2026-05  --all-active
 ### v1_basic の特徴量(5 成分)
 
 **枠番**・**選手**・**モーター**・**展示**・**気象** の 5 要素を採用。
+
+### v2_tenkai の特徴量(6 成分)
+
+v1_basic の 5 成分に加え **展開優位pt (`tenkai`)** を 6 番目に追加。
+
+展開優位pt は「スタート展示の進入コースと枠番デフォルトコースの **長期勝率差**」を場別標準化したもの。
+- 進入変更なし → 偏差値 50 (中立)
+- 枠より良いコースに入った (= 進入で前に行けた) → 偏差値 > 50
+- 枠より悪いコースに入った (= 沈み込んだ) → 偏差値 < 50
+
+raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝率を引いて
+`win_rate(進入コース) - win_rate(枠番コース)` で算出する
+([`scripts/boatrace/index_features.py` の `tenkai_yui_pt()`](../../scripts/boatrace/index_features.py))。
+朝バッチ時点 (展示前) では進入コース未取得のため枠番=進入扱い → raw=0 →
+`build_index.py` 側で 50 に上書きされる ([`DAILY_NEUTRAL_COMPONENTS`](../../scripts/build_index.py))。
 
 ### 生成パイプライン
 

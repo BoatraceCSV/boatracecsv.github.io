@@ -33,8 +33,9 @@ COMPONENT_LABELS_REGISTRY: Mapping[str, str] = {
     "motor":   "モーターpt",
     "exhibit": "展示pt",
     "weather": "気象pt",
-    # v2_tenkai 投入時に追加予定:
-    # "tenkai": "展開優位pt",
+    # v2_tenkai (B君予想) で採用。スタート展示の進入コースと枠番のコース勝率
+    # 差分を場別標準化した「進入変更による有利度」。
+    "tenkai":  "展開優位pt",
 }
 
 # Component key → 欠損補完値 (偏差値pt スケール)。
@@ -163,15 +164,19 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         started_at=dt.date(2026, 5, 1),
         component_keys=("waku", "racer", "motor", "exhibit", "weather"),
     ),
-    # 将来追加例:
-    # PredictorSpec(
-    #     predictor_id="v2_tenkai",
-    #     display_name="B君予想",
-    #     slot=2,
-    #     status=STATUS_ACTIVE,
-    #     started_at=dt.date(2026, 6, 1),
-    #     component_keys=("waku", "racer", "motor", "exhibit", "weather", "tenkai"),
-    # ),
+    PredictorSpec(
+        predictor_id="v2_tenkai",
+        display_name="B君予想",
+        slot=2,
+        status=STATUS_ACTIVE,
+        # Phase 2 投入日。展開優位pt の calculation が動き始める日付。
+        # この日以前は data/estimate/v2_tenkai/ が生成されていないため
+        # fun-site /predictors の累計回収率は当日からカウント開始する。
+        started_at=dt.date(2026, 6, 1),
+        component_keys=(
+            "waku", "racer", "motor", "exhibit", "weather", "tenkai",
+        ),
+    ),
 )
 
 

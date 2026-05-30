@@ -79,7 +79,7 @@ fi
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
-ACTIVE_PREDICTORS=(v1_basic)
+ACTIVE_PREDICTORS=(v1_basic v2_tenkai)
 
 # ---------------------------------------------------------------------------
 # sparse-checkout 対象月の計算

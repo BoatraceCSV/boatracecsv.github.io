@@ -173,8 +173,9 @@ def atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
 # Per-race row builder
 # ─────────────────────────────────────────────────────────────────────
 # Daily モードで強制的に平均 50 に倒す成分。
-# 朝バッチ時点では展示・気象データが揃わないため、これらは中立値で固定する。
-DAILY_NEUTRAL_COMPONENTS: frozenset[str] = frozenset({"exhibit", "weather"})
+# 朝バッチ時点では展示・気象・展開優位 (進入コース) データが揃わないため、
+# これらは中立値で固定する。
+DAILY_NEUTRAL_COMPONENTS: frozenset[str] = frozenset({"exhibit", "weather", "tenkai"})
 
 
 def _build_one_race_row(

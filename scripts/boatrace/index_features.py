@@ -93,6 +93,35 @@ def waku_pt(table: dict, stadium_code2: str, season: str, course: int) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# 1b. 展開優位pt(v2_tenkai 用)
+# ─────────────────────────────────────────────────────────────────────
+def tenkai_yui_pt(
+    table: dict, stadium_code2: str, season: str,
+    waku: int, actual_course: int,
+) -> float:
+    """枠番デフォルトコースと実際の進入コースの勝率差を返す。
+
+    - 進入変更が無い (actual_course == waku) → 0.0
+    - 良いコース (= 番号が小さい) に入った → 正 (勝率が高くなる)
+    - 悪いコース (= 番号が大きい) に入った → 負
+
+    値域は概ね ±0.6 程度(イン勝率 0.55 - アウト勝率 0.05)。
+    上流の `compute_features_for_day` で出力されたあと、
+    `build_index.py` 側で場別 (μ, σ) で標準化されて偏差値 (50±10) になる。
+
+    展示前 (= 朝バッチ) は actual_course を取得できないため、呼び出し側は
+    actual_course=waku でこの関数を呼ぶ → 0.0 が返り、daily 状態として
+    扱われる (build_index の daily モードで 50 に上書きされる)。
+    """
+    rates = table.get((stadium_code2, season))
+    if rates is None:
+        return float("nan")
+    if not (1 <= waku <= 6) or not (1 <= actual_course <= 6):
+        return float("nan")
+    return rates[actual_course - 1] - rates[waku - 1]
+
+
+# ─────────────────────────────────────────────────────────────────────
 # 2. 選手ポイント (能力指数)
 # ─────────────────────────────────────────────────────────────────────
 SCORE_TABLE = {
@@ -1338,6 +1367,13 @@ def compute_features_for_day(
             kpt = round(v_kishou, 4) if not (isinstance(v_kishou, float)
                                              and np.isnan(v_kishou)) else float("nan")
 
+            # v2_tenkai: 展開優位pt = 進入コースと枠番デフォルトコースの勝率差。
+            # rt が無い(=展示前/朝バッチ)場合は course == waku になるため自動的に 0.0
+            # が返り、daily 状態で build_index 側が 50 に上書きする。
+            tpt = tenkai_yui_pt(waku_tab, stadium_code2, season, waku, course)
+            tpt = round(tpt, 4) if not (isinstance(tpt, float)
+                                        and np.isnan(tpt)) else float("nan")
+
             rows.append({
                 "レースコード": code,
                 "レース日":    f"{day:%Y-%m-%d}",
@@ -1349,5 +1385,6 @@ def compute_features_for_day(
                 "motor":      mpt,
                 "exhibit":    ept,
                 "weather":    kpt,
+                "tenkai":     tpt,
             })
     return pd.DataFrame(rows)
