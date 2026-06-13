@@ -1,0 +1,1003 @@
+#!/usr/bin/env python3
+"""Realtime preview scraper.
+
+Run every 5 minutes by Cloud Scheduler (`preview-realtime-daytime`) →
+Cloud Run Job (`preview-realtime`) in project ``boatrace-487212`` /
+``asia-northeast1`` between JST 08:00 and 22:59 (cron ``*/5 8-22 * * *``,
+Asia/Tokyo). The ``.github/workflows/preview-realtime.yml`` workflow is
+retained as a ``workflow_dispatch`` manual fallback only — its scheduled
+cron has been removed because GitHub Actions throttled it down to ~hourly.
+Each invocation:
+
+1. Fetches ``getHoldingList2`` for today (JST) to discover open venues and
+   per-race deadline times. Nothing is persisted from this response.
+2. Computes the *eligibility window* — races whose deadline falls roughly
+   five minutes from now (default: ``[now+1min, now+10min]``).
+3. For each eligible race that has not yet been recorded today, scrapes
+   ``bc_j_tkz`` / ``bc_j_stt`` / ``bc_sui`` / ``bc_oriten`` and appends one
+   row per source to the matching daily CSV under
+   ``data/previews/{tkz,stt,sui,original_exhibition}/``.
+4. For each race whose deadline has already passed, scrapes ``bc_rs1_2``
+   (finishes / ST / weather) and ``bc_rs2`` (払戻金) and appends rows to
+   ``data/results/realtime/`` and ``data/results/payouts/`` respectively.
+   The two are fetched independently — a race may show up in one CSV
+   first and the other a sub-second later, and each subsequent
+   invocation will fill the gap.
+5. Commits and pushes the changes (one commit per invocation, only when
+   rows were actually appended).
+
+The eligibility window is intentionally wider than five minutes because
+GitHub Actions cron is best-effort and may fire several minutes late.
+Idempotency is guaranteed by deduping new rows against existing
+``レースコード`` already present in each daily CSV.
+
+If no race in the window remains to be fetched, the script exits 0
+without touching any file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
+
+# Make the boatrace package importable regardless of CWD.
+sys.path.insert(0, str(Path(__file__).parent))
+
+from boatrace import logger as logging_module  # noqa: E402
+from boatrace import git_operations  # noqa: E402
+from boatrace.downloader import RateLimiter  # noqa: E402
+from boatrace.holding_list import (  # noqa: E402
+    HoldingListError,
+    HoldingRace,
+    build_race_code,
+    fetch_holding_list,
+    load_holding_from_title_csv,
+)
+from boatrace.preview_tsv_scraper import PreviewTsvScraper  # noqa: E402
+from boatrace.original_exhibition_scraper import (  # noqa: E402
+    OriginalExhibitionScraper,
+)
+from boatrace.preview_csv import (  # noqa: E402
+    OEX_HEADERS,
+    STT_HEADERS,
+    SUI_HEADERS,
+    TKZ_HEADERS,
+    append_rows,
+    build_oex_row,
+    build_stt_row,
+    build_sui_row,
+    build_tkz_row,
+    csv_path_for,
+    existing_race_codes,
+)
+from boatrace.result_realtime import (  # noqa: E402
+    RESULT_HEADERS,
+    ResultRealtimeFetcher,
+    append_rows as append_result_rows,
+    build_result_row,
+    csv_path_for as result_csv_path_for,
+    existing_race_codes as result_existing_race_codes,
+)
+from boatrace.payout_realtime import (  # noqa: E402
+    PAYOUT_HEADERS,
+    PayoutRealtimeFetcher,
+    append_rows as append_payout_rows,
+    build_payout_row,
+    csv_path_for as payout_csv_path_for,
+    existing_race_codes as payout_existing_race_codes,
+)
+from boatrace.gcs_publisher import (  # noqa: E402
+    assemble_updated_races,
+    publish_realtime_completed,
+    upload_csvs,
+)
+
+# Per-race update of data/estimate/{predictor_id}/YYYY/MM/DD.csv after preview
+# rows land. Each active predictor is updated independently with its own
+# component_keys and weights.
+import importlib.util  # noqa: E402
+
+_build_index_path = Path(__file__).parent / "build_index.py"
+_spec = importlib.util.spec_from_file_location("build_index", _build_index_path)
+_build_index = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_build_index)
+update_index_for_races = _build_index.update_index_for_races
+index_csv_path = _build_index.index_csv_path
+
+from boatrace.predictors import active_predictors  # noqa: E402
+
+
+SOURCES = ("tkz", "stt", "sui", "original_exhibition")
+
+
+JST = timezone(timedelta(hours=9))
+PROJECT_ROOT = Path(__file__).parent.parent
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def load_config(config_path: str = ".boatrace/config.json") -> dict:
+    """Load configuration. Returns empty dict if not found."""
+    config_file = Path(config_path)
+    if not config_file.is_absolute() and not config_file.exists():
+        config_file = PROJECT_ROOT / config_path
+    if not config_file.exists():
+        return {}
+    try:
+        with open(config_file) as f:
+            return json.load(f)
+    except (OSError, ValueError) as exc:
+        logging_module.error("config_load_error", error=str(exc))
+        return {}
+
+
+def parse_hhmm(value: str) -> Optional[Tuple[int, int]]:
+    """``"15:18"`` -> ``(15, 18)`` (or ``None`` if malformed)."""
+    if not value or ":" not in value:
+        return None
+    hh_s, mm_s = value.split(":", 1)
+    try:
+        hh, mm = int(hh_s), int(mm_s)
+    except ValueError:
+        return None
+    if not (0 <= hh < 24 and 0 <= mm < 60):
+        return None
+    return hh, mm
+
+
+def deadline_to_jst_datetime(date_str: str, deadline: str) -> Optional[datetime]:
+    """Combine ``YYYY-MM-DD`` + ``HH:MM`` into a JST datetime."""
+    parts = parse_hhmm(deadline)
+    if not parts:
+        return None
+    hh, mm = parts
+    base = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=JST)
+    return base.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+
+# ---------------------------------------------------------------------------
+# Core logic
+# ---------------------------------------------------------------------------
+
+
+def select_eligible_races(
+    races: List[HoldingRace],
+    now_jst: datetime,
+    date_str: str,
+    window_min: int,
+    window_max: int,
+    already_recorded: Dict[str, Set[str]],
+) -> List[HoldingRace]:
+    """Filter the holding-list to races we should fetch right now.
+
+    A race is eligible when:
+      * ``cancel_status`` is empty (open / not 順延 / not 中止 / not 途中中止)
+      * ``deadline_time`` falls in ``[now + window_min, now + window_max]`` minutes
+      * its ``race_code`` is not yet present in **every** source CSV
+
+    The third condition uses an intersection — if any source still misses
+    this race we re-include it so subsequent runs can complete the
+    partial success (each source's append step does its own per-source
+    dedupe).
+    """
+    lower = now_jst + timedelta(minutes=window_min)
+    upper = now_jst + timedelta(minutes=window_max)
+
+    eligible: List[HoldingRace] = []
+    for race in races:
+        if not race.is_open:
+            continue
+        deadline_dt = deadline_to_jst_datetime(date_str, race.deadline_time)
+        if deadline_dt is None:
+            continue
+        if not (lower <= deadline_dt <= upper):
+            continue
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        # Skip only when already in *every* source's CSV — that way a
+        # partial success last run can be completed this run.
+        recorded_in_all = all(
+            race_code in already_recorded.get(src, set())
+            for src in SOURCES
+        )
+        if recorded_in_all:
+            continue
+        eligible.append(race)
+    return eligible
+
+
+def fetch_and_build_rows(
+    scraper: PreviewTsvScraper,
+    oex_scraper: OriginalExhibitionScraper,
+    eligible: List[HoldingRace],
+    date_str: str,
+    fetched_at_iso: str,
+    already_recorded: Dict[str, Set[str]],
+) -> Tuple[List[List[str]], List[List[str]], List[List[str]], List[List[str]]]:
+    """Scrape each eligible race and build per-source CSV rows.
+
+    Returns ``(tkz_rows, stt_rows, sui_rows, oex_rows)`` containing only
+    rows for races whose source data could be fetched & parsed and which
+    are not already present in that source's CSV.
+
+    Per-source skip rules:
+      * tkz: ``status`` of ``"0"`` (計測中) or ``"2"`` (計測不能) -> skip
+      * stt / sui: source file absent -> skip
+      * original_exhibition (oex): ``status`` not ``"1"`` (i.e. measuring
+        or unmeasurable) or source file absent -> skip
+    """
+    tkz_rows: List[List[str]] = []
+    stt_rows: List[List[str]] = []
+    sui_rows: List[List[str]] = []
+    oex_rows: List[List[str]] = []
+
+    # Per-invocation cache: bc_sui content is the same for all races at
+    # the same stadium at any given moment. Within one minute's run we
+    # dedupe the HTTP call per stadium.
+    sui_cache: Dict[int, Optional[Dict]] = {}
+
+    for race in eligible:
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        common = dict(
+            race_code=race_code,
+            date_str=date_str,
+            stadium_code=race.stadium_code,
+            race_number=race.race_number,
+            deadline_time=race.deadline_time,
+            fetched_at_iso=fetched_at_iso,
+        )
+
+        # --- tkz ---
+        if race_code not in already_recorded.get("tkz", set()):
+            tkz_result = scraper.fetch_tkz_raw(
+                date_str, race.stadium_code, race.race_number
+            )
+            if tkz_result is not None:
+                status, boats = tkz_result
+                if status == "1":
+                    tkz_rows.append(
+                        build_tkz_row(status=status, boats=boats, **common)
+                    )
+                else:
+                    logging_module.info(
+                        "preview_realtime_tkz_skipped",
+                        race_code=race_code,
+                        status=status,
+                        reason="not_ready",
+                    )
+            else:
+                logging_module.info(
+                    "preview_realtime_tkz_skipped",
+                    race_code=race_code,
+                    reason="file_missing",
+                )
+
+        # --- stt ---
+        if race_code not in already_recorded.get("stt", set()):
+            stt_data = scraper.fetch_stt_raw(
+                date_str, race.stadium_code, race.race_number
+            )
+            if stt_data:
+                stt_rows.append(build_stt_row(boats=stt_data, **common))
+            else:
+                logging_module.info(
+                    "preview_realtime_stt_skipped",
+                    race_code=race_code,
+                    reason="file_missing",
+                )
+
+        # --- sui ---
+        if race_code not in already_recorded.get("sui", set()):
+            if race.stadium_code not in sui_cache:
+                sui_cache[race.stadium_code] = scraper.fetch_sui_raw(
+                    date_str, race.stadium_code
+                )
+            weather = sui_cache[race.stadium_code]
+            if weather:
+                sui_rows.append(build_sui_row(weather=weather, **common))
+            else:
+                logging_module.info(
+                    "preview_realtime_sui_skipped",
+                    race_code=race_code,
+                    reason="file_missing",
+                )
+
+        # --- original_exhibition (bc_oriten) ---
+        if race_code not in already_recorded.get("original_exhibition", set()):
+            oex_data = oex_scraper.scrape_race(
+                date_str, race.stadium_code, race.race_number
+            )
+            if oex_data is None:
+                logging_module.info(
+                    "preview_realtime_oex_skipped",
+                    race_code=race_code,
+                    reason="file_missing",
+                )
+            elif oex_data.status != "1":
+                logging_module.info(
+                    "preview_realtime_oex_skipped",
+                    race_code=race_code,
+                    status=oex_data.status,
+                    reason="not_ready",
+                )
+            elif not oex_data.is_valid():
+                logging_module.info(
+                    "preview_realtime_oex_skipped",
+                    race_code=race_code,
+                    reason="invalid_boat_count",
+                )
+            else:
+                oex_rows.append(
+                    build_oex_row(
+                        measure_count=oex_data.measure_count,
+                        measure_labels=oex_data.measure_labels,
+                        boats=oex_data.boats,
+                        **common,
+                    )
+                )
+
+    return tkz_rows, stt_rows, sui_rows, oex_rows
+
+
+def write_all(
+    date_str: str,
+    tkz_rows: List[List[str]],
+    stt_rows: List[List[str]],
+    sui_rows: List[List[str]],
+    oex_rows: List[List[str]],
+    dry_run: bool,
+) -> Tuple[List[Path], int]:
+    """Append rows to each daily CSV.
+
+    Returns ``(written_paths, total_rows)``. In dry-run mode nothing is
+    written but the same return shape is produced for logging.
+    """
+    paths_written: List[Path] = []
+    total_rows = 0
+
+    for source, headers, rows in (
+        ("tkz", TKZ_HEADERS, tkz_rows),
+        ("stt", STT_HEADERS, stt_rows),
+        ("sui", SUI_HEADERS, sui_rows),
+        ("original_exhibition", OEX_HEADERS, oex_rows),
+    ):
+        if not rows:
+            continue
+        path = csv_path_for(PROJECT_ROOT, source, date_str)
+        if dry_run:
+            logging_module.info(
+                "preview_realtime_csv_dry_run",
+                source=source,
+                path=str(path),
+                rows=len(rows),
+            )
+            paths_written.append(path)
+            total_rows += len(rows)
+            continue
+        written = append_rows(path, headers, rows)
+        if written > 0:
+            paths_written.append(path)
+            total_rows += written
+    return paths_written, total_rows
+
+
+def select_finished_races(
+    races: List[HoldingRace],
+    now_jst: datetime,
+    date_str: str,
+    finished_min: int,
+    finished_max: int,
+    already_recorded: Set[str],
+) -> List[HoldingRace]:
+    """Filter the holding-list to races whose deadline already passed.
+
+    A race is a candidate for realtime result fetch when:
+      * ``cancel_status`` is empty (not 中止 / 順延 / 途中中止)
+      * its deadline is between ``finished_min`` and ``finished_max``
+        minutes *in the past* relative to ``now_jst``
+      * its ``race_code`` is not yet present in the realtime results CSV
+
+    The window has both bounds because:
+      * lower bound (``finished_min``): the race file does not appear
+        until a few minutes after the deadline; checking earlier would
+        always 403.
+      * upper bound (``finished_max``): once the file has been recorded
+        we don't need to keep retrying every minute for hours; idempotency
+        already handles the no-op, but skipping cuts HTTP traffic.
+    """
+    upper = now_jst - timedelta(minutes=finished_min)  # latest allowable deadline
+    lower = now_jst - timedelta(minutes=finished_max)  # earliest allowable deadline
+
+    candidates: List[HoldingRace] = []
+    for race in races:
+        if not race.is_open:
+            continue
+        deadline_dt = deadline_to_jst_datetime(date_str, race.deadline_time)
+        if deadline_dt is None:
+            continue
+        if not (lower <= deadline_dt <= upper):
+            continue
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        if race_code in already_recorded:
+            continue
+        candidates.append(race)
+    return candidates
+
+
+def fetch_and_build_result_rows(
+    fetcher: ResultRealtimeFetcher,
+    candidates: List[HoldingRace],
+    date_str: str,
+    fetched_at_iso: str,
+) -> List[List[str]]:
+    """Fetch and convert each candidate's bc_rs1_2 into a CSV row.
+
+    Skips races whose file does not yet exist (``fetch_race_result``
+    returns ``None``). Returns rows ready for :func:`append_result_rows`.
+    """
+    rows: List[List[str]] = []
+    for race in candidates:
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        result = fetcher.fetch_race_result(
+            date_str, race.stadium_code, race.race_number
+        )
+        if result is None:
+            logging_module.info(
+                "result_realtime_skip",
+                race_code=race_code,
+                reason="not_ready_or_missing",
+            )
+            continue
+        rows.append(
+            build_result_row(
+                race_code=race_code,
+                date_str=date_str,
+                stadium_code=race.stadium_code,
+                race_number=race.race_number,
+                deadline_time=race.deadline_time,
+                fetched_at_iso=fetched_at_iso,
+                result=result,
+            )
+        )
+    return rows
+
+
+def fetch_and_build_payout_rows(
+    fetcher: PayoutRealtimeFetcher,
+    candidates: List[HoldingRace],
+    date_str: str,
+    fetched_at_iso: str,
+) -> List[List[str]]:
+    """Fetch and convert each candidate's bc_rs2 into a CSV row.
+
+    Independent of ``fetch_and_build_result_rows``: a race that has its
+    bc_rs1_2 ready but bc_rs2 not yet (or vice versa) is simply skipped
+    here and retried next cycle. Returns rows ready for
+    :func:`append_payout_rows`.
+    """
+    rows: List[List[str]] = []
+    for race in candidates:
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        payouts = fetcher.fetch_race_payouts(
+            date_str, race.stadium_code, race.race_number
+        )
+        if payouts is None:
+            logging_module.info(
+                "payout_realtime_skip",
+                race_code=race_code,
+                reason="not_ready_or_missing",
+            )
+            continue
+        rows.append(
+            build_payout_row(
+                race_code=race_code,
+                date_str=date_str,
+                stadium_code=race.stadium_code,
+                race_number=race.race_number,
+                deadline_time=race.deadline_time,
+                fetched_at_iso=fetched_at_iso,
+                payouts=payouts,
+            )
+        )
+    return rows
+
+
+def commit_changes(
+    paths: List[Path],
+    date_str: str,
+    eligible: List[HoldingRace],
+    finished: Optional[List[HoldingRace]] = None,
+    payout_finished: Optional[List[HoldingRace]] = None,
+) -> bool:
+    """Stage paths, commit, push. Returns True on success / no-op."""
+    if not paths:
+        return True
+
+    rel_paths = [str(p.relative_to(PROJECT_ROOT)) for p in paths]
+    parts: List[str] = []
+    if eligible:
+        preview_summary = ",".join(
+            f"{r.stadium_code:02d}-{r.race_number:02d}"
+            for r in sorted(eligible, key=lambda r: (r.stadium_code, r.race_number))
+        )
+        parts.append(f"preview {preview_summary}")
+    if finished:
+        result_summary = ",".join(
+            f"{r.stadium_code:02d}-{r.race_number:02d}"
+            for r in sorted(finished, key=lambda r: (r.stadium_code, r.race_number))
+        )
+        parts.append(f"result {result_summary}")
+    if payout_finished:
+        payout_summary = ",".join(
+            f"{r.stadium_code:02d}-{r.race_number:02d}"
+            for r in sorted(
+                payout_finished, key=lambda r: (r.stadium_code, r.race_number)
+            )
+        )
+        parts.append(f"payout {payout_summary}")
+    summary = " | ".join(parts) if parts else "no-op"
+    message = f"Update realtime: {date_str} [{summary}]"
+    return git_operations.commit_and_push(rel_paths, message)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Realtime preview scraper. Designed to be run every minute "
+            "from GitHub Actions."
+        )
+    )
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Override the target date (YYYY-MM-DD). Default: today (JST).",
+    )
+    parser.add_argument(
+        "--now",
+        type=str,
+        default=None,
+        help=(
+            "Override the reference 'current time' as ``HH:MM`` (JST), "
+            "useful for backfill / testing."
+        ),
+    )
+    parser.add_argument(
+        "--window-min",
+        type=int,
+        default=1,
+        help="Lower bound (minutes ahead of now). Default: 1.",
+    )
+    parser.add_argument(
+        "--window-max",
+        type=int,
+        default=10,
+        help="Upper bound (minutes ahead of now). Default: 10.",
+    )
+    parser.add_argument(
+        "--result-window-min",
+        type=int,
+        default=3,
+        help=(
+            "Minutes since deadline to start checking bc_rs1_2 (results). "
+            "Default: 3 — race typically finalises a few minutes after "
+            "deadline."
+        ),
+    )
+    parser.add_argument(
+        "--result-window-max",
+        type=int,
+        default=30,
+        help=(
+            "Minutes since deadline to stop checking bc_rs1_2. Default: 30 "
+            "— anything older has already been written or is unrecoverable."
+        ),
+    )
+    parser.add_argument(
+        "--skip-results",
+        action="store_true",
+        help="Run preview fetch but skip the result-realtime step.",
+    )
+    parser.add_argument(
+        "--skip-payouts",
+        action="store_true",
+        help="Run preview fetch but skip the payout-realtime (bc_rs2) step.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve eligible races and log the plan, but write nothing.",
+    )
+    parser.add_argument(
+        "--no-commit",
+        action="store_true",
+        help="Write CSVs but skip the git commit & push step.",
+    )
+    return parser.parse_args()
+
+
+def resolve_now(args_now: Optional[str], date_str: str) -> datetime:
+    if args_now:
+        parts = parse_hhmm(args_now)
+        if not parts:
+            raise SystemExit(f"--now must be HH:MM, got: {args_now}")
+        hh, mm = parts
+        base = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=JST)
+        return base.replace(hour=hh, minute=mm)
+    return datetime.now(JST)
+
+
+def main() -> int:
+    args = parse_args()
+
+    config = load_config()
+    logging_module.initialize_logger(
+        log_level=config.get("log_level", "INFO"),
+        log_file=config.get("log_file", "logs/boatrace-{DATE}.json"),
+    )
+
+    today_jst = datetime.now(JST).strftime("%Y-%m-%d")
+    date_str = args.date or today_jst
+    now_jst = resolve_now(args.now, date_str)
+    fetched_at_iso = now_jst.isoformat()
+
+    logging_module.info(
+        "preview_realtime_start",
+        date=date_str,
+        now=now_jst.isoformat(),
+        window=f"[+{args.window_min}, +{args.window_max}] min",
+        dry_run=args.dry_run,
+    )
+
+    rate_limiter = RateLimiter(
+        interval_seconds=config.get("rate_limit_interval_seconds", 0.1)
+    )
+
+    # --- 1. Fetch holding list ----------------------------------------
+    try:
+        races = fetch_holding_list(
+            date_str,
+            timeout_seconds=config.get("request_timeout_seconds", 30),
+            rate_limiter=rate_limiter,
+        )
+    except HoldingListError as exc:
+        logging_module.error(
+            "preview_realtime_holding_list_failed", error=str(exc)
+        )
+        return 1
+
+    if not races:
+        logging_module.info("preview_realtime_no_holdings", date=date_str)
+        return 0
+
+    # --- 2. Existing race_codes per source (for idempotency) ----------
+    already_recorded: Dict[str, Set[str]] = {
+        source: existing_race_codes(csv_path_for(PROJECT_ROOT, source, date_str))
+        for source in SOURCES
+    }
+
+    # --- 3. Eligibility window ----------------------------------------
+    eligible = select_eligible_races(
+        races,
+        now_jst,
+        date_str,
+        args.window_min,
+        args.window_max,
+        already_recorded,
+    )
+
+    logging_module.info(
+        "preview_realtime_eligible",
+        date=date_str,
+        eligible_count=len(eligible),
+        eligible=[
+            f"{r.stadium_code:02d}-{r.race_number:02d}@{r.deadline_time}"
+            for r in eligible
+        ],
+    )
+
+    # --- 4. Fetch & build preview rows --------------------------------
+    if eligible:
+        scraper = PreviewTsvScraper(
+            timeout_seconds=config.get("request_timeout_seconds", 30),
+            rate_limiter=rate_limiter,
+        )
+        oex_scraper = OriginalExhibitionScraper(
+            timeout_seconds=config.get("request_timeout_seconds", 30),
+            rate_limiter=rate_limiter,
+        )
+        tkz_rows, stt_rows, sui_rows, oex_rows = fetch_and_build_rows(
+            scraper,
+            oex_scraper,
+            eligible,
+            date_str,
+            fetched_at_iso,
+            already_recorded,
+        )
+    else:
+        tkz_rows = stt_rows = sui_rows = oex_rows = []
+
+    # --- 5. Write CSVs -------------------------------------------------
+    paths, total = write_all(
+        date_str, tkz_rows, stt_rows, sui_rows, oex_rows, args.dry_run
+    )
+
+    logging_module.info(
+        "preview_realtime_write_complete",
+        date=date_str,
+        paths=[str(p.relative_to(PROJECT_ROOT)) for p in paths],
+        total_rows=total,
+        tkz=len(tkz_rows),
+        stt=len(stt_rows),
+        sui=len(sui_rows),
+        original_exhibition=len(oex_rows),
+    )
+
+    # --- 5b. Update data/estimate/{predictor_id}/YYYY/MM/DD.csv for races
+    #         whose preview we just appended (展示・気象を再計算 → 状態=realtime).
+    #         Loops over every active predictor; a single predictor's failure
+    #         is logged but doesn't block the others.
+    updated_codes = sorted({
+        row[0]  # 1st column = レースコード
+        for source_rows in (tkz_rows, stt_rows, sui_rows, oex_rows)
+        for row in source_rows
+    })
+    if updated_codes and not args.dry_run:
+        day = datetime.strptime(date_str, "%Y-%m-%d").date()
+        for predictor in active_predictors():
+            idx_path = index_csv_path(PROJECT_ROOT, day, predictor)
+            if not idx_path.exists():
+                logging_module.info(
+                    "preview_realtime_index_skipped",
+                    predictor_id=predictor.predictor_id,
+                    reason="index_csv_missing",
+                    path=str(idx_path.relative_to(PROJECT_ROOT)),
+                )
+                continue
+            try:
+                n_updated = update_index_for_races(
+                    PROJECT_ROOT, day, updated_codes, predictor,
+                )
+                if n_updated > 0:
+                    paths.append(idx_path)
+                logging_module.info(
+                    "preview_realtime_index_updated",
+                    predictor_id=predictor.predictor_id,
+                    date=date_str,
+                    n_updated=n_updated,
+                    race_codes=updated_codes,
+                )
+            except Exception as exc:  # pragma: no cover — defensive
+                logging_module.error(
+                    "preview_realtime_index_update_failed",
+                    predictor_id=predictor.predictor_id,
+                    error=str(exc),
+                )
+
+    # --- 5c & 5d shared: finished-race source list -------------------
+    # The live holding list rewrites a race's ``deadline_time`` to
+    # "締切" / "確定" the moment its deadline passes, which makes
+    # :func:`select_finished_races` drop every post-deadline race
+    # (parse_hhmm fails). For results / payouts we therefore prefer the
+    # daily-sync snapshot in ``data/programs/title/.../DD.csv``,
+    # which preserves the original ``HH:MM`` deadlines for all 12
+    # races at every venue. Falls back to the live holding list when
+    # the title CSV is missing (e.g. daily-sync hasn't run yet).
+    result_source_races: Optional[List[HoldingRace]] = None
+    if not (args.skip_results and args.skip_payouts):
+        result_source_races = (
+            load_holding_from_title_csv(PROJECT_ROOT, date_str) or races
+        )
+
+    # --- 5c. Fetch & append realtime results -------------------------
+    # For races whose deadline has already passed, try to fetch
+    # bc_rs1_2 and append a row to data/results/realtime/YYYY/MM/DD.csv.
+    # This runs in the same invocation as the preview pipeline so a
+    # single cron tick covers both "next 5 minutes" preview and "last
+    # ~30 minutes" results.
+    finished_candidates: List[HoldingRace] = []
+    result_rows: List[List[str]] = []
+    if not args.skip_results and result_source_races is not None:
+        result_path = result_csv_path_for(PROJECT_ROOT, date_str)
+        already_results = result_existing_race_codes(result_path)
+
+        finished_candidates = select_finished_races(
+            result_source_races,
+            now_jst,
+            date_str,
+            args.result_window_min,
+            args.result_window_max,
+            already_results,
+        )
+
+        logging_module.info(
+            "result_realtime_candidates",
+            date=date_str,
+            candidate_count=len(finished_candidates),
+            candidates=[
+                f"{r.stadium_code:02d}-{r.race_number:02d}@{r.deadline_time}"
+                for r in finished_candidates
+            ],
+        )
+
+        if finished_candidates:
+            result_fetcher = ResultRealtimeFetcher(
+                timeout_seconds=config.get("request_timeout_seconds", 30),
+                rate_limiter=rate_limiter,
+            )
+            result_rows = fetch_and_build_result_rows(
+                result_fetcher,
+                finished_candidates,
+                date_str,
+                fetched_at_iso,
+            )
+
+        if result_rows:
+            if args.dry_run:
+                logging_module.info(
+                    "result_realtime_csv_dry_run",
+                    path=str(result_path),
+                    rows=len(result_rows),
+                )
+                paths.append(result_path)
+            else:
+                written = append_result_rows(
+                    result_path, RESULT_HEADERS, result_rows
+                )
+                if written > 0:
+                    paths.append(result_path)
+
+        logging_module.info(
+            "result_realtime_complete",
+            date=date_str,
+            candidates=len(finished_candidates),
+            written=len(result_rows),
+        )
+
+    # --- 5d. Fetch & append realtime payouts -------------------------
+    # bc_rs2 (払戻金) is published independently of bc_rs1_2 — usually
+    # within seconds of one another, but either can be ready while the
+    # other isn't. Each CSV is appended on its own ``existing_race_codes``
+    # check so a partial cycle naturally retries the missing side next
+    # invocation.
+    finished_payout_candidates: List[HoldingRace] = []
+    payout_rows: List[List[str]] = []
+    if not args.skip_payouts and result_source_races is not None:
+        payout_path = payout_csv_path_for(PROJECT_ROOT, date_str)
+        already_payouts = payout_existing_race_codes(payout_path)
+
+        finished_payout_candidates = select_finished_races(
+            result_source_races,
+            now_jst,
+            date_str,
+            args.result_window_min,
+            args.result_window_max,
+            already_payouts,
+        )
+
+        logging_module.info(
+            "payout_realtime_candidates",
+            date=date_str,
+            candidate_count=len(finished_payout_candidates),
+            candidates=[
+                f"{r.stadium_code:02d}-{r.race_number:02d}@{r.deadline_time}"
+                for r in finished_payout_candidates
+            ],
+        )
+
+        if finished_payout_candidates:
+            payout_fetcher = PayoutRealtimeFetcher(
+                timeout_seconds=config.get("request_timeout_seconds", 30),
+                rate_limiter=rate_limiter,
+            )
+            payout_rows = fetch_and_build_payout_rows(
+                payout_fetcher,
+                finished_payout_candidates,
+                date_str,
+                fetched_at_iso,
+            )
+
+        if payout_rows:
+            if args.dry_run:
+                logging_module.info(
+                    "payout_realtime_csv_dry_run",
+                    path=str(payout_path),
+                    rows=len(payout_rows),
+                )
+                paths.append(payout_path)
+            else:
+                written = append_payout_rows(
+                    payout_path, PAYOUT_HEADERS, payout_rows
+                )
+                if written > 0:
+                    paths.append(payout_path)
+
+        logging_module.info(
+            "payout_realtime_complete",
+            date=date_str,
+            candidates=len(finished_payout_candidates),
+            written=len(payout_rows),
+        )
+
+    # --- 6. Commit & push ---------------------------------------------
+    if not (args.dry_run or args.no_commit or not paths):
+        # Only include the candidates whose row was actually built
+        # (a subset — others returned 403 / partial).
+        finished_written_codes = {row[0] for row in result_rows}
+        finished_for_msg = [
+            r for r in finished_candidates
+            if build_race_code(date_str, r.stadium_code, r.race_number)
+            in finished_written_codes
+        ]
+        payout_written_codes = {row[0] for row in payout_rows}
+        payout_finished_for_msg = [
+            r for r in finished_payout_candidates
+            if build_race_code(date_str, r.stadium_code, r.race_number)
+            in payout_written_codes
+        ]
+        if not commit_changes(
+            paths,
+            date_str,
+            eligible,
+            finished=finished_for_msg,
+            payout_finished=payout_finished_for_msg,
+        ):
+            logging_module.error("preview_realtime_commit_failed")
+            return 1
+
+    # --- 7. Mirror CSVs to GCS + Pub/Sub publish ----------------------
+    # 下流の fun-site は GCS にミラーされた CSV を読み、Pub/Sub の
+    # `realtime-completed` トピックを Eventarc で受けて再ビルドする。
+    # GCS バケット / Pub/Sub topic 名は環境変数で設定。未設定時は本ステップは no-op。
+    if not args.dry_run:
+        try:
+            day = datetime.strptime(date_str, "%Y-%m-%d").date()
+            upload_results = upload_csvs(PROJECT_ROOT, day)
+            # 今サイクルで結果 / 払戻行が追記されたレースコード集合。
+            # preview 行が無く結果のみ / 払戻のみが更新されたケースでも
+            # updated_races が空にならないよう、preview 系 (updated_codes)
+            # と独立に渡す。
+            result_updated_codes = {row[0] for row in result_rows}
+            payout_updated_codes = {row[0] for row in payout_rows}
+            updated_races, trigger = assemble_updated_races(
+                PROJECT_ROOT,
+                day,
+                upload_results,
+                realtime_updated_codes=updated_codes,
+                result_updated_codes=result_updated_codes,
+                payout_updated_codes=payout_updated_codes,
+            )
+            if updated_races:
+                publish_realtime_completed(
+                    day,
+                    updated_races,
+                    trigger,
+                )
+            else:
+                logging_module.info(
+                    "pubsub_publish_skipped",
+                    reason="no_updated_races",
+                )
+        except Exception as exc:  # pragma: no cover — defensive
+            # GCS / Pub/Sub の失敗は git push 成功を巻き戻さない方針（次サイクルで補える）
+            logging_module.error(
+                "gcs_publish_failed",
+                error=str(exc),
+            )
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
