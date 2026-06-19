@@ -140,8 +140,32 @@ class TestRegistryV2Tenkai:
         # COMPONENT_KEYS (legacy export) も v1_basic と一致。
         assert COMPONENT_KEYS == list(v1.component_keys)
 
-    def test_both_predictors_active(self):
-        """active_predictors() が v1_basic, v2_tenkai を slot 順で返す。"""
+    def test_all_predictors_active(self):
+        """active_predictors() が v1_basic, v2_tenkai, v3_tenkai を slot 順で返す。"""
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == ["v1_basic", "v2_tenkai"]
+        assert ids == ["v1_basic", "v2_tenkai", "v3_tenkai"]
+
+
+class TestRegistryV3Tenkai:
+    """v3_tenkai(展開予想)= control + 展開優位pt の 6 成分。"""
+
+    def test_v3_tenkai_is_active(self):
+        v3 = predictor_by_id("v3_tenkai")
+        assert v3.is_active()
+        assert v3.display_name == "展開予想"
+        assert v3.slot == 3
+
+    def test_v3_tenkai_is_control_plus_tenkai(self):
+        v3 = predictor_by_id("v3_tenkai")
+        assert v3.component_keys == (
+            "waku", "racer", "motor", "exhibit", "weather", "tenkai",
+        )
+        assert "tenkai" in v3.component_keys
+        # control (v1_basic) の 5 成分に tenkai を 1 つ足しただけ。
+        v1 = predictor_by_id("v1_basic")
+        assert len(v3.component_keys) == len(v1.component_keys) + 1
+        assert v3.component_keys[: len(v1.component_keys)] == v1.component_keys
+
+    def test_v3_tenkai_started_at(self):
+        assert predictor_by_id("v3_tenkai").started_at == dt.date(2026, 6, 20)

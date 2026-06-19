@@ -185,6 +185,20 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         # 5 成分。motor 指標の優劣だけを A/B で比較する。
         component_keys=("waku", "racer", "motor2rate", "exhibit", "weather"),
     ),
+    PredictorSpec(
+        predictor_id="v3_tenkai",
+        display_name="展開予想",
+        slot=3,
+        status=STATUS_ACTIVE,
+        # 投入日。control (v1_basic) の 5 成分に展開優位pt (tenkai) を加えた
+        # 6 成分版。展開優位pt は 2026-05-30〜06-13 に v2_tenkai で試行したが、
+        # 当時は単独スロットでの再評価には至らなかったため、独立スロット
+        # (v3_tenkai) として改めて累計回収率を計測する。
+        started_at=dt.date(2026, 6, 20),
+        component_keys=(
+            "waku", "racer", "motor", "exhibit", "weather", "tenkai",
+        ),
+    ),
 )
 
 

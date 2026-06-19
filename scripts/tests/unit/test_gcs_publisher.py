@@ -70,14 +70,15 @@ def test_build_csv_specs_includes_results():
 
     assert "results" in csv_types
     assert "payouts" in csv_types
-    # Phase 1: v1_basic のみ active。Phase 2 で v2_tenkai を追加。
-    # active 予想者ごとに 1 件ずつ ``index:{predictor_id}`` が挟まる。
+    # active 予想者ごとに 1 件ずつ ``index:{predictor_id}`` が挟まる
+    # (v1_basic / v2_tenkai / v3_tenkai)。
     assert csv_types == [
         "title",
         "race_cards",
         "stt",
         "index:v1_basic",
         "index:v2_tenkai",
+        "index:v3_tenkai",
         "results",
         "payouts",
     ]
