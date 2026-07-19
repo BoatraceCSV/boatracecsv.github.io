@@ -32,8 +32,9 @@
 | `v1_basic` | A君予想 | active | 2026-05-01 | waku, racer, motor, exhibit, weather (5 成分) |
 | `v2_tenkai` | B君予想 | **retired** (2026-07-19) | 2026-06-13 | waku, racer, **motor2rate**, exhibit, weather (5 成分) |
 | `v3_tenkai` | 展開予想 | **retired** (2026-07-19) | 2026-06-20 | waku, racer, motor, exhibit, weather, **tenkai** (6 成分) |
+| `v4_motor` | モーター予想 | active | 2026-07-20 | waku, racer, **motor4**, exhibit, weather (5 成分) |
 
-> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` のみ。退役した予想者は `active_predictors()` から除外されるため、preview-realtime / build_index / build_weights / GCS ミラーいずれの計算対象からも自動的に外れる。過去の index CSV(`data/estimate/{id}/…`)と成分定義(`motor2rate` / `tenkai`)・計算ロジックは将来の再利用に備えて残してある。命名規則どおり退役した `predictor_id` は再利用しない。
+> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` と `v4_motor`(2026-07-20 投入)。退役した予想者は `active_predictors()` から除外されるため、preview-realtime / build_index / build_weights / GCS ミラーいずれの計算対象からも自動的に外れる。過去の index CSV(`data/estimate/{id}/…`)と成分定義(`motor2rate` / `tenkai`)・計算ロジックは将来の再利用に備えて残してある。命名規則どおり退役した `predictor_id` は再利用しない。
 
 > `v2_tenkai` は実験スロットだった。当初(2026-05-30〜06-13)は展開優位pt (`tenkai`) を加えた 6 成分版だったが control を下回ったため撤去し、2026-06-13 に A君予想の 5 成分のうち着順ベースの **`motor` を公式モーター2連率 `motor2rate` に置き換えた** 5 成分構成へ差し替え(成分数は control と同じで motor 指標だけを差し替え。おかぺん評価との順位相関検証で有望だった指標。[`notebooks/motor_pt_okapen_validation.ipynb`](../../notebooks/motor_pt_okapen_validation.ipynb))、`started_at` を当日へリセットして再計測していた。
 
@@ -71,6 +72,26 @@ python scripts/build_weights.py --month 2026-05  --all-active
 ### v1_basic の特徴量(5 成分)
 
 **枠番**・**選手**・**モーター**・**展示**・**気象** の 5 要素を採用。
+
+### v4_motor の特徴量(5 成分)
+
+v1_basic の 5 成分のうち、モーターpt の計算パラメータをエキスパート評価で
+チューニングした **motor4** に差し替えた構成。計算式はモーター能力指数 v2
+(z 残差 + 時間減衰 + ベイズ収縮)と同一で、以下の 3 点だけが異なる。
+
+| パラメータ | v1_basic (`motor`) | v4_motor (`motor4`) |
+| --- | --- | --- |
+| スコア表 | [`motor_ability_score.csv`](./motor_ability_score.md)(着順に線形) | [`motor_ability_score_v4.csv`](./motor_ability_score.md#v4-テーブルmotor_ability_score_v4csv)(γ=1.5 凸カーブ = 1着プレミアム) |
+| 事故ペナルティ(転/落/沈/エ) | -100 | **-50** |
+| 採用節数 | 6 | **5** |
+
+エキスパート評価 4 場(平和島 SS〜E / 唐津 S〜D / 大村 1〜7 点 / 鳴門 金銀銅)を
+正解とした場別 Spearman 加重平均が +0.581 → +0.620 に改善し、
+leave-one-stadium-out で全場一貫改善を確認したパラメータ
+([`notebooks/motor_score_tuning/report.md`](../../notebooks/motor_score_tuning/report.md)、
+設計は [`docs/design/motor_score_tuning_v4.md`](../design/motor_score_tuning_v4.md))。
+CSV 列名は v1_basic と同じ `N枠_モーターpt`(motor4 のラベルを「モーターpt」に
+統一しているため。ファイルは `data/estimate/v4_motor/` に分かれる)。
 
 ### v2_tenkai の特徴量(5 成分, 2026-07-19 退役)
 
@@ -119,7 +140,7 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 
 ### 生成パイプライン
 
-1. **日次バッチ** (`scripts/build_index.py --mode daily --all-active`、JST 07:30): 当日のレース全件について、preview 非依存の成分(枠番・選手・モーター能力指数。v2_tenkai では motor の代わりに motor2rate)を計算し、preview 由来の成分(展示・気象・展開優位)は 50 (平均) で補完(`DAILY_NEUTRAL_COMPONENTS`)。状態 = `daily`、暫定の強さpt が入る。
+1. **日次バッチ** (`scripts/build_index.py --mode daily --all-active`、JST 07:30): 当日のレース全件について、preview 非依存の成分(枠番・選手・モーター能力指数。v4_motor では motor の代わりにチューニング版 motor4、v2_tenkai では motor2rate)を計算し、preview 由来の成分(展示・気象・展開優位)は 50 (平均) で補完(`DAILY_NEUTRAL_COMPONENTS`)。状態 = `daily`、暫定の強さpt が入る。
 2. **直前バッチ** (`scripts/preview-realtime.py` から内部呼び出し): 各レースの締切 5 分前に preview を取得した直後、対応する index 行の展示・気象を実値で再計算。状態 = `realtime`、強さpt が確定値に更新される。**active な全予想者ぶん**を 1 サイクルで更新。
 3. **月次重み学習** (`scripts/build_weights.py --month YYYY-MM --all-active`、毎月 1 日 06:00 JST): 直近 6 ヶ月のデータから 24 場 × `n_components` 要素の重みを学習し、`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を生成。
 
@@ -145,7 +166,7 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 
 - `N枠_枠番pt`: 偏差値スケールの 枠番強度。`data/estimate/stadium/win_rate.csv` の場×季節×コース勝率を場別 (μ, σ) で標準化
 - `N枠_選手pt`: 偏差値スケールの 選手能力指数。`data/programs/recent_national/` + `data/programs/recent_local/` の着順列をグレード別に得点化(算出基準点合計÷出走回数)し場別標準化。式は br-racers.jp の能力指数算出式に準拠
-- `N枠_モーターpt`: 偏差値スケールの モーター強度。**モーター能力指数 v2**(直近 6 節の出走実績を「級別×グレード分類×コース」のセル統計で **z 残差**化し、半減期 60 日の **時間減衰**を加重して、サンプル不足モーターを平均(z 残差 0)へ **ベイズ収縮** (k=10) させた値)を場別標準化。`モーター期起算日`(`data/programs/motor_stats/`)で履歴をリセットし、期切替後の新モーターは収縮で平均寄りに引き戻される。スコアテーブルは [`data/estimate/motor_ability_score.csv`](./motor_ability_score.md) 参照。設計詳細は [`docs/design/motor_ability_index_v2.md`](../design/motor_ability_index_v2.md)(v1 設計は [`docs/design/motor_ability_index.md`](../design/motor_ability_index.md))
+- `N枠_モーターpt`: 偏差値スケールの モーター強度。**モーター能力指数 v2**(直近 6 節の出走実績を「級別×グレード分類×コース」のセル統計で **z 残差**化し、半減期 60 日の **時間減衰**を加重して、サンプル不足モーターを平均(z 残差 0)へ **ベイズ収縮** (k=10) させた値)を場別標準化。`モーター期起算日`(`data/programs/motor_stats/`)で履歴をリセットし、期切替後の新モーターは収縮で平均寄りに引き戻される。スコアテーブルは [`data/estimate/motor_ability_score.csv`](./motor_ability_score.md) 参照。設計詳細は [`docs/design/motor_ability_index_v2.md`](../design/motor_ability_index_v2.md)(v1 設計は [`docs/design/motor_ability_index.md`](../design/motor_ability_index.md))。**`v4_motor` の CSV も同じ列名**だが、スコア表 v4・ペナルティ -50・直近 5 節で計算した `motor4` 成分の値になる(上記「v4_motor の特徴量」参照)
 - `N枠_展示pt`: 偏差値スケールの 展示パフォーマンス。展示タイム + オリジナル展示の3項目をレース内偏差値化して平均、その後場別標準化
 - `N枠_気象pt`: 偏差値スケールの 気象有利度。`data/estimate/stadium/sui_params.csv` で当日気象から各コースの有利pt変動を計算し場別標準化(コース固定有利は枠番ptに集約済み)
 - `N枠_寄与_{要素}pt`: その要素の重み × 偏差値pt(= 強さptへの寄与の内訳)
@@ -209,6 +230,6 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 
 build_index.py は実行時に **対象日の月以下で最新の重みファイル** を予想者ごとに自動選択するため、未来日(月)用に重みファイルを事前生成しておく運用も可能。
 
-`SHORT_HISTORY_COMPONENTS` で宣言された成分(現状は `motor`)は backfill が長くできないことを許容するため、SLSQP fit では他成分が欠損していない行で imputation (z=0) して使う。
+`SHORT_HISTORY_COMPONENTS` で宣言された成分(現状は `motor` と `motor4`)は backfill が長くできないことを許容するため、SLSQP fit では他成分が欠損していない行で imputation (z=0) して使う。
 
 > **用途**: index 計算の中間成果物。重みの場別比較をすると、たとえば桐生は気象pt の重みが大きい(波が立ちやすいレース場)、福岡は 枠番pt の重みが大きい(イン強度が高い)など、場の性格が数値で見える。

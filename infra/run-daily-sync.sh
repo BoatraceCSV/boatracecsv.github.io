@@ -87,7 +87,7 @@ PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date -d "${TODAY_JST}" +'%Y-%m-
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
 # sparse-checkout と commit パス展開、--all-active 後の add 対象に使用。
-ACTIVE_PREDICTORS=(v1_basic)  # 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v4_motor)  # 2026-07-20: v4_motor 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 WORKDIR="$(mktemp -d -t daily-sync.XXXXXX)"
 cleanup() {

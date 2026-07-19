@@ -59,6 +59,32 @@ MOTOR_NEGATIVE_SCORE  = -100
 MOTOR_SKIP_TOKENS     = {"F", "L", "失", "妨", "欠", "不"}
 ```
 
+## v4 テーブル(`motor_ability_score_v4.csv`)
+
+`v4_motor` 予想者の `motor4` 成分が使うチューニング済みスコア表。
+
+- **ファイルパス**: `data/estimate/motor_ability_score_v4.csv`
+- **設計書**: [`docs/design/motor_score_tuning_v4.md`](../design/motor_score_tuning_v4.md)
+- **使われる場所**: `index_features.py` の `FeatureContext.motor4_score_table()`(`load_motor_score_table(repo, filename=MOTOR4_SCORE_FILENAME)`)
+
+スキーマは従来表と同一。値は行別スケール(1着pt)を維持したまま、行内の間隔を
+**γ=1.5 の凸カーブ**(`A × ((6-着順)/5)^1.5` を整数丸め)にしたもの。エキスパート
+評価 4 場との順位相関で最適化した(1着の価値を等間隔より大きく評価する)。
+
+```csv
+級別,グレード分類,1着pt,2着pt,3着pt,4着pt,5着pt,6着pt
+B2,全,125,89,58,32,11,0
+B1,全,100,72,46,25,9,0
+A2,SG_G1,125,89,58,32,11,0
+A2,G2_G3_一般,75,54,35,19,7,0
+A1,SG_G1,100,72,46,25,9,0
+A1,G2_G3_一般,50,36,23,13,4,0
+```
+
+v4 では失格・棄権のペナルティも `MOTOR4_NEGATIVE_SCORE = -50`(従来 -100)に
+緩和され、採用節数も `MOTOR4_HISTORY_SESSIONS = 5`(従来 6)になる。トークン
+分類ルール(転/落/沈/エ = ペナルティ、F/L/失/妨/欠/不 = 除外)は共通。
+
 ## 更新手順
 
 スコアテーブルを書き換えた場合は以下も更新する(CLAUDE.md ルール):
@@ -70,3 +96,5 @@ MOTOR_SKIP_TOKENS     = {"F", "L", "失", "妨", "欠", "不"}
 5. 影響月の重みファイル `data/estimate/stadium/index_weights/YYYY-MM.csv` を再生成
 
 > **重要**: テーブル変更は `モーターpt` の意味を変えるため、過去日 index の再計算も必要。
+> `motor_ability_score_v4.csv` を変更した場合も同様に、`v4_motor` の重み・index の
+> 再計算と `docs/design/motor_score_tuning_v4.md` の更新が必要。

@@ -254,6 +254,19 @@ LANE_BASELINE_SD_FLOOR: float = 10.0
 SHRINKAGE_PRIOR_K: float = 10.0
 SHRINKAGE_PRIOR_MEAN: float = 0.0
 
+# ─────────────────────────────────────────────────────────────────────
+# v4 (v4_motor 予想者用) モーターpt チューニング定数
+# エキスパート評価 4 場(平和島 SS〜E / 唐津 S〜D / 大村 1〜7 / 鳴門 金銀銅)
+# との場別 Spearman 加重平均を最大化した調整結果。leave-one-stadium-out で
+# 全場一貫改善を確認済み。v1_basic の motor は従来定数のまま、v4_motor の
+# motor4 成分だけがこちらを使う(計算式は v2 と同一)。
+# 経緯・根拠: notebooks/motor_score_tuning/report.md、
+# 設計: docs/design/motor_score_tuning_v4.md
+# ─────────────────────────────────────────────────────────────────────
+MOTOR4_SCORE_FILENAME: str = "motor_ability_score_v4.csv"
+MOTOR4_NEGATIVE_SCORE: int = -50    # 転/落/沈/エ のペナルティ (v1/v2 は -100)
+MOTOR4_HISTORY_SESSIONS: int = 5    # 採用節数 (v2 は 6)
+
 _VALID_FINISH_TOKENS: set[str] = (
     {"1", "2", "3", "4", "5", "6"}
     | MOTOR_NEGATIVE_TOKENS
@@ -292,16 +305,19 @@ class MotorRun:
 
 
 # --- スコアテーブル -------------------------------------------------------
-def load_motor_score_table(repo: Path) -> dict[tuple[str, str], list[int]]:
+def load_motor_score_table(
+    repo: Path, filename: str = "motor_ability_score.csv",
+) -> dict[tuple[str, str], list[int]]:
     """Returns {(級別, グレード分類): [1着pt..6着pt]}.
 
-    `data/estimate/motor_ability_score.csv` を読み込む。ファイル不在は
+    `data/estimate/{filename}` を読み込む。ファイル不在は
     `RuntimeError` で fail-fast(モーターpt の意味が変わるため検知重視)。
+    v4_motor 用テーブルは ``filename=MOTOR4_SCORE_FILENAME`` で読み込む。
     """
-    p = repo / "data" / "estimate" / "motor_ability_score.csv"
+    p = repo / "data" / "estimate" / filename
     if not p.exists():
         raise RuntimeError(
-            f"motor_ability_score.csv not found at {p}. "
+            f"{filename} not found at {p}. "
             "This file is required for モーターpt 計算. See docs/data/motor_ability_score.md."
         )
     df = pd.read_csv(p)
@@ -392,9 +408,14 @@ def parse_lane(raw_shinnyu, raw_waku) -> int | None:
 
 # --- 1 走スコアリング -----------------------------------------------------
 def score_motor_run(
-    table: dict[tuple[str, str], list[int]], run: MotorRun
+    table: dict[tuple[str, str], list[int]], run: MotorRun,
+    negative_score: int = MOTOR_NEGATIVE_SCORE,
 ) -> tuple[int, int] | None:
-    """Returns (得点, 分母増分=1) or None (=分母にも乗らない)."""
+    """Returns (得点, 分母増分=1) or None (=分母にも乗らない).
+
+    ``negative_score`` は 転/落/沈/エ のペナルティ得点。デフォルトは従来の
+    ``MOTOR_NEGATIVE_SCORE`` (-100)、v4_motor は ``MOTOR4_NEGATIVE_SCORE`` (-50)。
+    """
     bucket = run.grade_bucket if run.racer_class in ("A1", "A2") else "全"
     pts = table.get((run.racer_class, bucket))
     if pts is None:
@@ -403,7 +424,7 @@ def score_motor_run(
     if f in ("1", "2", "3", "4", "5", "6"):
         return pts[int(f) - 1], 1
     if f in MOTOR_NEGATIVE_TOKENS:
-        return MOTOR_NEGATIVE_SCORE, 1
+        return negative_score, 1
     return None  # MOTOR_SKIP_TOKENS / 未知トークン
 
 
@@ -654,6 +675,7 @@ def load_motor_history(
 def _iter_baseline_scores(
     all_runs,
     score_table: dict[tuple[str, str], list[int]],
+    negative_score: int = MOTOR_NEGATIVE_SCORE,
 ):
     """``compute_lane_baseline`` / ``compute_class_grade_avg`` 共通のスコア抽出。
 
@@ -661,7 +683,7 @@ def _iter_baseline_scores(
     valid score (1〜6 / 転落沈エ)。F/L/失/妨/欠/不 は除外。
     """
     for run in all_runs:
-        sc = score_motor_run(score_table, run)
+        sc = score_motor_run(score_table, run, negative_score)
         if sc is None:
             continue
         bucket = run.grade_bucket if run.racer_class in ("A1", "A2") else "全"
@@ -673,6 +695,7 @@ def compute_lane_baseline(
     score_table: dict[tuple[str, str], list[int]],
     min_samples: int = LANE_BASELINE_MIN_SAMPLES,
     sd_floor: float = LANE_BASELINE_SD_FLOOR,
+    negative_score: int = MOTOR_NEGATIVE_SCORE,
 ) -> dict[tuple[str, str, int], tuple[float, float]]:
     """v2: ``{(racer_class, grade_bucket, lane): (μ, σ)}`` を返す。
 
@@ -680,7 +703,8 @@ def compute_lane_baseline(
     サンプル < min_samples のセルは結果に含めない。lane==0 は除外(センチネル)。
     """
     cells: dict[tuple[str, str, int], list[float]] = defaultdict(list)
-    for cls, bucket, lane, raw in _iter_baseline_scores(all_runs, score_table):
+    for cls, bucket, lane, raw in _iter_baseline_scores(
+            all_runs, score_table, negative_score):
         if lane == 0:
             continue
         cells[(cls, bucket, lane)].append(raw)
@@ -700,10 +724,12 @@ def compute_class_grade_avg(
     score_table: dict[tuple[str, str], list[int]],
     min_samples: int = LANE_BASELINE_MIN_SAMPLES,
     sd_floor: float = LANE_BASELINE_SD_FLOOR,
+    negative_score: int = MOTOR_NEGATIVE_SCORE,
 ) -> dict[tuple[str, str], tuple[float, float]]:
     """v2: lane baseline の第 1 フォールバック。``(racer_class, grade_bucket)`` 粒度の (μ, σ)。"""
     cells: dict[tuple[str, str], list[float]] = defaultdict(list)
-    for cls, bucket, _lane, raw in _iter_baseline_scores(all_runs, score_table):
+    for cls, bucket, _lane, raw in _iter_baseline_scores(
+            all_runs, score_table, negative_score):
         cells[(cls, bucket)].append(raw)
     out: dict[tuple[str, str], tuple[float, float]] = {}
     for key, scores in cells.items():
@@ -750,6 +776,8 @@ def motor_ability_pt(
     lane_baseline: dict[tuple[str, str, int], tuple[float, float]] | None = None,
     class_grade_avg: dict[tuple[str, str], tuple[float, float]] | None = None,
     target_day: dt.date | None = None,
+    negative_score: int = MOTOR_NEGATIVE_SCORE,
+    max_sessions: int | None = None,
 ) -> float:
     """v2: 履歴から該当モーターの能力点を算出する。
 
@@ -759,6 +787,9 @@ def motor_ability_pt(
         (``ENABLE_LANE_CORRECTION=True`` のとき必要)
       - ``target_day``: 時間減衰の基準日
         (``ENABLE_DECAY=True`` のとき必要)
+      - ``negative_score``: 転/落/沈/エ のペナルティ得点(v4_motor 用に -50 を渡す)
+      - ``max_sessions``: 採用節数の上限。None なら履歴の全節
+        (= ``MOTOR_HISTORY_SESSIONS`` でロードされた分)。v4_motor は 5 を渡す
 
     フィーチャーフラグ全 OFF のとき、これらは未使用なので None で OK。
     その状態は単純平均 ``Σraw/N`` に縮退し、v1 と算術等価になる。
@@ -766,6 +797,8 @@ def motor_ability_pt(
     sessions = history.get((stadium_code2, motor_num))
     if not sessions:
         return float("nan")
+    if max_sessions is not None:
+        sessions = sessions[:max_sessions]   # 新→旧順なので先頭 = 直近
 
     use_lane = ENABLE_LANE_CORRECTION and lane_baseline is not None and class_grade_avg is not None
     use_decay = ENABLE_DECAY and target_day is not None
@@ -775,7 +808,7 @@ def motor_ability_pt(
     sum_w2 = 0.0
     for sess in sessions:
         for run in sess:
-            sc = score_motor_run(score_table, run)
+            sc = score_motor_run(score_table, run, negative_score)
             if sc is None:
                 continue
             raw = float(sc[0])
@@ -923,6 +956,7 @@ class FeatureContext:
         # 静的テーブル(遅延ロード、1 回のみ)
         self._waku_table: dict | None = None
         self._motor_score_table: dict[tuple[str, str], list[int]] | None = None
+        self._motor4_score_table: dict[tuple[str, str], list[int]] | None = None
         self._sui_params: dict | None = None
         # キャッシュ付きファイルアクセサ(無制限キャッシュ)
         self._race_cards_cache: dict[dt.date, pd.DataFrame | None] = {}
@@ -942,6 +976,14 @@ class FeatureContext:
                 dict[tuple[str, str], tuple[float, float]],
             ],
         ] = {}
+        # v4_motor: 同上(v4 スコア表 + ペナルティ -50 + 5 節で別計算)
+        self._lane_baseline4_cache: dict[
+            dt.date,
+            tuple[
+                dict[tuple[str, str, int], tuple[float, float]],
+                dict[tuple[str, str], tuple[float, float]],
+            ],
+        ] = {}
 
     # ─── 静的テーブル ──────────────────────────────────────────
     def waku_table(self) -> dict:
@@ -953,6 +995,14 @@ class FeatureContext:
         if self._motor_score_table is None:
             self._motor_score_table = load_motor_score_table(self.repo)
         return self._motor_score_table
+
+    def motor4_score_table(self) -> dict[tuple[str, str], list[int]]:
+        """v4_motor 用スコア表(``MOTOR4_SCORE_FILENAME``)。"""
+        if self._motor4_score_table is None:
+            self._motor4_score_table = load_motor_score_table(
+                self.repo, filename=MOTOR4_SCORE_FILENAME,
+            )
+        return self._motor4_score_table
 
     def sui_params(self) -> dict:
         if self._sui_params is None:
@@ -1114,6 +1164,36 @@ class FeatureContext:
                 compute_class_grade_avg(all_runs, score_table),
             )
         return self._lane_baseline_cache[day]
+
+    def lane_baselines4(
+        self, day: dt.date,
+    ) -> tuple[
+        dict[tuple[str, str, int], tuple[float, float]],
+        dict[tuple[str, str], tuple[float, float]],
+    ]:
+        """v4_motor 用コース baseline。
+
+        v4 スコア表 + ペナルティ ``MOTOR4_NEGATIVE_SCORE`` + 直近
+        ``MOTOR4_HISTORY_SESSIONS`` 節で算出する(チューニング検証と同一定義)。
+        """
+        if day not in self._lane_baseline4_cache:
+            if not ENABLE_LANE_CORRECTION:
+                self._lane_baseline4_cache[day] = ({}, {})
+                return self._lane_baseline4_cache[day]
+            history = self.motor_history(day)
+            score_table = self.motor4_score_table()
+            all_runs = [r for sess_list in history.values()
+                        for sess in sess_list[:MOTOR4_HISTORY_SESSIONS]
+                        for r in sess]
+            self._lane_baseline4_cache[day] = (
+                compute_lane_baseline(
+                    all_runs, score_table,
+                    negative_score=MOTOR4_NEGATIVE_SCORE),
+                compute_class_grade_avg(
+                    all_runs, score_table,
+                    negative_score=MOTOR4_NEGATIVE_SCORE),
+            )
+        return self._lane_baseline4_cache[day]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1289,9 +1369,12 @@ def compute_features_for_day(
 
     waku_tab = ctx.waku_table()
     motor_score_table = ctx.motor_score_table()
+    motor4_score_table = ctx.motor4_score_table()
     motor_history = ctx.motor_history(day)
     # v2: コース baseline(ENABLE_LANE_CORRECTION=False のときは空辞書)
     lane_baseline, class_grade_avg = ctx.lane_baselines(day)
+    # v4_motor: v4 スコア表 + ペナルティ -50 + 5 節での baseline
+    lane_baseline4, class_grade_avg4 = ctx.lane_baselines4(day)
     sui = ctx.sui_params()
 
     prog = ctx.race_cards_for(day)
@@ -1373,8 +1456,18 @@ def compute_features_for_day(
                     class_grade_avg=class_grade_avg,
                     target_day=day,
                 )
+                # v4_motor: 同じ履歴からチューニング済み定数で算出
+                m4pt = motor_ability_pt(
+                    motor_history, motor4_score_table, stadium_code2, m_num,
+                    lane_baseline=lane_baseline4,
+                    class_grade_avg=class_grade_avg4,
+                    target_day=day,
+                    negative_score=MOTOR4_NEGATIVE_SCORE,
+                    max_sessions=MOTOR4_HISTORY_SESSIONS,
+                )
             except (ValueError, TypeError):
                 mpt = float("nan")
+                m4pt = float("nan")
 
             zs = [ext_z[waku - 1], v1_z[waku - 1], v2_z[waku - 1], v3_z[waku - 1]]
             zs = [z for z in zs if not (isinstance(z, float) and np.isnan(z))]
@@ -1405,6 +1498,7 @@ def compute_features_for_day(
                 "waku":       wpt,
                 "racer":      rpt,
                 "motor":      mpt,
+                "motor4":     m4pt,
                 "motor2rate": m2pt,
                 "exhibit":    ept,
                 "weather":    kpt,

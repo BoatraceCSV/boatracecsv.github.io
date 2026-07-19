@@ -47,9 +47,10 @@ DEFAULT_PREDICTOR_ID = "v1_basic"
 # 6 ヶ月 backfill が揃わない (= 訓練ウィンドウ全体で値を取れない可能性が高い)
 # 成分。fit_one での欠損処理を component_keys に対して動的に分岐する。
 # motor は motor_stats CSV が当日開催のある場のみ収録するため期境界以前の
-# データが手に入らず、長期 backfill が原理的にできない。
+# データが手に入らず、長期 backfill が原理的にできない。motor4 (v4_motor) も
+# 同じ履歴ビルダーを使うため同様。
 # 新しい "短期成分" を追加する場合はここに追記する。
-SHORT_HISTORY_COMPONENTS: frozenset[str] = frozenset({"motor"})
+SHORT_HISTORY_COMPONENTS: frozenset[str] = frozenset({"motor", "motor4"})
 
 
 # ─────────────────────────────────────────────────────────────────────

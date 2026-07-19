@@ -40,6 +40,13 @@ COMPONENT_LABELS_REGISTRY: Mapping[str, str] = {
     # 場別標準化したもの。着順ベースの motor を置き換える独立指標。おかぺん評価との
     # 順位相関が高かった(notebooks/motor_pt_okapen_validation.ipynb)。
     "motor2rate": "モーター2連率pt",
+    # v4_motor (モーター予想) で採用。エキスパート評価 4 場(平和島/唐津/大村/鳴門)
+    # との順位相関でチューニングしたモーター能力指数。motor と同じ v2 計算式だが、
+    # スコア表 v4(1着プレミアムの凸カーブ)・ペナルティ -50・直近 5 節を使う。
+    # ラベルは v1_basic と同じ「モーターpt」(CSV 列名互換のため。ファイルは
+    # predictor_id ごとに分かれるので衝突しない)。
+    # 経緯: notebooks/motor_score_tuning/report.md
+    "motor4": "モーターpt",
 }
 
 # Component key → 欠損補完値 (偏差値pt スケール)。
@@ -161,6 +168,9 @@ class PredictorSpec:
 # v3_tenkai = "展開予想"。control (v1_basic) の 5 成分に展開優位pt (tenkai) を
 # 加えた 6 成分版 (2026-06-20〜)。
 #
+# v4_motor = "モーター予想"。control (v1_basic) の motor をエキスパート評価
+# チューニング版 (motor4) に差し替えた 5 成分版 (2026-07-20〜)。
+#
 # 2026-07-19 退役: v2_tenkai / v3_tenkai はいずれも control (v1_basic) に対して
 # 有意な回収率差が得られなかったため status を "retired" にした。次の仮説を検証する
 # ためのクリーンな状態へ戻す。退役後も過去データ (data/estimate/{id}/…) と成分定義
@@ -206,6 +216,18 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         component_keys=(
             "waku", "racer", "motor", "exhibit", "weather", "tenkai",
         ),
+    ),
+    PredictorSpec(
+        predictor_id="v4_motor",
+        display_name="モーター予想",
+        slot=4,
+        status=STATUS_ACTIVE,
+        # 投入日 (累計回収率の起点)。デプロイ日に合わせること。
+        started_at=dt.date(2026, 7, 20),
+        # control (v1_basic) の motor をチューニング済み motor4 に差し替えた
+        # 5 成分。motor 指標のパラメータ差だけを A/B で比較する。
+        # motor4 = スコア表 v4 (γ=1.5 凸カーブ) + ペナルティ -50 + 直近 5 節。
+        component_keys=("waku", "racer", "motor4", "exhibit", "weather"),
     ),
 )
 

@@ -90,6 +90,10 @@ def _write_motor_score(repo: Path) -> None:
     p = repo / "data" / "estimate" / "motor_ability_score.csv"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(SCORE_CSV_TEXT, encoding="utf-8")
+    # v4_motor 用テーブル(compute_features_for_day が motor4 成分で fail-fast
+    # 参照する)。fixture では従来表と同一内容で十分。
+    (repo / "data" / "estimate" / "motor_ability_score_v4.csv").write_text(
+        SCORE_CSV_TEXT, encoding="utf-8")
 
 
 def _race_card_row(day: dt.date, stadium: str, race_round: int) -> dict:
