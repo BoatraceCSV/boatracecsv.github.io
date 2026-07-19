@@ -14,9 +14,13 @@ Each invocation:
 2. Computes the *eligibility window* — races whose deadline falls roughly
    five minutes from now (default: ``[now+1min, now+10min]``).
 3. For each eligible race that has not yet been recorded today, scrapes
-   ``bc_j_tkz`` / ``bc_j_stt`` / ``bc_sui`` / ``bc_oriten`` and appends one
-   row per source to the matching daily CSV under
-   ``data/previews/{tkz,stt,sui,original_exhibition}/``.
+   ``bc_j_tkz`` / ``bc_j_stt`` / ``bc_sui`` / ``bc_oriten`` and the
+   aggregating odds ``bc_smt_od{1,2,3}`` and appends one row per source
+   to the matching daily CSV under
+   ``data/previews/{tkz,stt,sui,original_exhibition,od1,od2,od3}/``.
+   The odds rows are a one-shot snapshot taken 1-10 minutes before the
+   deadline — they are *not* the final odds (which boatcast serves as
+   ``bc_kakutei_od*`` after the race).
 4. For each race whose deadline has already passed, scrapes ``bc_rs1_2``
    (finishes / ST / weather) and ``bc_rs2`` (払戻金) and appends rows to
    ``data/results/realtime/`` and ``data/results/payouts/`` respectively.
@@ -74,6 +78,12 @@ from boatrace.preview_csv import (  # noqa: E402
     csv_path_for,
     existing_race_codes,
 )
+from boatrace.odds_realtime import (  # noqa: E402
+    ODDS_HEADERS,
+    ODDS_SOURCES,
+    OddsRealtimeFetcher,
+    build_odds_row,
+)
 from boatrace.result_realtime import (  # noqa: E402
     RESULT_HEADERS,
     ResultRealtimeFetcher,
@@ -111,7 +121,12 @@ index_csv_path = _build_index.index_csv_path
 from boatrace.predictors import active_predictors  # noqa: E402
 
 
-SOURCES = ("tkz", "stt", "sui", "original_exhibition")
+# Preview TSV sources (each gets its own scraper block in
+# fetch_and_build_rows) + aggregating-odds sources (bc_smt_od*, handled
+# by fetch_and_build_odds_rows). All seven share the same eligibility
+# window, per-source dedupe and daily-CSV layout.
+PREVIEW_SOURCES = ("tkz", "stt", "sui", "original_exhibition")
+SOURCES = PREVIEW_SOURCES + ODDS_SOURCES
 
 
 JST = timezone(timedelta(hours=9))
@@ -345,12 +360,59 @@ def fetch_and_build_rows(
     return tkz_rows, stt_rows, sui_rows, oex_rows
 
 
+def fetch_and_build_odds_rows(
+    odds_fetcher: OddsRealtimeFetcher,
+    eligible: List[HoldingRace],
+    date_str: str,
+    fetched_at_iso: str,
+    already_recorded: Dict[str, Set[str]],
+) -> Dict[str, List[List[str]]]:
+    """Scrape the aggregating odds (bc_smt_od*) for each eligible race.
+
+    Returns ``{source: rows}`` for the three odds sources. A race whose
+    odds file is missing / not yet aggregating (status != 1) is skipped
+    for that source and retried on the next cycle while it remains in
+    the eligibility window.
+    """
+    odds_rows: Dict[str, List[List[str]]] = {src: [] for src in ODDS_SOURCES}
+
+    for race in eligible:
+        race_code = build_race_code(date_str, race.stadium_code, race.race_number)
+        for source in ODDS_SOURCES:
+            if race_code in already_recorded.get(source, set()):
+                continue
+            values = odds_fetcher.fetch_values(
+                source, date_str, race.stadium_code, race.race_number
+            )
+            if values is None:
+                logging_module.info(
+                    "preview_realtime_odds_skipped",
+                    race_code=race_code,
+                    source=source,
+                    reason="file_missing_or_not_ready",
+                )
+                continue
+            odds_rows[source].append(
+                build_odds_row(
+                    race_code=race_code,
+                    date_str=date_str,
+                    stadium_code=race.stadium_code,
+                    race_number=race.race_number,
+                    deadline_time=race.deadline_time,
+                    fetched_at_iso=fetched_at_iso,
+                    values=values,
+                )
+            )
+    return odds_rows
+
+
 def write_all(
     date_str: str,
     tkz_rows: List[List[str]],
     stt_rows: List[List[str]],
     sui_rows: List[List[str]],
     oex_rows: List[List[str]],
+    odds_rows: Dict[str, List[List[str]]],
     dry_run: bool,
 ) -> Tuple[List[Path], int]:
     """Append rows to each daily CSV.
@@ -361,12 +423,17 @@ def write_all(
     paths_written: List[Path] = []
     total_rows = 0
 
-    for source, headers, rows in (
+    sinks = [
         ("tkz", TKZ_HEADERS, tkz_rows),
         ("stt", STT_HEADERS, stt_rows),
         ("sui", SUI_HEADERS, sui_rows),
         ("original_exhibition", OEX_HEADERS, oex_rows),
-    ):
+    ] + [
+        (source, ODDS_HEADERS[source], odds_rows.get(source, []))
+        for source in ODDS_SOURCES
+    ]
+
+    for source, headers, rows in sinks:
         if not rows:
             continue
         path = csv_path_for(PROJECT_ROOT, source, date_str)
@@ -725,12 +792,25 @@ def main() -> int:
             fetched_at_iso,
             already_recorded,
         )
+        odds_fetcher = OddsRealtimeFetcher(
+            timeout_seconds=config.get("request_timeout_seconds", 30),
+            rate_limiter=rate_limiter,
+        )
+        odds_rows = fetch_and_build_odds_rows(
+            odds_fetcher,
+            eligible,
+            date_str,
+            fetched_at_iso,
+            already_recorded,
+        )
     else:
         tkz_rows = stt_rows = sui_rows = oex_rows = []
+        odds_rows = {src: [] for src in ODDS_SOURCES}
 
     # --- 5. Write CSVs -------------------------------------------------
     paths, total = write_all(
-        date_str, tkz_rows, stt_rows, sui_rows, oex_rows, args.dry_run
+        date_str, tkz_rows, stt_rows, sui_rows, oex_rows, odds_rows,
+        args.dry_run,
     )
 
     logging_module.info(
@@ -742,6 +822,9 @@ def main() -> int:
         stt=len(stt_rows),
         sui=len(sui_rows),
         original_exhibition=len(oex_rows),
+        od1=len(odds_rows["od1"]),
+        od2=len(odds_rows["od2"]),
+        od3=len(odds_rows["od3"]),
     )
 
     # --- 5b. Update data/estimate/{predictor_id}/YYYY/MM/DD.csv for races

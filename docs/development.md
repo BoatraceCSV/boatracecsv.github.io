@@ -49,7 +49,7 @@ python scripts/build_index.py --date "$(date +%Y-%m-%d)" --mode daily --all-acti
 
 ```
 scripts/
-├── preview-realtime.py          # Realtime preview + realtime result scraper (also updates index)
+├── preview-realtime.py          # Realtime preview + odds + realtime result scraper (also updates index)
 ├── race-title.py                # Per-race レース名 sidecar (data/programs/title/)
 ├── motor-stats.py               # Motor stats scraper (data/programs/motor_stats/)
 ├── race-card.py                 # Race-card detail + waku10 + monthly schedule scraper (data/programs/)
@@ -101,7 +101,10 @@ data/                            # Published data (created at runtime)
 │   ├── tkz/YYYY/MM/DD.csv                  # realtime: 体重・展示タイム・チルト
 │   ├── stt/YYYY/MM/DD.csv                  # realtime: 進入コース・スタート展示
 │   ├── sui/YYYY/MM/DD.csv                  # realtime: 水面気象スナップショット
-│   └── original_exhibition/YYYY/MM/DD.csv  # realtime: オリジナル展示
+│   ├── original_exhibition/YYYY/MM/DD.csv  # realtime: オリジナル展示
+│   ├── od1/YYYY/MM/DD.csv                  # realtime: 集計中オッズ(3連複・拡連複・単勝・複勝)
+│   ├── od2/YYYY/MM/DD.csv                  # realtime: 集計中オッズ(2連単・2連複)
+│   └── od3/YYYY/MM/DD.csv                  # realtime: 集計中オッズ(3連単)
 ├── results/
 │   ├── realtime/YYYY/MM/DD.csv             # bc_rs1_2 由来の締切後5〜30分スナップショット
 │   └── payouts/YYYY/MM/DD.csv              # bc_rs2 由来の締切後5〜30分払戻金スナップショット
