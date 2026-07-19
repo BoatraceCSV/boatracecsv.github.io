@@ -13,6 +13,7 @@
 | 事前情報 | Recent Local Form | `data/programs/recent_local/YYYY/MM/DD.csv` | [programs.md#recent-local-form](./programs.md#recent-local-form) |
 | 事前情報 | Motor Stats | `data/programs/motor_stats/YYYY/MM/DD.csv` | [programs.md#motor-stats](./programs.md#motor-stats) |
 | 直前情報 | Realtime Preview (4 sources) | `data/previews/{tkz,stt,sui,original_exhibition}/YYYY/MM/DD.csv` | [previews.md](./previews.md) |
+| 直前情報 | Realtime Odds (3 sources) | `data/previews/{od1,od2,od3}/YYYY/MM/DD.csv` | [previews.md](./previews.md) |
 | 結果 | Realtime Results | `data/results/realtime/YYYY/MM/DD.csv` | [results.md#realtime-results](./results.md#realtime-results) |
 | 結果 | Realtime Payouts | `data/results/payouts/YYYY/MM/DD.csv` | [results.md#realtime-payouts](./results.md#realtime-payouts) |
 | 派生 | Strength Index | `data/estimate/{predictor_id}/YYYY/MM/DD.csv` | [estimate.md#strength-index](./estimate.md#strength-index) |
@@ -36,6 +37,8 @@ Motor Stats           → モーター期成績スナップショット(場×モ
      ↓
 Realtime Preview      → 締切5分前の直前情報(tkz / stt / sui / original_exhibition の per-source 追記)
      ↓
+Realtime Odds         → 締切5分前の集計中オッズ(od1: 3連複/拡連複/単勝/複勝, od2: 2連単/2連複, od3: 3連単)
+     ↓
 Strength Index        → 派生:特徴量を場別重みで線形結合した強さポイント
                          (active 予想者ごとに data/estimate/{predictor_id}/ に出力)
      ↓
@@ -56,9 +59,10 @@ Stadium Parameters    → win_rate.csv / sui_params.csv / weights/{predictor_id}
 4. **Recent National Form / Recent Local Form** から → 全国・当地の直近5節成績
 5. **Motor Stats** から → モーター期成績スナップショット
 6. **Realtime Preview** から → 締切5分前の直前スナップショット(時系列で複数ソース・展示タイム・気象等)
-7. **Strength Index** から → 6 枠分の強さポイント(偏差値)と要素別寄与の内訳
-8. **Realtime Results** から → 締切後5〜30分の準リアルタイム結果(着順・決まり手・ST・気象)
-9. **Realtime Payouts** から → 同じく締切後5〜30分の払戻金(単勝 / 複勝 / 2連単 / 2連複 / 拡連複 / 3連単 / 3連複)
+7. **Realtime Odds** から → 締切5分前の集計中オッズ(全舟券種。確定オッズではない点に注意)
+8. **Strength Index** から → 6 枠分の強さポイント(偏差値)と要素別寄与の内訳
+9. **Realtime Results** から → 締切後5〜30分の準リアルタイム結果(着順・決まり手・ST・気象)
+10. **Realtime Payouts** から → 同じく締切後5〜30分の払戻金(単勝 / 複勝 / 2連単 / 2連複 / 拡連複 / 3連単 / 3連複)
 
 これらを組み合わせることで、レースの準備段階から当日の直前情報・予測値・実結果までを一貫して追跡でき、特徴量設計や分析に活用できます。
 
