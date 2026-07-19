@@ -141,11 +141,14 @@ class TestRegistryV2Tenkai:
         # COMPONENT_KEYS (legacy export) も v1_basic と一致。
         assert COMPONENT_KEYS == list(v1.component_keys)
 
-    def test_only_v1_basic_active(self):
-        """v2_tenkai / v3_tenkai 退役後、active_predictors() は v1_basic のみを返す。"""
+    def test_active_predictors_after_retirement(self):
+        """v2_tenkai / v3_tenkai 退役後の active は v1_basic と v4_motor (slot 順)。
+
+        v4_motor は 2026-07-20 投入 (docs/design/motor_score_tuning_v4.md)。
+        """
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == ["v1_basic"]
+        assert ids == ["v1_basic", "v4_motor"]
 
 
 class TestRegistryV3Tenkai:
