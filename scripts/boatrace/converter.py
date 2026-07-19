@@ -4,6 +4,7 @@ import csv
 from io import StringIO
 from typing import List, Optional
 from .models import (
+    MotorHistoryEntry,
     MotorStat,
     OriginalExhibitionData,
     RaceCard,
@@ -916,3 +917,40 @@ def motor_stats_to_csv(items: List[MotorStat]) -> str:
             error_type=type(e).__name__,
         )
         return ""
+
+
+# ---------------------------------------------------------------------------
+# モーター履歴 — bc_mrireki
+# ---------------------------------------------------------------------------
+
+# One CSV row per (motor, past 節). The daily file under
+# ``data/programs/motor_history/`` is keyed by 基準節終了日 (the mrireki
+# file's key date); multiple stadiums whose previous 節 ended on the same
+# day share the file, so rows carry the stadium code and the key.
+
+MOTOR_HISTORY_HEADERS: List[str] = [
+    "場コード",
+    "基準節終了日",
+    "モーター番号",
+    "使用開始日",
+    "使用終了日",
+    "グレード",
+    "タイトル",
+    "使用者名",
+    "着順列",
+]
+
+
+def motor_history_entry_to_row(entry: MotorHistoryEntry) -> List[str]:
+    """Convert a single :class:`MotorHistoryEntry` to a CSV row (9 cells)."""
+    return [
+        entry.stadium_code,
+        entry.session_end_key,
+        _fmt_optional(entry.motor_number),
+        _fmt_optional(entry.start_date),
+        _fmt_optional(entry.end_date),
+        _fmt_optional(entry.grade),
+        _fmt_optional(entry.title),
+        _fmt_optional(entry.racer_name),
+        _fmt_optional(entry.finish_sequence),
+    ]

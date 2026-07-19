@@ -14,6 +14,7 @@
 | 事前情報 | Recent National Form | `data/programs/recent_national/YYYY/MM/DD.csv` | [programs.md#recent-national-form](./programs.md#recent-national-form) |
 | 事前情報 | Recent Local Form | `data/programs/recent_local/YYYY/MM/DD.csv` | [programs.md#recent-local-form](./programs.md#recent-local-form) |
 | 事前情報 | Motor Stats | `data/programs/motor_stats/YYYY/MM/DD.csv` | [programs.md#motor-stats](./programs.md#motor-stats) |
+| 事前情報 | Motor History | `data/programs/motor_history/YYYY/MM/DD.csv`(日付=基準節終了日) | [programs.md#motor-history-モーター履歴](./programs.md#motor-history-モーター履歴) |
 | 直前情報 | Realtime Preview (4 sources) | `data/previews/{tkz,stt,sui,original_exhibition}/YYYY/MM/DD.csv` | [previews.md](./previews.md) |
 | 結果 | Realtime Results | `data/results/realtime/YYYY/MM/DD.csv` | [results.md#realtime-results](./results.md#realtime-results) |
 | 結果 | Realtime Payouts | `data/results/payouts/YYYY/MM/DD.csv` | [results.md#realtime-payouts](./results.md#realtime-payouts) |
@@ -37,6 +38,8 @@ Recent National Form  → 全国近況5節(節期間・グレード・着順時�
 Recent Local Form     → 当地近況5節(同形式、当地ソースのみ)
      ⇅
 Motor Stats           → モーター期成績スナップショット(場×モーター 1日1行)
+     ⇅
+Motor History         → モーター履歴(場×モーター×節: 使用者・着順列。基準節終了日ごとに1ファイル)
      ↓
 Realtime Preview      → 締切5分前の直前情報(tkz / stt / sui / original_exhibition の per-source 追記)
      ↓
