@@ -9,6 +9,8 @@
 | --- | --- | --- | --- |
 | 事前情報 | Race Title | `data/programs/title/YYYY/MM/DD.csv` | [programs.md#race-title](./programs.md#race-title) |
 | 事前情報 | Race Cards | `data/programs/race_cards/YYYY/MM/DD.csv` | [programs.md#race-cards](./programs.md#race-cards) |
+| 事前情報 | Waku10 (枠番別過去10走) | `data/programs/waku10/YYYY/MM/DD.csv` | [programs.md#waku10-枠番別過去10走](./programs.md#waku10-枠番別過去10走) |
+| 事前情報 | Monthly Schedule | `data/programs/monthly_schedule/YYYY/MM.csv` | [programs.md#monthly-schedule-月間開催日程](./programs.md#monthly-schedule-月間開催日程) |
 | 事前情報 | Recent National Form | `data/programs/recent_national/YYYY/MM/DD.csv` | [programs.md#recent-national-form](./programs.md#recent-national-form) |
 | 事前情報 | Recent Local Form | `data/programs/recent_local/YYYY/MM/DD.csv` | [programs.md#recent-local-form](./programs.md#recent-local-form) |
 | 事前情報 | Motor Stats | `data/programs/motor_stats/YYYY/MM/DD.csv` | [programs.md#motor-stats](./programs.md#motor-stats) |
@@ -28,6 +30,8 @@ Programs              → 選手情報・成績データ(事前情報)
 Race Title            → per-race レース名 sidecar(Programs と並行)
      ⇅
 Race Cards            → 出走表詳細(Programs と並行: 全国/当地3連率・節間14スロット成績)
+     ⇅
+Waku10                → 枠番別過去10走(枠番別 勝率/平均ST/スタート順 + 10走の着順・進入・グレード)
      ⇅
 Recent National Form  → 全国近況5節(節期間・グレード・着順時系列)
      ⇅
@@ -56,13 +60,14 @@ Stadium Parameters    → win_rate.csv / sui_params.csv / weights/{predictor_id}
 1. **Programs** から → 参加選手のプロフィール・成績
 2. **Race Title** から → per-race レース名(予選 / 優勝戦 等)
 3. **Race Cards** から → 全国/当地3連率・節間14スロット成績
-4. **Recent National Form / Recent Local Form** から → 全国・当地の直近5節成績
-5. **Motor Stats** から → モーター期成績スナップショット
-6. **Realtime Preview** から → 締切5分前の直前スナップショット(時系列で複数ソース・展示タイム・気象等)
-7. **Realtime Odds** から → 締切5分前の集計中オッズ(全舟券種。確定オッズではない点に注意)
-8. **Strength Index** から → 6 枠分の強さポイント(偏差値)と要素別寄与の内訳
-9. **Realtime Results** から → 締切後5〜30分の準リアルタイム結果(着順・決まり手・ST・気象)
-10. **Realtime Payouts** から → 同じく締切後5〜30分の払戻金(単勝 / 複勝 / 2連単 / 2連複 / 拡連複 / 3連単 / 3連複)
+4. **Waku10** から → 枠番別の勝率・平均ST・過去10走
+5. **Recent National Form / Recent Local Form** から → 全国・当地の直近5節成績
+6. **Motor Stats** から → モーター期成績スナップショット
+7. **Realtime Preview** から → 締切5分前の直前スナップショット(時系列で複数ソース・展示タイム・気象等)
+8. **Realtime Odds** から → 締切5分前の集計中オッズ(全舟券種。確定オッズではない点に注意)
+9. **Strength Index** から → 6 枠分の強さポイント(偏差値)と要素別寄与の内訳
+10. **Realtime Results** から → 締切後5〜30分の準リアルタイム結果(着順・決まり手・ST・気象)
+11. **Realtime Payouts** から → 同じく締切後5〜30分の払戻金(単勝 / 複勝 / 2連単 / 2連複 / 拡連複 / 3連単 / 3連複)
 
 これらを組み合わせることで、レースの準備段階から当日の直前情報・予測値・実結果までを一貫して追跡でき、特徴量設計や分析に活用できます。
 

@@ -42,6 +42,17 @@ Column mapping is reverse-engineered from ``RacerPerformance.js`` and
 A non-existent race returns HTTP 403 with an HTML SPA fallback body, so we
 detect validity by checking the "data=" prefix rather than the status code
 (matching ``original_exhibition_scraper.py``).
+
+The scraper also handles the sibling 枠番別過去10走 file:
+    https://race.boatcast.jp/hp_txt/{jo:02d}/bc_j_waku10_{YYYYMMDD}_{jo:02d}_{race:02d}.txt
+
+Same "data=" + "{status}\t{ncols}" meta lines, then one row per boat:
+    [0]  選手名
+    [1]  枠番別勝率
+    [2]  枠番別平均ST
+    [3]  枠番別平均スタート順
+    [4..33] 10 runs x {着順, 進入コース, グレード} (newest first;
+            進入コース is blank for 枠なり進入; グレード "IP" = 一般)
 """
 
 from __future__ import annotations
@@ -53,7 +64,14 @@ import requests
 
 from . import logger as logging_module
 from .downloader import RateLimiter
-from .models import RaceCard, RaceCardBoat, RaceCardSession
+from .models import (
+    RaceCard,
+    RaceCardBoat,
+    RaceCardSession,
+    Waku10Boat,
+    Waku10Card,
+    Waku10Run,
+)
 from .original_exhibition_scraper import _normalize_name, _to_float
 
 
@@ -66,6 +84,10 @@ class RaceCardScraperError(Exception):
 # Number of session slots in a bc_j_str3 row (cols [25..38]).
 _SESSION_SLOTS = 14
 _FIRST_SESSION_COL = 25
+
+# bc_j_waku10 row layout: 選手名 + 3 summary figures + 10 runs x 3 cols.
+_WAKU10_RUNS = 10
+_FIRST_WAKU10_COL = 4
 
 # Tokens used inside ``着順`` of a session quintuple. The boatcast source
 # emits **full-width** digits and full-width F/L flags, so we canonicalise
@@ -131,7 +153,49 @@ class RaceCardScraper:
             does not exist or cannot be parsed.
         """
         url = self._build_url(date, stadium_code, race_number)
+        body = self._fetch_body(url, date, stadium_code, race_number)
+        if body is None:
+            return None
+        return self._parse_tsv(body, date, stadium_code, race_number)
 
+    def scrape_waku10(
+        self,
+        date: str,
+        stadium_code: int,
+        race_number: int,
+    ) -> Optional[Waku10Card]:
+        """Fetch and parse one race's bc_j_waku10 (枠番別過去10走) TSV.
+
+        Same URL family / meta-line shape as ``bc_j_str3``. Each boat row is
+        ``選手名 \\t 枠番別勝率 \\t 枠番別平均ST \\t 枠番別平均スタート順``
+        followed by 10 triplets ``着順 \\t 進入コース \\t グレード``
+        (newest run first; 進入コース is blank for 枠なり進入). Decoded
+        against the SPA's 枠番別過去10走 tab rendering (2026-07-19,
+        Heiwajima R1).
+
+        Returns:
+            :class:`Waku10Card` (with up to 6 boats), or ``None`` when the
+            file does not exist or cannot be parsed.
+        """
+        url = self._build_waku10_url(date, stadium_code, race_number)
+        body = self._fetch_body(url, date, stadium_code, race_number)
+        if body is None:
+            return None
+        return self._parse_waku10_tsv(body, date, stadium_code, race_number)
+
+    # ---- HTTP -----------------------------------------------------------
+
+    def _fetch_body(
+        self,
+        url: str,
+        date: str,
+        stadium_code: int,
+        race_number: int,
+    ) -> Optional[str]:
+        """GET *url* with the shared 403/HTML-fallback semantics.
+
+        Returns the TSV body, or ``None`` for missing / non-TSV / errors.
+        """
         try:
             self.rate_limiter.wait()
             response = self.session.get(url, timeout=self.timeout_seconds)
@@ -159,7 +223,7 @@ class RaceCardScraper:
                 logging_module.debug("race_card_body_not_tsv", url=url)
                 return None
 
-            return self._parse_tsv(body, date, stadium_code, race_number)
+            return body
 
         except requests.Timeout:
             logging_module.warning(
@@ -198,6 +262,20 @@ class RaceCardScraper:
         jo = f"{stadium_code:02d}"
         rno = f"{race_number:02d}"
         return f"{self.base_url}/hp_txt/{jo}/bc_j_str3_{date_yyyymmdd}_{jo}_{rno}.txt"
+
+    def _build_waku10_url(
+        self,
+        date: str,
+        stadium_code: int,
+        race_number: int,
+    ) -> str:
+        date_yyyymmdd = date.replace("-", "")
+        jo = f"{stadium_code:02d}"
+        rno = f"{race_number:02d}"
+        return (
+            f"{self.base_url}/hp_txt/{jo}/"
+            f"bc_j_waku10_{date_yyyymmdd}_{jo}_{rno}.txt"
+        )
 
     # ---- Parser ---------------------------------------------------------
 
@@ -311,6 +389,86 @@ class RaceCardScraper:
             raw_quintuple = cols[ci] if ci < len(cols) else ""
             boat.sessions.append(_parse_session_quintuple(raw_quintuple))
 
+        return boat
+
+    # ---- waku10 parser --------------------------------------------------
+
+    def _parse_waku10_tsv(
+        self,
+        body: str,
+        date: str,
+        stadium_code: int,
+        race_number: int,
+    ) -> Optional[Waku10Card]:
+        try:
+            lines = body.splitlines()
+            if len(lines) < 2 or not lines[0].startswith("data="):
+                return None
+
+            meta_parts = lines[1].split("\t")
+            status = meta_parts[0].strip() if meta_parts and meta_parts[0] else None
+
+            card = Waku10Card(
+                date=date,
+                stadium_number=stadium_code,
+                race_number=race_number,
+                race_code=self._race_code(date, stadium_code, race_number),
+                status=status if status else None,
+            )
+
+            if status == "2":
+                return card
+
+            for boat_index, raw in enumerate(lines[2:], start=1):
+                if boat_index > 6:
+                    break
+                if not raw.strip():
+                    continue
+                boat = self._parse_waku10_boat_row(raw, boat_index)
+                if boat is not None:
+                    card.boats.append(boat)
+
+            return card
+
+        except Exception as e:
+            logging_module.debug(
+                "waku10_parse_error",
+                date=date,
+                stadium=stadium_code,
+                race=race_number,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            return None
+
+    @staticmethod
+    def _parse_waku10_boat_row(raw: str, boat_number: int) -> Optional[Waku10Boat]:
+        cols = raw.split("\t")
+        if len(cols) < 4:
+            return None
+
+        boat = Waku10Boat(
+            boat_number=boat_number,
+            racer_name=_normalize_name(cols[0]),
+            win_rate=_to_float(cols[1]),
+            avg_st=_to_float(cols[2]),
+            avg_start_order=_to_float(cols[3]),
+        )
+
+        # 10 runs x (着順 / 進入コース / グレード), newest first. Emit all
+        # 10 entries; missing trailing triplets become empty Waku10Run.
+        for slot in range(_WAKU10_RUNS):
+            ci = _FIRST_WAKU10_COL + slot * 3
+            finish = cols[ci] if ci < len(cols) else ""
+            course = cols[ci + 1] if ci + 1 < len(cols) else ""
+            grade = cols[ci + 2] if ci + 2 < len(cols) else ""
+            boat.runs.append(
+                Waku10Run(
+                    finish_position=_normalize_finish_position(finish),
+                    entry_course=_to_int(course),
+                    grade=_strip(grade) or None,
+                )
+            )
         return boat
 
     # ---- Helpers --------------------------------------------------------

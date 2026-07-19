@@ -36,7 +36,7 @@ pip install -r scripts/requirements.txt
 
 ```bash
 # 当日 JST のデータを一通り取り込む (daily-sync.yml と同じ並び)
-python scripts/race-card.py --date "$(date +%Y-%m-%d)" --force         # bc_j_str3 (race_cards)
+python scripts/race-card.py --date "$(date +%Y-%m-%d)" --force         # bc_j_str3 (race_cards) + bc_j_waku10 (waku10) + bc_mon_2 (monthly_schedule)
 python scripts/recent-form.py --date "$(date +%Y-%m-%d)" --force       # bc_zensou (recent_form)
 python scripts/motor-stats.py --date "$(date +%Y-%m-%d)" --force       # bc_mst / bc_mdc (motor_stats)
 python scripts/race-title.py --date "$(date +%Y-%m-%d)" --force        # getHoldingList2 (title)
@@ -52,7 +52,7 @@ scripts/
 ├── preview-realtime.py          # Realtime preview + odds + realtime result scraper (also updates index)
 ├── race-title.py                # Per-race レース名 sidecar (data/programs/title/)
 ├── motor-stats.py               # Motor stats scraper (data/programs/motor_stats/)
-├── race-card.py                 # Race-card detail scraper (data/programs/race_cards/)
+├── race-card.py                 # Race-card detail + waku10 + monthly schedule scraper (data/programs/)
 ├── recent-form.py               # Recent national/local form scraper
 ├── build_index.py               # Strength Index builder (--mode daily/realtime, --update-races, --predictor / --all-active)
 ├── build_weights.py             # Monthly weight learner (per-stadium per-predictor weights, --predictor / --all-active)
@@ -92,6 +92,8 @@ data/                            # Published data (created at runtime)
 ├── programs/
 │   ├── title/YYYY/MM/DD.csv                # per-race レース名 sidecar (race-title.py)
 │   ├── race_cards/YYYY/MM/DD.csv           # bc_j_str3 由来の出走表詳細
+│   ├── waku10/YYYY/MM/DD.csv               # bc_j_waku10 由来の枠番別過去10走
+│   ├── monthly_schedule/YYYY/MM.csv        # bc_mon_2 由来の月間開催日程 (全24場・毎日上書き)
 │   ├── recent_national/YYYY/MM/DD.csv      # 全国近況5節
 │   ├── recent_local/YYYY/MM/DD.csv         # 当地近況5節
 │   └── motor_stats/YYYY/MM/DD.csv          # モーター期成績スナップショット
@@ -222,6 +224,14 @@ python scripts/race-card.py --date 2026-04-25 --force
 ```
 
 Data source: `race.boatcast.jp` の per-race TSV (`/hp_txt/{jo}/bc_j_str3_*.txt`). The script uses the same-day B-file from `mbrace.or.jp` to determine which races are scheduled (matching `original-exhibition.py`'s flow). Available approximately from **2025-05-02 onwards**.
+
+The same run also scrapes, per race, the 枠番別過去10走 TSV
+(`/hp_txt/{jo}/bc_j_waku10_*.txt` → `data/programs/waku10/YYYY/MM/DD.csv`)
+and, per invocation, the monthly holding schedule for all 24 stadiums
+(`/hp_txt/{jo}/bc_mon_2_{YYYYMM}_{jo}.txt` →
+`data/programs/monthly_schedule/YYYY/MM.csv`, overwritten daily; use
+`--force` to refresh existing files). All created CSVs go into a single
+commit.
 
 ### Scrape Recent Form Data(全国・当地近況5節)
 
