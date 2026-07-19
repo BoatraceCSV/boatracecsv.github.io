@@ -95,11 +95,12 @@ class TestParseMotor2Rate:
 class TestRegistryV2Tenkai:
     """v2_tenkai 予想者のレジストリ登録状況。"""
 
-    def test_v2_tenkai_is_active(self):
+    def test_v2_tenkai_is_retired(self):
+        # 2026-07-19 退役。定義自体は残るが is_active() は False。
         v2 = predictor_by_id("v2_tenkai")
-        assert v2.is_active()
+        assert not v2.is_active()
+        assert v2.status == "retired"
         assert v2.display_name == "B君予想"
-        assert v2.slot == 2
 
     def test_v2_tenkai_motor_replaced_by_motor2rate(self):
         # 展開優位pt 撤去後、次の実験として着順ベース motor を motor2rate に
@@ -140,21 +141,22 @@ class TestRegistryV2Tenkai:
         # COMPONENT_KEYS (legacy export) も v1_basic と一致。
         assert COMPONENT_KEYS == list(v1.component_keys)
 
-    def test_all_predictors_active(self):
-        """active_predictors() が v1_basic, v2_tenkai, v3_tenkai を slot 順で返す。"""
+    def test_only_v1_basic_active(self):
+        """v2_tenkai / v3_tenkai 退役後、active_predictors() は v1_basic のみを返す。"""
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == ["v1_basic", "v2_tenkai", "v3_tenkai"]
+        assert ids == ["v1_basic"]
 
 
 class TestRegistryV3Tenkai:
     """v3_tenkai(展開予想)= control + 展開優位pt の 6 成分。"""
 
-    def test_v3_tenkai_is_active(self):
+    def test_v3_tenkai_is_retired(self):
+        # 2026-07-19 退役。定義自体は残るが is_active() は False。
         v3 = predictor_by_id("v3_tenkai")
-        assert v3.is_active()
+        assert not v3.is_active()
+        assert v3.status == "retired"
         assert v3.display_name == "展開予想"
-        assert v3.slot == 3
 
     def test_v3_tenkai_is_control_plus_tenkai(self):
         v3 = predictor_by_id("v3_tenkai")

@@ -154,14 +154,20 @@ class PredictorSpec:
 # ─────────────────────────────────────────────────────────────────────
 # レジストリ本体
 # ─────────────────────────────────────────────────────────────────────
-# v1_basic = "A君予想" (5 成分、control)。
-# v2_tenkai = "B君予想"。展開優位pt (tenkai) を加えた 6 成分版 (2026-05-30〜)
-# を試したが、control である A君予想を回収率で下回ったため 2026-06-13 に撤去し、
-# A君予想と同一 recipe (5 成分) の baseline へ戻した。別の特徴量を探る実験
-# スロットとして predictor_id は v2_tenkai のまま据え置く。
-# 2026-06-13: 次の実験として、着順ベースの motor を公式モーター2連率 (motor2rate) に
-# 置き換えた 5 成分構成を投入(成分数は control と同じで motor 指標だけ差し替え)。
-# おかぺん評価との順位相関検証で着順ベース motor が ρ≈0、公式2連率が ρ≈0.6 と有望だった。
+# v1_basic = "A君予想" (5 成分、control)。現行唯一の active 予想者。
+# v2_tenkai = "B君予想"。着順ベースの motor を公式モーター2連率 (motor2rate) に
+# 置き換えた 5 成分構成 (2026-06-13〜)。導入当初 (2026-05-30〜06-13) は展開優位pt
+# (tenkai) を加えた 6 成分版だった。
+# v3_tenkai = "展開予想"。control (v1_basic) の 5 成分に展開優位pt (tenkai) を
+# 加えた 6 成分版 (2026-06-20〜)。
+#
+# 2026-07-19 退役: v2_tenkai / v3_tenkai はいずれも control (v1_basic) に対して
+# 有意な回収率差が得られなかったため status を "retired" にした。次の仮説を検証する
+# ためのクリーンな状態へ戻す。退役後も過去データ (data/estimate/{id}/…) と成分定義
+# (tenkai / motor2rate)・計算ロジックは保持する。命名規則どおり退役した
+# predictor_id は再利用しない (累計回収率の同一性のため)。retired は
+# active_predictors() から除外されるので、preview-realtime / build_index /
+# build_weights / gcs_publisher いずれの計算対象からも自動的に外れる。
 #
 # started_at は累計回収率の起点として fun-site 側で参照される。
 PREDICTORS: tuple[PredictorSpec, ...] = (
@@ -177,7 +183,8 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         predictor_id="v2_tenkai",
         display_name="B君予想",
         slot=2,
-        status=STATUS_ACTIVE,
+        # 2026-07-19 退役。control (v1_basic) に対し有意な回収率差が得られなかった。
+        status=STATUS_RETIRED,
         # recipe 変更日(展開優位pt 撤去 → motor を motor2rate に置換)。成績が
         # 混ざらないよう started_at をこの日にリセットし、累計回収率を当日から再計測する。
         started_at=dt.date(2026, 6, 13),
@@ -189,7 +196,8 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         predictor_id="v3_tenkai",
         display_name="展開予想",
         slot=3,
-        status=STATUS_ACTIVE,
+        # 2026-07-19 退役。control (v1_basic) に対し有意な回収率差が得られなかった。
+        status=STATUS_RETIRED,
         # 投入日。control (v1_basic) の 5 成分に展開優位pt (tenkai) を加えた
         # 6 成分版。展開優位pt は 2026-05-30〜06-13 に v2_tenkai で試行したが、
         # 当時は単独スロットでの再評価には至らなかったため、独立スロット

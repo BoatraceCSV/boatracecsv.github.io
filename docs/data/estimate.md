@@ -30,12 +30,14 @@
 | ID | 表示名 | 状態 | 開始日 | 成分 |
 | --- | --- | --- | --- | --- |
 | `v1_basic` | A君予想 | active | 2026-05-01 | waku, racer, motor, exhibit, weather (5 成分) |
-| `v2_tenkai` | B君予想 | active | 2026-06-13 | waku, racer, **motor2rate**, exhibit, weather (5 成分) |
-| `v3_tenkai` | 展開予想 | active | 2026-06-20 | waku, racer, motor, exhibit, weather, **tenkai** (6 成分) |
+| `v2_tenkai` | B君予想 | **retired** (2026-07-19) | 2026-06-13 | waku, racer, **motor2rate**, exhibit, weather (5 成分) |
+| `v3_tenkai` | 展開予想 | **retired** (2026-07-19) | 2026-06-20 | waku, racer, motor, exhibit, weather, **tenkai** (6 成分) |
 
-> `v2_tenkai` は実験スロット。展開優位pt (`tenkai`) を加えた 6 成分版 (2026-05-30〜) は control である A君予想を回収率で下回ったため 2026-06-13 に撤去。同日、次の実験として A君予想の 5 成分のうち着順ベースの **`motor` を公式モーター2連率 `motor2rate` に置き換えた** 5 成分構成を投入した(成分数は control と同じで motor 指標だけを差し替え。おかぺん評価との順位相関検証で有望だった指標。[`notebooks/motor_pt_okapen_validation.ipynb`](../../notebooks/motor_pt_okapen_validation.ipynb))。recipe 変更に伴い `started_at` を当日へリセット(累計回収率を再計測)。`predictor_id` は据え置き。
+> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` のみ。退役した予想者は `active_predictors()` から除外されるため、preview-realtime / build_index / build_weights / GCS ミラーいずれの計算対象からも自動的に外れる。過去の index CSV(`data/estimate/{id}/…`)と成分定義(`motor2rate` / `tenkai`)・計算ロジックは将来の再利用に備えて残してある。命名規則どおり退役した `predictor_id` は再利用しない。
 
-> `v3_tenkai`(展開予想)は control (`v1_basic`) の 5 成分に **展開優位pt (`tenkai`)** を加えた 6 成分版を独立スロットとして投入したもの(2026-06-20〜)。`tenkai` の計算ロジックは [`scripts/boatrace/index_features.py` の `tenkai_yui_pt()`](../../scripts/boatrace/index_features.py) に常駐している。`tenkai` は展示前(朝バッチ)に進入コース未取得のため [`DAILY_NEUTRAL_COMPONENTS`](../../scripts/build_index.py) で 50 に固定され、preview 反映後に確定する。累計回収率は `started_at` 当日からカウント開始。
+> `v2_tenkai` は実験スロットだった。当初(2026-05-30〜06-13)は展開優位pt (`tenkai`) を加えた 6 成分版だったが control を下回ったため撤去し、2026-06-13 に A君予想の 5 成分のうち着順ベースの **`motor` を公式モーター2連率 `motor2rate` に置き換えた** 5 成分構成へ差し替え(成分数は control と同じで motor 指標だけを差し替え。おかぺん評価との順位相関検証で有望だった指標。[`notebooks/motor_pt_okapen_validation.ipynb`](../../notebooks/motor_pt_okapen_validation.ipynb))、`started_at` を当日へリセットして再計測していた。
+
+> `v3_tenkai`(展開予想)は control (`v1_basic`) の 5 成分に **展開優位pt (`tenkai`)** を加えた 6 成分版を独立スロットとして投入したもの(2026-06-20〜07-19)。`tenkai` の計算ロジックは [`scripts/boatrace/index_features.py` の `tenkai_yui_pt()`](../../scripts/boatrace/index_features.py) に常駐しており、退役後も残している。`tenkai` は展示前(朝バッチ)に進入コース未取得のため [`DAILY_NEUTRAL_COMPONENTS`](../../scripts/build_index.py) で 50 に固定され、preview 反映後に確定していた。
 
 新規予想者を追加するときは `registry.py` の `PREDICTORS` タプルに `PredictorSpec` を追記し、`COMPONENT_LABELS_REGISTRY` に新成分のラベルを追加します。`infra/run-*.sh` の `ACTIVE_PREDICTORS` 配列も同期して更新する必要があります(sparse-checkout と commit パス展開で参照)。
 
@@ -70,7 +72,9 @@ python scripts/build_weights.py --month 2026-05  --all-active
 
 **枠番**・**選手**・**モーター**・**展示**・**気象** の 5 要素を採用。
 
-### v2_tenkai の特徴量(5 成分)
+### v2_tenkai の特徴量(5 成分, 2026-07-19 退役)
+
+> 退役済み。以下は当時の構成の記録。成分定義・計算ロジックは残してある。
 
 v1_basic の 5 成分のうち、着順ベースの **モーターpt (`motor`)** を **モーター2連率pt (`motor2rate`)** に
 置き換えた実験構成。成分数は control と同じ 5 で、モーター能力の指標だけが異なる。
@@ -94,7 +98,9 @@ preview に依存しないため朝バッチ (`state=daily`) でも取得でき�
 > 計算ロジックは [`tenkai_yui_pt()`](../../scripts/boatrace/index_features.py)、ラベルは
 > `COMPONENT_LABELS_REGISTRY` に常駐している。
 
-### v3_tenkai の特徴量(6 成分)
+### v3_tenkai の特徴量(6 成分, 2026-07-19 退役)
+
+> 退役済み。以下は当時の構成の記録。成分定義・計算ロジックは残してある。
 
 control (`v1_basic`) の 5 成分(枠番・選手・モーター・展示・気象)に **展開優位pt (`tenkai`)** を
 6 番目として加えた構成。モーター指標は control と同じ着順ベース `motor` を使い、`tenkai` の
