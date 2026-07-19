@@ -38,7 +38,7 @@ pip install -r scripts/requirements.txt
 # 当日 JST のデータを一通り取り込む (daily-sync.yml と同じ並び)
 python scripts/race-card.py --date "$(date +%Y-%m-%d)" --force         # bc_j_str3 (race_cards) + bc_j_waku10 (waku10) + bc_mon_2 (monthly_schedule)
 python scripts/recent-form.py --date "$(date +%Y-%m-%d)" --force       # bc_zensou (recent_form)
-python scripts/motor-stats.py --date "$(date +%Y-%m-%d)" --force       # bc_mst / bc_mdc (motor_stats)
+python scripts/motor-stats.py --date "$(date +%Y-%m-%d)" --force       # bc_mst / bc_mdc (motor_stats) + bc_mrireki (motor_history)
 python scripts/race-title.py --date "$(date +%Y-%m-%d)" --force        # getHoldingList2 (title)
 python scripts/build_index.py --date "$(date +%Y-%m-%d)" --mode daily --all-active  # 全 active 予想者の強さ index
 ```
@@ -51,7 +51,7 @@ python scripts/build_index.py --date "$(date +%Y-%m-%d)" --mode daily --all-acti
 scripts/
 ├── preview-realtime.py          # Realtime preview + odds + realtime result scraper (also updates index)
 ├── race-title.py                # Per-race レース名 sidecar (data/programs/title/)
-├── motor-stats.py               # Motor stats scraper (data/programs/motor_stats/)
+├── motor-stats.py               # Motor stats + motor history scraper (data/programs/)
 ├── race-card.py                 # Race-card detail + waku10 + monthly schedule scraper (data/programs/)
 ├── recent-form.py               # Recent national/local form scraper
 ├── build_index.py               # Strength Index builder (--mode daily/realtime, --update-races, --predictor / --all-active)
@@ -96,7 +96,8 @@ data/                            # Published data (created at runtime)
 │   ├── monthly_schedule/YYYY/MM.csv        # bc_mon_2 由来の月間開催日程 (全24場・毎日上書き)
 │   ├── recent_national/YYYY/MM/DD.csv      # 全国近況5節
 │   ├── recent_local/YYYY/MM/DD.csv         # 当地近況5節
-│   └── motor_stats/YYYY/MM/DD.csv          # モーター期成績スナップショット
+│   ├── motor_stats/YYYY/MM/DD.csv          # モーター期成績スナップショット
+│   └── motor_history/YYYY/MM/DD.csv        # bc_mrireki 由来のモーター履歴 (日付=基準節終了日)
 ├── previews/
 │   ├── tkz/YYYY/MM/DD.csv                  # realtime: 体重・展示タイム・チルト
 │   ├── stt/YYYY/MM/DD.csv                  # realtime: 進入コース・スタート展示
@@ -268,6 +269,8 @@ python scripts/motor-stats.py --date 2026-04-25 --force
 ```
 
 The script fetches `bc_mst` (motor period start date) and `bc_mdc` (per-motor stats) from `race.boatcast.jp` for every stadium that has races on the given date (per the same-day B-file from `mbrace.or.jp`). All motors are written to a single CSV at `data/programs/motor_stats/YYYY/MM/DD.csv`.
+
+The same run also collects the motor usage history (`bc_mrireki`): for each open stadium it derives the most recent completed 節's end date from `bc_mon_2` and appends that snapshot's rows to `data/programs/motor_history/YYYY/MM/DD.csv` (path date = 節終了日). Stadiums already present in the target CSV are skipped, so the daily re-run is idempotent.
 
 **Backfill is not possible** — race.boatcast.jp only exposes the current motor period for each stadium, so historical periods are lost. Run this script daily going forward to accumulate time-series snapshots.
 

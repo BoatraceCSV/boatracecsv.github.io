@@ -337,6 +337,31 @@ class Waku10Card:
 
 
 @dataclass
+class MotorHistoryEntry:
+    """One (motor, 節) usage record from ``bc_mrireki`` (モーター履歴).
+
+    A ``bc_mrireki_{節終了日}_{jo}`` file is a static snapshot taken after
+    the 節 ending on ``session_end_key``: for every motor at the stadium it
+    lists the last ~3 節 with the racer who used the motor and the raw
+    finish sequence (same token conventions as
+    :class:`RecentFormSession.finish_sequence`).
+    """
+
+    stadium_code: str  # "01".."24" (zero-padded)
+    session_end_key: str  # 基準節終了日 (YYYY-MM-DD) — the file's key
+    motor_number: Optional[int] = None  # モーター番号
+    start_date: Optional[str] = None  # 使用節の開始日 (YYYY-MM-DD)
+    end_date: Optional[str] = None  # 使用節の終了日 (YYYY-MM-DD)
+    grade: Optional[str] = None  # グレード ("一般" / "ＧⅢ" / "ＧⅡ" / "ＧⅠ" / "ＳＧ")
+    title: Optional[str] = None  # 開催タイトル
+    racer_name: Optional[str] = None  # 使用者 (full-width spaces collapsed)
+    # Raw 着順列 (trailing full-width padding stripped). Tokens: "１"-"６"
+    # 着順 / "Ｆ" / "Ｌ" / "欠" / "転" / "妨" / "落" / "[N]" 優勝戦N着 /
+    # "　" 日区切り。
+    finish_sequence: Optional[str] = None
+
+
+@dataclass
 class ScheduleEntry:
     """One 節 (race series) in a stadium's monthly schedule (bc_mon_2)."""
 
