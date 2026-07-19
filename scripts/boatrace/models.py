@@ -285,6 +285,70 @@ class RaceCard:
 
 
 @dataclass
+class Waku10Run:
+    """One past race in the 枠番別過去10走 (bc_j_waku10) breakdown.
+
+    Each run is a triplet in the source TSV: ``着順 / 進入コース / グレード``.
+    進入コース is only present when the racer entered from a course other
+    than the 枠 (the SPA legend: 「コース番号(番号非表示は枠通り)」) —
+    an empty value therefore means 枠なり進入.
+    """
+
+    finish_position: Optional[str] = None  # 着順 ("1"-"6" / "F" / "L" / "欠" / "落" / "沈" / "転" / "不" / "エ" / "失" / "妨")
+    entry_course: Optional[int] = None  # 進入コース (None = 枠なり)
+    grade: Optional[str] = None  # グレード ("IP" = 一般 / "G1" / "G2" / "G3" / "SG")
+
+
+@dataclass
+class Waku10Boat:
+    """One boat's row in bc_j_waku10 (枠番別過去10走).
+
+    The three summary figures are 枠番別 (per-waku) aggregates as rendered
+    by the SPA's 枠番別データ block: 勝率 / 平均ST / スタート順.
+    ``runs`` is exactly 10 entries when valid, index 0 = 前走 (most
+    recent), index 9 = 10走前 — the source TSV is newest-first.
+    """
+
+    boat_number: int  # 1..6 (= line number after the meta lines)
+    racer_name: Optional[str] = None  # 選手名 (full-width spaces collapsed)
+    win_rate: Optional[float] = None  # 枠番別勝率
+    avg_st: Optional[float] = None  # 枠番別平均ST
+    avg_start_order: Optional[float] = None  # 枠番別平均スタート順
+    runs: List[Waku10Run] = field(default_factory=list)
+
+
+@dataclass
+class Waku10Card:
+    """枠番別過去10走 data for one race, sourced from bc_j_waku10."""
+
+    date: str  # YYYY-MM-DD
+    stadium_number: int  # 1..24
+    race_number: int  # 1..12
+    race_code: str  # YYYYMMDDCCNN
+
+    # Meta line: "{status}\t{ncols}" (same shape as bc_j_str3).
+    status: Optional[str] = None
+
+    # Always 6 boats when valid.
+    boats: List[Waku10Boat] = field(default_factory=list)
+
+    def is_valid(self) -> bool:
+        return len(self.boats) == 6
+
+
+@dataclass
+class ScheduleEntry:
+    """One 節 (race series) in a stadium's monthly schedule (bc_mon_2)."""
+
+    stadium_code: str  # "01".."24" (zero-padded)
+    start_date: Optional[str] = None  # 節開始日 (YYYY-MM-DD)
+    end_date: Optional[str] = None  # 節終了日 (YYYY-MM-DD)
+    grade: Optional[str] = None  # グレード ("IP" = 一般 / "G1" / "G2" / "G3" / "SG")
+    title: Optional[str] = None  # 開催タイトル
+    races: Optional[str] = None  # 1日のレース数 (e.g. "12R")
+
+
+@dataclass
 class RecentFormSession:
     """One ``節`` (race series) record of recent results.
 

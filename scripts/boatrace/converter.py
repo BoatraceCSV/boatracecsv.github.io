@@ -13,6 +13,10 @@ from .models import (
     RecentForm,
     RecentFormBoat,
     RecentFormSession,
+    ScheduleEntry,
+    Waku10Boat,
+    Waku10Card,
+    Waku10Run,
 )
 from . import logger as logging_module
 
@@ -481,6 +485,182 @@ def race_cards_to_csv(items: List[RaceCard]) -> str:
         logging_module.error(
             "csv_generation_failed",
             file_type="race_cards",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# 枠番別過去10走 — bc_j_waku10
+# ---------------------------------------------------------------------------
+
+# One CSV row per race. Schema: 4 race-meta columns + 6 boats x
+# (4 summary + 10 runs x 3 sub-columns) = 4 + 6 x 34 = 208 columns.
+# Runs are newest-first: 過去1走 = 前走, 過去10走 = 10走前.
+
+WAKU10_HEADERS: List[str] = [
+    "レースコード",
+    "レース日",
+    "レース場コード",
+    "レース回",
+]
+
+_WAKU10_SUMMARY_FIELDS: List[str] = [
+    "選手名",
+    "枠番別勝率",
+    "枠番別平均ST",
+    "枠番別平均スタート順",
+]
+
+_WAKU10_RUN_FIELDS: List[str] = [
+    "着順",
+    "進入",
+    "グレード",
+]
+
+for _boat_num in range(1, 7):
+    for _summary_field in _WAKU10_SUMMARY_FIELDS:
+        WAKU10_HEADERS.append(f"艇{_boat_num}_{_summary_field}")
+    for _run_idx in range(1, 11):  # 過去1走 (前走) .. 過去10走
+        for _run_field in _WAKU10_RUN_FIELDS:
+            WAKU10_HEADERS.append(
+                f"艇{_boat_num}_過去{_run_idx}走_{_run_field}"
+            )
+
+
+def _waku10_run_cells(run: Optional[Waku10Run]) -> List[str]:
+    """Render one run as 3 CSV cells. Empty run -> 3 blanks."""
+    if run is None:
+        return ["", "", ""]
+    return [
+        _fmt_optional(run.finish_position),
+        _fmt_optional(run.entry_course),
+        _fmt_optional(run.grade),
+    ]
+
+
+def _waku10_boat_cells(boat: Optional[Waku10Boat]) -> List[str]:
+    """Render one boat (summary + 10 runs) as 34 CSV cells."""
+    if boat is None:
+        return [""] * (
+            len(_WAKU10_SUMMARY_FIELDS) + 10 * len(_WAKU10_RUN_FIELDS)
+        )
+    cells: List[str] = [
+        boat.racer_name or "",
+        _fmt_optional(boat.win_rate),
+        _fmt_optional(boat.avg_st),
+        _fmt_optional(boat.avg_start_order),
+    ]
+    runs = list(boat.runs) + [None] * (10 - len(boat.runs))
+    for run in runs[:10]:
+        cells.extend(_waku10_run_cells(run))
+    return cells
+
+
+def waku10_to_row(card: Waku10Card) -> List[str]:
+    """Convert a single :class:`Waku10Card` to a CSV row (208 cells)."""
+    row: List[str] = [
+        card.race_code,
+        card.date,
+        f"{card.stadium_number:02d}",
+        f"{card.race_number:02d}R",
+    ]
+    boats_by_number = {b.boat_number: b for b in card.boats}
+    for boat_num in range(1, 7):
+        row.extend(_waku10_boat_cells(boats_by_number.get(boat_num)))
+    return row
+
+
+def waku10_to_csv(items: List[Waku10Card]) -> str:
+    """Serialise a list of :class:`Waku10Card` to CSV content."""
+    try:
+        output = StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow(WAKU10_HEADERS)
+
+        ordered = sorted(items, key=lambda c: (c.stadium_number, c.race_number))
+        for item in ordered:
+            writer.writerow(waku10_to_row(item))
+
+        csv_content = output.getvalue()
+        output.close()
+
+        logging_module.info(
+            "csv_generated",
+            file_type="waku10",
+            rows=len(ordered) + 1,
+            size_bytes=len(csv_content.encode("utf-8")),
+        )
+        return csv_content
+
+    except Exception as e:
+        logging_module.error(
+            "csv_generation_failed",
+            file_type="waku10",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# 月間開催日程 — bc_mon_2
+# ---------------------------------------------------------------------------
+
+# One CSV row per (stadium, 節). The monthly source file also carries 節
+# beyond the fetch month; all rows are written as-is.
+
+MONTHLY_SCHEDULE_HEADERS: List[str] = [
+    "場コード",
+    "節開始日",
+    "節終了日",
+    "グレード",
+    "タイトル",
+    "レース数",
+]
+
+
+def schedule_entry_to_row(entry: ScheduleEntry) -> List[str]:
+    """Convert a single :class:`ScheduleEntry` to a CSV row (6 cells)."""
+    return [
+        entry.stadium_code,
+        _fmt_optional(entry.start_date),
+        _fmt_optional(entry.end_date),
+        _fmt_optional(entry.grade),
+        _fmt_optional(entry.title),
+        _fmt_optional(entry.races),
+    ]
+
+
+def monthly_schedule_to_csv(items: List[ScheduleEntry]) -> str:
+    """Serialise a list of :class:`ScheduleEntry` to CSV content."""
+    try:
+        output = StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow(MONTHLY_SCHEDULE_HEADERS)
+
+        ordered = sorted(
+            items, key=lambda e: (e.stadium_code, e.start_date or "")
+        )
+        for item in ordered:
+            writer.writerow(schedule_entry_to_row(item))
+
+        csv_content = output.getvalue()
+        output.close()
+
+        logging_module.info(
+            "csv_generated",
+            file_type="monthly_schedule",
+            rows=len(ordered) + 1,
+            size_bytes=len(csv_content.encode("utf-8")),
+        )
+        return csv_content
+
+    except Exception as e:
+        logging_module.error(
+            "csv_generation_failed",
+            file_type="monthly_schedule",
             error=str(e),
             error_type=type(e).__name__,
         )
