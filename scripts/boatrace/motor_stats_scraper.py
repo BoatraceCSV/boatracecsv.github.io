@@ -38,6 +38,26 @@ stadium — historical periods are not retained server-side. Backfill is
 therefore not possible; only forward-going daily snapshots accumulate
 useful time-series data. This is reflected in the ``record_date`` field
 of :class:`MotorStat`, which captures the date the snapshot was taken.
+
+A third endpoint carries the per-motor usage history (モーター履歴):
+
+* ``/hp_txt/{jo}/bc_mrireki_{節終了日}_{jo}.txt``
+    Keyed by a 節終了日 (``YYYYMMDD``) — one file per completed 節,
+    static once published and retained for at least ~1 month. One row per
+    (motor, past 節), 6 tab-separated columns:
+
+      [0] モーター番号 (zero-padded, e.g. "011")
+      [1] 使用期間 "YYYY/MM/DD～YYYY/MM/DD"
+      [2] グレード ("一般" / "ＧⅢ" / ...)
+      [3] 開催タイトル
+      [4] 使用者名 (full-width padded)
+      [5] 着順列 (same token conventions as bc_zensou; trailing
+          full-width padding)
+
+    Empirically each motor carries exactly its last 3 節. The valid key
+    for "the most recent completed 節" is derived from ``bc_mon_2``
+    (see :mod:`monthly_schedule_scraper`) — keys for 節 that have not
+    finished yet return 403.
 """
 
 from __future__ import annotations
@@ -48,7 +68,8 @@ import requests
 
 from . import logger as logging_module
 from .downloader import RateLimiter
-from .models import MotorStat
+from .models import MotorHistoryEntry, MotorStat
+from .original_exhibition_scraper import _normalize_name
 
 
 _BC_MDC_NCOLS = 33
@@ -124,6 +145,32 @@ class MotorStatsScraper:
             if stat is not None:
                 motors.append(stat)
         return motors
+
+    def scrape_motor_history(
+        self,
+        session_end_yyyymmdd: str,
+        stadium_code: int,
+    ) -> Optional[List[MotorHistoryEntry]]:
+        """Fetch the motor usage history snapshot keyed by a 節終了日.
+
+        Args:
+            session_end_yyyymmdd: ``YYYYMMDD`` key — must be the end date
+                of a *completed* 節 at the stadium (derive it from
+                ``bc_mon_2``); other keys 403.
+            stadium_code: 1..24.
+
+        Returns:
+            List of :class:`MotorHistoryEntry` (one per motor × past 節),
+            or ``None`` when the file is unavailable / unparseable.
+        """
+        url = (
+            f"{self.base_url}/hp_txt/{stadium_code:02d}/"
+            f"bc_mrireki_{session_end_yyyymmdd}_{stadium_code:02d}.txt"
+        )
+        body = self._fetch(url)
+        if body is None:
+            return None
+        return parse_mrireki(body, stadium_code, session_end_yyyymmdd)
 
     # ---- Internal fetches ----------------------------------------------
 
@@ -327,9 +374,78 @@ def _format_yyyymmdd_to_iso(raw: str) -> str:
     return f"{cleaned[0:4]}-{cleaned[4:6]}-{cleaned[6:8]}"
 
 
+def _slash_date_to_iso(raw: str) -> Optional[str]:
+    """``2026/06/28`` -> ``2026-06-28``. Returns ``None`` for malformed input."""
+    cleaned = (raw or "").strip()
+    parts = cleaned.split("/")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return None
+    return f"{parts[0]}-{parts[1]}-{parts[2]}"
+
+
+def parse_mrireki(
+    body: str,
+    stadium_code: int,
+    session_end_yyyymmdd: str,
+) -> Optional[List[MotorHistoryEntry]]:
+    """Parse a ``bc_mrireki`` body into motor-history entries.
+
+    The file has no ``data=`` marker / status line — every non-blank line
+    is a data row. Rows with fewer than 6 columns or without a parseable
+    motor number are skipped.
+    """
+    if not body or not body.strip():
+        return None
+
+    session_end_iso = _format_yyyymmdd_to_iso(session_end_yyyymmdd)
+    if not session_end_iso:
+        return None
+
+    entries: List[MotorHistoryEntry] = []
+    for raw in body.splitlines():
+        if not raw.strip():
+            continue
+        cols = raw.split("\t")
+        if len(cols) < 6:
+            continue
+        motor_number = _to_int(cols[0])
+        if motor_number is None:
+            continue
+
+        start_iso = end_iso = None
+        period = cols[1].strip()
+        if "～" in period:
+            start_raw, _, end_raw = period.partition("～")
+            start_iso = _slash_date_to_iso(start_raw)
+            end_iso = _slash_date_to_iso(end_raw)
+
+        # Strip only *trailing* full-width padding — internal 全角スペース
+        # are day separators (same convention as bc_zensou).
+        finish = cols[5].rstrip("　") or None
+
+        entries.append(
+            MotorHistoryEntry(
+                stadium_code=f"{stadium_code:02d}",
+                session_end_key=session_end_iso,
+                motor_number=motor_number,
+                start_date=start_iso,
+                end_date=end_iso,
+                grade=cols[2].strip() or None,
+                title=cols[3].strip() or None,
+                racer_name=_normalize_name(cols[4]),
+                finish_sequence=finish,
+            )
+        )
+
+    if not entries:
+        return None
+    return entries
+
+
 __all__ = [
     "MotorStatsScraper",
     "MotorStatsScraperError",
+    "parse_mrireki",
     "_parse_mdc_row",
     "_scaled_float",
     "_to_int",

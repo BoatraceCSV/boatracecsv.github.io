@@ -125,16 +125,25 @@ cd repo
 #   - data/programs/recent_local/<YM>/        recent-form.py 出力
 #   - data/programs/motor_stats/<YM>/         motor-stats.py 出力 (build_index 特徴量)
 #   - data/programs/motor_stats/<PREV_YM>/    月初の 7 日 fallback 用
+#   - data/programs/motor_history/<YM>/       motor-stats.py 出力 (bc_mrireki。
+#   - data/programs/motor_history/<PREV_YM>/   パス日付=前節終了日のため前月分も対象)
+#   - data/programs/waku10/<YM>/              race-card.py 出力 (bc_j_waku10)
+#   - data/programs/monthly_schedule/         race-card.py 出力 (bc_mon_2。月ファイル
+#                                              上書きのため dedup 用に既存分ごと取得)
 #   - data/programs/title/<YM>/               race-title.py 出力 (GCS ミラー対象)
 sparse_paths=(
   scripts
   .boatrace
   data/estimate/stadium
   "data/programs/race_cards/${TODAY_YM}"
+  "data/programs/waku10/${TODAY_YM}"
+  data/programs/monthly_schedule
   "data/programs/recent_national/${TODAY_YM}"
   "data/programs/recent_local/${TODAY_YM}"
   "data/programs/motor_stats/${TODAY_YM}"
   "data/programs/motor_stats/${PREV_YM}"
+  "data/programs/motor_history/${TODAY_YM}"
+  "data/programs/motor_history/${PREV_YM}"
   "data/programs/title/${TODAY_YM}"
 )
 for predictor in "${ACTIVE_PREDICTORS[@]}"; do

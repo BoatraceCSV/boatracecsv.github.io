@@ -8,27 +8,42 @@ For a given date, this script:
      followed by ``bc_mdc_{period}_{jo}`` (one row per motor at the stadium).
   3. Aggregates all stadium-motor rows into a single CSV at
      ``data/programs/motor_stats/YYYY/MM/DD.csv``.
+  4. For each open stadium, derives the most recent completed 節's end
+     date from ``bc_mon_2`` and fetches the motor usage history
+     ``bc_mrireki_{節終了日}_{jo}`` (one row per motor × past 節).
+     Rows are appended to ``data/programs/motor_history/YYYY/MM/DD.csv``
+     where the date is the 節終了日 — the file is static per key, so a
+     stadium already present in the CSV is skipped (idempotent daily
+     runs).
 
 Note on history: race.boatcast.jp only carries the **current** motor
 period for each stadium. Historic periods are not retained server-side,
 so backfilling the past is not possible. Only daily snapshots taken
 forward in time accumulate useful time-series data. The ``記録日``
 column captures the snapshot date (= the ``--date`` argument).
+(``bc_mrireki`` is the exception: past 節 keys are retained for at
+least ~1 month, so a missed day is recoverable.)
 """
 
 import argparse
+import csv
 import json
 import sys
 from datetime import datetime, timedelta, timezone
+from io import StringIO
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 # Add boatrace package to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from boatrace import logger as logging_module
 from boatrace import git_operations
-from boatrace.converter import motor_stats_to_csv
+from boatrace.converter import (
+    MOTOR_HISTORY_HEADERS,
+    motor_history_entry_to_row,
+    motor_stats_to_csv,
+)
 from boatrace.downloader import RateLimiter
 from boatrace.holding_list import (
     HoldingListError,
@@ -36,11 +51,13 @@ from boatrace.holding_list import (
     load_holding_from_title_csv,
 )
 from boatrace.models import MotorStat
+from boatrace.monthly_schedule_scraper import MonthlyScheduleScraper
 from boatrace.motor_stats_scraper import MotorStatsScraper
 from boatrace.storage import write_csv
 
 
 OUTPUT_DIR = "data/programs/motor_stats"
+HISTORY_OUTPUT_DIR = "data/programs/motor_history"
 
 
 def _collect_open_stadiums(
@@ -82,6 +99,7 @@ def process_motor_stats(
     """Scrape motor stats for one day's open stadiums."""
     stats = {
         "stadiums_open": 0,
+        "open_stadium_codes": [],
         "stadiums_scraped": 0,
         "stadiums_failed": 0,
         "motors_scraped": 0,
@@ -94,6 +112,7 @@ def process_motor_stats(
 
     open_stadiums = _collect_open_stadiums(date_str, config, rate_limiter)
     stats["stadiums_open"] = len(open_stadiums)
+    stats["open_stadium_codes"] = sorted(open_stadiums)
 
     if not open_stadiums:
         logging_module.info("motor_stats_skipped_no_stadiums", date=date_str)
@@ -182,6 +201,199 @@ def process_motor_stats(
             path=str(csv_path),
         )
 
+    return stats
+
+
+def _previous_session_end(
+    schedule_scraper: MonthlyScheduleScraper,
+    date_str: str,
+    stadium_code: int,
+) -> Optional[str]:
+    """Derive the end date (YYYYMMDD) of the last 節 completed before *date_str*.
+
+    Looks at the stadium's ``bc_mon_2`` for the month of *date_str*, and
+    falls back to the previous month when no completed 節 is found there
+    (e.g. early in a month whose first 節 is still running).
+    """
+    target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    months = [target.strftime("%Y%m")]
+    prev_month_last_day = target.replace(day=1) - timedelta(days=1)
+    months.append(prev_month_last_day.strftime("%Y%m"))
+
+    for year_month in months:
+        entries = schedule_scraper.scrape_stadium(year_month, stadium_code)
+        if not entries:
+            continue
+        ended = [
+            e.end_date
+            for e in entries
+            if e.end_date is not None and e.end_date < date_str
+        ]
+        if ended:
+            return max(ended).replace("-", "")
+    return None
+
+
+def history_csv_path(project_root: Path, session_end_yyyymmdd: str) -> Path:
+    """Resolve ``data/programs/motor_history/{YYYY}/{MM}/{DD}.csv``.
+
+    The path date is the 節終了日 key, not the run date.
+    """
+    y, m, d = (
+        session_end_yyyymmdd[0:4],
+        session_end_yyyymmdd[4:6],
+        session_end_yyyymmdd[6:8],
+    )
+    return project_root / HISTORY_OUTPUT_DIR / y / m / f"{d}.csv"
+
+
+def recorded_stadiums(path: Path) -> Set[str]:
+    """Return the set of 場コード already present in the history CSV."""
+    if not path.exists():
+        return set()
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.reader(f)
+            try:
+                next(reader)  # skip header
+            except StopIteration:
+                return set()
+            return {row[0] for row in reader if row}
+    except OSError as exc:
+        logging_module.warning(
+            "motor_history_existing_read_failed",
+            path=str(path),
+            error=str(exc),
+        )
+        return set()
+
+
+def append_history_rows(path: Path, rows: List[List[str]]) -> int:
+    """Append history rows to *path*, writing the header first if needed."""
+    if not rows:
+        return 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new_file = not path.exists() or path.stat().st_size == 0
+
+    buf = StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    if new_file:
+        writer.writerow(MOTOR_HISTORY_HEADERS)
+    for row in rows:
+        writer.writerow(row)
+
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(buf.getvalue())
+
+    logging_module.info(
+        "motor_history_csv_appended",
+        path=str(path),
+        rows=len(rows),
+        new_file=new_file,
+    )
+    return len(rows)
+
+
+def process_motor_history(
+    date_str: str,
+    config: dict,
+    rate_limiter: RateLimiter,
+    open_stadiums: Set[int],
+    dry_run: bool = False,
+) -> dict:
+    """Fetch bc_mrireki for each open stadium's previous 節 and append rows.
+
+    The mrireki file is static per (stadium, 節終了日); a stadium already
+    present in the target CSV is skipped without fetching, so the daily
+    re-run is a cheap no-op until the next 節 completes.
+    """
+    stats = {
+        "stadiums_recorded": 0,
+        "stadiums_skipped": 0,
+        "stadiums_failed": 0,
+        "entries": 0,
+        "csv_paths": [],
+        "errors": [],
+    }
+
+    if not open_stadiums:
+        return stats
+
+    project_root = Path(__file__).parent.parent
+    schedule_scraper = MonthlyScheduleScraper(
+        timeout_seconds=config.get("motor_stats_timeout_seconds", 30),
+        rate_limiter=rate_limiter,
+    )
+    scraper = MotorStatsScraper(
+        timeout_seconds=config.get("motor_stats_timeout_seconds", 30),
+        rate_limiter=rate_limiter,
+    )
+
+    for stadium_code in sorted(open_stadiums):
+        try:
+            session_end = _previous_session_end(
+                schedule_scraper, date_str, stadium_code
+            )
+            if session_end is None:
+                stats["stadiums_failed"] += 1
+                logging_module.info(
+                    "motor_history_no_previous_session",
+                    date=date_str,
+                    stadium=stadium_code,
+                )
+                continue
+
+            path = history_csv_path(project_root, session_end)
+            if f"{stadium_code:02d}" in recorded_stadiums(path):
+                stats["stadiums_skipped"] += 1
+                continue
+
+            entries = scraper.scrape_motor_history(session_end, stadium_code)
+            if entries is None:
+                stats["stadiums_failed"] += 1
+                logging_module.info(
+                    "motor_history_unavailable",
+                    date=date_str,
+                    stadium=stadium_code,
+                    session_end=session_end,
+                )
+                continue
+
+            rows = [motor_history_entry_to_row(e) for e in entries]
+            if dry_run:
+                logging_module.info(
+                    "motor_history_dry_run",
+                    stadium=stadium_code,
+                    session_end=session_end,
+                    rows=len(rows),
+                )
+            else:
+                append_history_rows(path, rows)
+                rel = str(path.relative_to(project_root))
+                if rel not in stats["csv_paths"]:
+                    stats["csv_paths"].append(rel)
+            stats["stadiums_recorded"] += 1
+            stats["entries"] += len(rows)
+
+        except Exception as e:
+            stats["stadiums_failed"] += 1
+            stats["errors"].append(
+                {
+                    "date": date_str,
+                    "error_type": "motor_history_scrape_error",
+                    "message": str(e),
+                    "stadium": stadium_code,
+                }
+            )
+
+    logging_module.info(
+        "motor_history_complete",
+        date=date_str,
+        recorded=stats["stadiums_recorded"],
+        skipped=stats["stadiums_skipped"],
+        failed=stats["stadiums_failed"],
+        entries=stats["entries"],
+    )
     return stats
 
 
@@ -275,32 +487,54 @@ def main():
             dry_run=args.dry_run,
         )
 
+        history_stats = process_motor_history(
+            args.date,
+            config,
+            rate_limiter,
+            set(stats["open_stadium_codes"]),
+            dry_run=args.dry_run,
+        )
+
         print()
         print(f"Motor Stats Data Processing Complete for {args.date}")
         print(f"  Stadiums open: {stats['stadiums_open']}")
         print(f"  Stadiums scraped: {stats['stadiums_scraped']}")
         print(f"  Stadiums failed: {stats['stadiums_failed']}")
         print(f"  Motors scraped: {stats['motors_scraped']}")
+        print(
+            "  Motor history: "
+            f"{history_stats['stadiums_recorded']} recorded, "
+            f"{history_stats['stadiums_skipped']} already present, "
+            f"{history_stats['stadiums_failed']} failed, "
+            f"{history_stats['entries']} entries"
+        )
         print(f"  CSV files created: {stats['csv_files_created']}")
         print(f"  CSV files skipped: {stats['csv_files_skipped']}")
-        if stats["errors"]:
-            print(f"  Errors: {len(stats['errors'])}")
-            for error in stats["errors"]:
+        errors = stats["errors"] + history_stats["errors"]
+        if errors:
+            print(f"  Errors: {len(errors)}")
+            for error in errors:
                 print(f"    - {error['error_type']}: {error['message']}")
         print()
 
-        if stats["csv_files_created"] > 0 and not args.dry_run:
+        commit_paths: List[str] = []
+        if stats["csv_files_created"] > 0:
             year, month, day = args.date.split("-")
-            csv_file = f"{OUTPUT_DIR}/{year}/{month}/{day}.csv"
+            commit_paths.append(f"{OUTPUT_DIR}/{year}/{month}/{day}.csv")
+        commit_paths.extend(history_stats["csv_paths"])
+
+        if commit_paths and not args.dry_run:
             message = f"Update boatrace motor stats data: {args.date}"
-            if git_operations.commit_and_push([csv_file], message):
-                print(f"Git commit and push successful for {csv_file}")
+            if git_operations.commit_and_push(commit_paths, message):
+                print(f"Git commit and push successful for {commit_paths}")
             else:
-                print(f"Git commit and push failed for {csv_file}")
+                print(f"Git commit and push failed for {commit_paths}")
 
         sys.exit(
             0
-            if stats["csv_files_created"] > 0 or stats["csv_files_skipped"] > 0
+            if stats["csv_files_created"] > 0
+            or stats["csv_files_skipped"] > 0
+            or history_stats["csv_paths"]
             else 1
         )
 

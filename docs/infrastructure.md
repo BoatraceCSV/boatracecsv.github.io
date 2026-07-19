@@ -89,6 +89,7 @@ Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`prev
 | `data/programs/recent_local/<YYYY/MM>/` | 当地近況5節 |
 | `data/programs/motor_stats/<YYYY/MM>/` + `<前月>/` | モーター期成績(前月分は7日fallback用) |
 | `data/previews/{tkz,stt,sui,original_exhibition}/<YYYY/MM>/` | 直前バッチの追記対象 |
+| `data/previews/{od1,od2,od3}/<YYYY/MM>/` | 集計中オッズの追記対象。cone 外だと git add が無視され永続化されない |
 | `data/results/realtime/<YYYY/MM>/` | bc_rs1_2 由来の realtime 結果 CSV(締切後の追記対象)。cone 外だと git add が無視され永続化されない |
 | `data/results/payouts/<YYYY/MM>/` | bc_rs2 由来の払戻金 CSV(締切後の追記対象)。同じく cone 外だと git add が無視され永続化されない |
 
@@ -105,9 +106,12 @@ daily-sync は preview-realtime とは別系統の入出力を扱うため、`ru
 | `data/estimate/stadium/` | win_rate.csv, sui_params.csv, weights/{predictor_id}/*.csv (build_index 入力) |
 | `data/estimate/<predictor_id>/<YYYY/MM>/` | build_index --mode daily --all-active の出力先 (各 active 予想者を `ACTIVE_PREDICTORS` 配列でループ。commit 対象) |
 | `data/programs/race_cards/<YYYY/MM>/` | race-card.py の出力先 (GCS ミラー対象) |
+| `data/programs/waku10/<YYYY/MM>/` | race-card.py の出力先 (bc_j_waku10 枠番別過去10走) |
+| `data/programs/monthly_schedule/` | race-card.py の出力先 (bc_mon_2 月間開催日程。月ファイル上書きのため全体を取得) |
 | `data/programs/recent_national/<YYYY/MM>/` | recent-form.py の出力先 / build_index 特徴量 |
 | `data/programs/recent_local/<YYYY/MM>/` | recent-form.py の出力先 / build_index 特徴量 |
 | `data/programs/motor_stats/<YYYY/MM>/` + `<前月>/` | motor-stats.py の出力先 (前月分は build_index の 7 日 fallback 用) |
+| `data/programs/motor_history/<YYYY/MM>/` + `<前月>/` | motor-stats.py の出力先 (bc_mrireki モーター履歴。パス日付=前節終了日のため前月分も対象) |
 | `data/programs/title/<YYYY/MM>/` | race-title.py の出力先 (GCS ミラー対象) |
 
 ### sparse-checkout 対象 (monthly-weights / `run-monthly-weights.sh`)
