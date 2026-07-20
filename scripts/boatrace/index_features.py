@@ -93,6 +93,78 @@ def waku_pt(table: dict, stadium_code2: str, season: str, course: int) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# 1a. コースpt(v6_course 用)
+# ─────────────────────────────────────────────────────────────────────
+def load_course_table(repo: Path) -> tuple[dict, dict]:
+    """``course_win_rate.csv`` (場×レース番号×コースの収縮済み1着率) を読む。
+
+    Returns:
+        (table, fallback)
+        - table:    {(場コード2, レース回int): [c1..c6 の勝率 (%)]}
+        - fallback: {場コード2: [c1..c6 の勝率 (%)]}
+          場×コースの全レース番号率 (セル欠損時のフォールバック)。
+          published 値は収縮済みのため、n 加重平均 ≒ 収縮先 base(j,c)。
+
+    テーブルは ``scripts/build_course_rate.py`` が ``data/results/realtime``
+    全履歴から月次で再生成する (設計: docs/design/course_strength_v6.md)。
+
+    ファイルが無い場合は ``({}, {})`` を返す (course_pt が NaN → 下流で
+    偏差値 50 補完)。course を使わない予想者のバッチを巻き込まないため。
+    """
+    path = repo / "data" / "estimate" / "stadium" / "course_win_rate.csv"
+    if not path.exists():
+        return {}, {}
+    df = pd.read_csv(path, dtype=str)
+    table: dict[tuple[str, int], list[float]] = {}
+    acc: dict[str, tuple[list[float], float]] = {}
+    for _, r in df.iterrows():
+        jo = str(r["場コード"]).zfill(2)
+        try:
+            rno = int(float(r["レース回"]))
+            n = float(r["n"])
+            rates = [float(r[f"{c}コース勝率"]) for c in range(1, 7)]
+        except (ValueError, TypeError, KeyError):
+            continue
+        table[(jo, rno)] = rates
+        sums, tot = acc.get(jo, ([0.0] * 6, 0.0))
+        if n > 0:
+            for i in range(6):
+                sums[i] += n * rates[i]
+            acc[jo] = (sums, tot + n)
+        else:
+            acc[jo] = (sums, tot)
+    fallback: dict[str, list[float]] = {}
+    for jo, (sums, tot) in acc.items():
+        if tot > 0:
+            fallback[jo] = [s / tot for s in sums]
+    return table, fallback
+
+
+def course_pt(
+    table: dict, fallback: dict,
+    stadium_code2: str, race_no: int | None, course: int,
+) -> float:
+    """場×レース番号×コースの収縮済み1着率 (%) を返す。
+
+    ``race_no`` が不明・セル欠損時は場×コース全体率へフォールバック。
+    それも無い場合は NaN (下流の欠損補完で偏差値 50 扱い)。
+
+    呼び出し側の ``course`` は枠番pt (`waku_pt`) と同じ参照規約:
+    realtime = スタート展示の実進入コース、daily = 枠番フォールバック。
+    """
+    if not (1 <= course <= 6):
+        return float("nan")
+    if race_no is not None:
+        rates = table.get((stadium_code2, race_no))
+        if rates is not None:
+            return rates[course - 1]
+    rates = fallback.get(stadium_code2)
+    if rates is not None:
+        return rates[course - 1]
+    return float("nan")
+
+
+# ─────────────────────────────────────────────────────────────────────
 # 1b. 展開優位pt(v2_tenkai 用)
 # ─────────────────────────────────────────────────────────────────────
 def tenkai_yui_pt(
@@ -955,6 +1027,7 @@ class FeatureContext:
         ]
         # 静的テーブル(遅延ロード、1 回のみ)
         self._waku_table: dict | None = None
+        self._course_table: tuple[dict, dict] | None = None
         self._motor_score_table: dict[tuple[str, str], list[int]] | None = None
         self._motor4_score_table: dict[tuple[str, str], list[int]] | None = None
         self._sui_params: dict | None = None
@@ -990,6 +1063,12 @@ class FeatureContext:
         if self._waku_table is None:
             self._waku_table = load_waku_table(self.repo)
         return self._waku_table
+
+    def course_table(self) -> tuple[dict, dict]:
+        """v6_course 用 (table, fallback)。``load_course_table`` 参照。"""
+        if self._course_table is None:
+            self._course_table = load_course_table(self.repo)
+        return self._course_table
 
     def motor_score_table(self) -> dict[tuple[str, str], list[int]]:
         if self._motor_score_table is None:
@@ -1326,7 +1405,8 @@ def compute_features_for_day(
     """Return a long-format DataFrame: one row per (race × boat 1..6).
 
     Columns: レースコード, レース日, レース場コード(2桁), レース回, 枠番,
-             waku, racer, motor, exhibit, weather (5 raw feature pts).
+             waku, course, racer, motor, motor4, motor2rate, exhibit,
+             weather, tenkai (raw feature pts).
 
     Race universe is taken from ``data/programs/race_cards/YYYY/MM/DD.csv``
     (boatcast.jp `bc_j_str3` API snapshot, written by ``race-card.py``).
@@ -1368,6 +1448,7 @@ def compute_features_for_day(
     season = SEASON_BY_MONTH[day.month]
 
     waku_tab = ctx.waku_table()
+    course_tab, course_fallback = ctx.course_table()
     motor_score_table = ctx.motor_score_table()
     motor4_score_table = ctx.motor4_score_table()
     motor_history = ctx.motor_history(day)
@@ -1407,6 +1488,23 @@ def compute_features_for_day(
         # race_cards 形式の "01R" を "1R" に正規化。
         race_round_raw = prog_row.get("レース回", "")
         race_round = race_round_raw.lstrip("0") if isinstance(race_round_raw, str) else ""
+        # v6_course: レース番号 int。レースコード末尾 2 桁 (YYYYMMDDjjrr) を優先し、
+        # 不正なら レース回 ("1R" 形式) からパース。どちらも取れなければ None
+        # (course_pt が場×コース全体率へフォールバックする)。
+        race_no: int | None = None
+        try:
+            v = int(code[10:12])
+            if 1 <= v <= 12:
+                race_no = v
+        except (ValueError, TypeError):
+            pass
+        if race_no is None:
+            try:
+                v = int(str(race_round).rstrip("R"))
+                if 1 <= v <= 12:
+                    race_no = v
+            except (ValueError, TypeError):
+                pass
 
         # Pull realtime per-source preview payload; default to NaN-everywhere
         # for races with no row in any of sui/tkz/stt/original_exhibition.
@@ -1438,6 +1536,11 @@ def compute_features_for_day(
             if not (1 <= course <= 6):
                 course = waku
             wpt = waku_pt(waku_tab, stadium_code2, season, course)
+            # v6_course: 場×レース番号×コースの収縮済み1着率。コースの参照規約は
+            # waku と同一 (realtime = 実進入、daily = 枠番フォールバック)。
+            cpt = course_pt(
+                course_tab, course_fallback, stadium_code2, race_no, course,
+            )
 
             recs = []
             if rn_row is not None:
@@ -1496,6 +1599,7 @@ def compute_features_for_day(
                 "レース回":    race_round,
                 "枠番":       waku,
                 "waku":       wpt,
+                "course":     cpt,
                 "racer":      rpt,
                 "motor":      mpt,
                 "motor4":     m4pt,

@@ -47,6 +47,13 @@ COMPONENT_LABELS_REGISTRY: Mapping[str, str] = {
     # predictor_id ごとに分かれるので衝突しない)。
     # 経緯: notebooks/motor_score_tuning/report.md
     "motor4": "モーターpt",
+    # v6_course (コース予想) で採用。場×レース番号×コース別の収縮済み1着率
+    # (data/estimate/stadium/course_win_rate.csv、build_course_rate.py が月次生成)。
+    # 現行 waku (場×季節×コース) をレース番号次元に置き換えた指標。参照コースは
+    # waku と同じ規約 (realtime = スタート展示の実進入、daily = 枠番フォールバック)。
+    # ラベルは意味が変わるため「枠番pt」を流用せず新設 (列名は N枠_コースpt)。
+    # 設計: docs/design/course_strength_v6.md
+    "course": "コースpt",
 }
 
 # Component key → 欠損補完値 (偏差値pt スケール)。
@@ -243,6 +250,18 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         # 比較する。weights は成分が同一のため v1_basic と同値になる
         # (初月は v1_basic の weights ファイルをコピーしてブートストラップ)。
         component_keys=("waku", "racer", "motor", "exhibit", "weather"),
+    ),
+    PredictorSpec(
+        predictor_id="v6_course",
+        display_name="コース予想",
+        slot=6,
+        status=STATUS_ACTIVE,
+        # 投入日 (累計回収率の起点)。デプロイ日に合わせること。
+        started_at=dt.date(2026, 7, 22),
+        # control (v1_basic) の waku を course (場×レース番号×コースの収縮済み
+        # 1着率) に差し替えた 5 成分。テーブル定義の優劣だけを A/B で比較する。
+        # 設計・ホールドアウト検証: docs/design/course_strength_v6.md
+        component_keys=("course", "racer", "motor", "exhibit", "weather"),
     ),
 )
 

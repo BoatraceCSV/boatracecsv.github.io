@@ -56,6 +56,7 @@ scripts/
 ├── recent-form.py               # Recent national/local form scraper
 ├── build_index.py               # Strength Index builder (--mode daily/realtime, --update-races, --predictor / --all-active)
 ├── build_weights.py             # Monthly weight learner (per-stadium per-predictor weights, --predictor / --all-active)
+├── build_course_rate.py         # 場×レース番号×コース別1着率テーブル (course_win_rate.csv, v6_course 用, stdlib のみ)
 ├── build_sui_params.py          # 24-stadium weather coefficient learner
 ├── boatrace/                    # Python package
 │   ├── __init__.py
@@ -329,6 +330,22 @@ python scripts/build_weights.py --month 2026-03 --all-active
 学習窓は `[対象月 - 6ヶ月, 対象月 - 1日]`(対象月のデータは含まない=リーケージなし)。場ごとに非負・合計1の制約で SLSQP 最適化。モーターpt は **v2 ロジック**(直近 6 節 × 級別×グレード×コースの z 残差 × 半減期 60 日の時間減衰 × prior k=10 のベイズ収縮、モーター期起算日でリセット)。フィーチャーフラグ `ENABLE_DECAY` / `ENABLE_LANE_CORRECTION` / `ENABLE_SHRINKAGE` を全 False かつ `MOTOR_HISTORY_SESSIONS=5` にすると v1 と算術等価な単純平均モードに戻る(ablation 検証用)。詳細は [`docs/design/motor_ability_index_v2.md`](./design/motor_ability_index_v2.md)。
 
 `build_weights.py` は 6 ヶ月 ≒ 181 日を直列に処理するため、`boatrace.index_features.FeatureContext` を `build_training_table` で構築して `compute_features_for_day(repo, day, ctx=ctx)` に渡し、静的テーブル(`win_rate.csv` / `motor_ability_score.csv` / `sui_params.csv`)と `race_cards` / `title` 読込、`detect_session_end_days` の節境界検出をバッチ全体で amortize している。単発呼出し(`build_index.py`)は `ctx` を省略するだけで従来通り動く。設計詳細は [`docs/design/feature_context_refactor.md`](./design/feature_context_refactor.md) を参照。
+
+### Build Course Win Rate Table (course_win_rate.csv)
+
+```bash
+# data/results/realtime の全履歴から 場×レース番号×コース別テーブルを再生成
+python scripts/build_course_rate.py
+
+# 収縮強度の明示指定 (デフォルト k=50)
+python scripts/build_course_rate.py --k 50
+```
+
+`v6_course` の `コースpt` 生値ソース(`data/estimate/stadium/course_win_rate.csv`、
+24 場 × 12 レース回 = 288 行)。セル値は場×コース全体率へのベイズ収縮
+`(wins + k·base) / (n + k)`。monthly-weights ジョブが `build_weights.py` の前に
+毎月再生成する。**意図的に pandas 非依存(stdlib のみ)**で、venv 無しの環境でも
+実行できる。設計は [`docs/design/course_strength_v6.md`](./design/course_strength_v6.md)。
 
 ### Build Stadium Weather Params (sui_params.csv)
 

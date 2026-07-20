@@ -37,7 +37,7 @@ git clone --depth 1 --filter=blob:none + sparse-checkout  (PAT in Secret Manager
 preview-realtime: python scripts/preview-realtime.py
 daily-sync:       6 scripts (result, race-card, recent-form, motor-stats,
                   race-title, build_index) + commit + GCS publish
-monthly-weights:  python scripts/build_weights.py --month YYYY-MM + commit
+monthly-weights:  python scripts/build_course_rate.py + build_weights.py --month YYYY-MM + commit
    │   ├─ git commit && git push origin main   (boatrace.git_operations / bash)
    │   ├─ ★ GCS mirror upload (boatrace.gcs_publisher.upload_csvs)        ← preview-realtime / daily-sync のみ
    │   │     gs://${BOATRACE_GCS_CSV_BUCKET}/data/{programs/title,programs/race_cards,
@@ -67,7 +67,7 @@ fun-site が Eventarc 経由で Cloud Run Job として起動 → Astro 再ビ�
 | [`../infra/Dockerfile`](../infra/Dockerfile) | Python 3.11-slim ベースの実行イメージ (preview-realtime / daily-sync / monthly-weights 共用) |
 | [`../infra/run.sh`](../infra/run.sh) | preview-realtime Job のエントリポイント (clone → sparse-checkout → python 実行) |
 | [`../infra/run-daily-sync.sh`](../infra/run-daily-sync.sh) | daily-sync Job のエントリポイント (clone → sparse-checkout → 6 スクリプト直列 → commit → GCS publish) |
-| [`../infra/run-monthly-weights.sh`](../infra/run-monthly-weights.sh) | monthly-weights Job のエントリポイント (clone → sparse-checkout 8 ヶ月分 → build_weights.py → commit) |
+| [`../infra/run-monthly-weights.sh`](../infra/run-monthly-weights.sh) | monthly-weights Job のエントリポイント (clone → sparse-checkout 8 ヶ月分 → build_course_rate.py → build_weights.py → commit) |
 | [`../infra/cloudbuild.yaml`](../infra/cloudbuild.yaml) | Cloud Build パイプライン (build → push → 3 job 更新) |
 | [`../infra/.dockerignore`](../infra/.dockerignore) | ビルドコンテキスト最小化 |
 
@@ -126,7 +126,8 @@ monthly-weights は `build_weights.py` が**直近 6 ヶ月の全日**につい�
 | --- | --- |
 | `scripts/` | build_weights.py / boatrace パッケージ (index_features) |
 | `.boatrace/` | 実行時設定 (load_config) |
-| `data/estimate/stadium/` | win_rate.csv / sui_params.csv (build_weights 入力) + weights/{predictor_id}/ (出力先) |
+| `data/estimate/stadium/` | win_rate.csv / sui_params.csv / course_win_rate.csv (build_weights 入力) + weights/{predictor_id}/ (出力先) |
+| `data/results/realtime/` | 全履歴 (build_course_rate.py が course_win_rate.csv を再生成する入力。月別 sparse とは別に静的に全期間 checkout) |
 | `data/results/realtime/<YM>/` × 8 | 着順 (target = 7 - 着順) |
 | `data/programs/race_cards/<YM>/` × 8 | レース宇宙 (universe) |
 | `data/programs/recent_national/<YM>/` × 8 | recent 特徴量 (`racer` 列) |

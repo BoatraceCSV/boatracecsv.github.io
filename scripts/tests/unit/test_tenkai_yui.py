@@ -142,14 +142,15 @@ class TestRegistryV2Tenkai:
         assert COMPONENT_KEYS == list(v1.component_keys)
 
     def test_active_predictors_after_retirement(self):
-        """v2_tenkai / v3_tenkai 退役後の active は v1_basic / v4_motor / v5_slit (slot 順)。
+        """v2_tenkai / v3_tenkai 退役後の active (slot 順)。
 
         v4_motor は 2026-07-20 投入 (docs/design/motor_score_tuning_v4.md)。
         v5_slit は 2026-07-21 投入 (docs/design/st_estimation.md)。
+        v6_course は 2026-07-22 投入 (docs/design/course_strength_v6.md)。
         """
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == ["v1_basic", "v4_motor", "v5_slit"]
+        assert ids == ["v1_basic", "v4_motor", "v5_slit", "v6_course"]
 
 
 class TestRegistryV3Tenkai:

@@ -72,8 +72,9 @@ def test_build_csv_specs_includes_results():
     assert "payouts" in csv_types
     # active 予想者ごとに 1 件ずつ ``index:{predictor_id}`` が挟まる。
     # v2_tenkai / v3_tenkai は 2026-07-19 に退役。2026-07-20 に v4_motor と
-    # racer_st (選手別 推定ST)、2026-07-21 に v5_slit を投入したため、現在の
-    # active は v1_basic / v4_motor / v5_slit (slot 順)。
+    # racer_st (選手別 推定ST)、2026-07-21 に v5_slit、2026-07-22 に v6_course を
+    # 投入したため、現在の active は v1_basic / v4_motor / v5_slit / v6_course
+    # (slot 順)。
     assert csv_types == [
         "title",
         "race_cards",
@@ -82,6 +83,7 @@ def test_build_csv_specs_includes_results():
         "index:v1_basic",
         "index:v4_motor",
         "index:v5_slit",
+        "index:v6_course",
         "results",
         "payouts",
     ]

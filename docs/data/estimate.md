@@ -35,8 +35,9 @@
 | `v3_tenkai` | 展開予想 | **retired** (2026-07-19) | 2026-06-20 | waku, racer, motor, exhibit, weather, **tenkai** (6 成分) |
 | `v4_motor` | モーター予想 | active | 2026-07-20 | waku, racer, **motor4**, exhibit, weather (5 成分) |
 | `v5_slit` | スリット予想 | active | 2026-07-21 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**予測 ST のみ AI 推定 ST に差し替え**) |
+| `v6_course` | コース予想 | active | 2026-07-22 | **course**, racer, motor, exhibit, weather (waku を場×レース番号別コース強度に差し替え) |
 
-> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` / `v4_motor`(2026-07-20 投入)/ `v5_slit`(2026-07-21 投入)。
+> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` / `v4_motor`(2026-07-20 投入)/ `v5_slit`(2026-07-21 投入)/ `v6_course`(2026-07-22 投入)。
 
 > **`v5_slit`(スリット予想)** は control (`v1_basic`) と **同一の 5 成分**(index / 強さpt は同値)で、fun-site 側の 1 マーク走行距離計算とスリット図が使う **予測 ST だけ**を全国平均 ST から [Racer ST](#racer-st)(AI 推定 ST)に差し替えた実験スロット。ST 推定の改善([`docs/design/st_estimation.md`](../design/st_estimation.md) M3 構成)単独の回収率効果を A/B 比較する。成分が同一のため weights も v1_basic と同値になり、初月分は v1_basic の weights ファイルをコピーしてブートストラップした(翌月からは build_weights --all-active が自動生成)。退役した予想者は `active_predictors()` から除外されるため、preview-realtime / build_index / build_weights / GCS ミラーいずれの計算対象からも自動的に外れる。過去の index CSV(`data/estimate/{id}/…`)と成分定義(`motor2rate` / `tenkai`)・計算ロジックは将来の再利用に備えて残してある。命名規則どおり退役した `predictor_id` は再利用しない。
 
@@ -97,6 +98,22 @@ leave-one-stadium-out で全場一貫改善を確認したパラメータ
 CSV 列名は v1_basic と同じ `N枠_モーターpt`(motor4 のラベルを「モーターpt」に
 統一しているため。ファイルは `data/estimate/v4_motor/` に分かれる)。
 
+### v6_course の特徴量(5 成分)
+
+v1_basic の 5 成分のうち、**枠番pt (`waku`)** を **コースpt (`course`)** に差し替えた構成。
+`course` は **場 × レース番号 × コース**別の収縮済み1着率
+([`data/estimate/stadium/course_win_rate.csv`](#dataestimatestadiumcourse_win_ratecsv))を
+実進入コース(daily 時点は枠番)で引いた値を場別標準化したもの。CSV 列名は
+`N枠_コースpt` / `N枠_寄与_コースpt`。
+
+現行の枠番pt(場×季節×コース)がレース番号の次元を持たないのに対し、コース強度は
+レース番号に強く依存する(全国イン1着率: 2〜4R ≒ 47% ⇔ 12R ≒ 71%。1R は企画レースの
+影響で 59% と高く、方向は場に依存)ことをテーブル化した。季節次元は意図的に持たない
+(場×レース番号セル n≈110〜160 を季節で 1/4 に割るとノイズ優位になるため)。
+テーブル定義以外の参照ロジック(realtime = スタート展示の実進入コース、daily =
+枠番フォールバック)は waku と同一で、control との差分はテーブル定義のみ。
+設計・ホールドアウト検証は [`docs/design/course_strength_v6.md`](../design/course_strength_v6.md)。
+
 ### v2_tenkai の特徴量(5 成分, 2026-07-19 退役)
 
 > 退役済み。以下は当時の構成の記録。成分定義・計算ロジックは残してある。
@@ -144,9 +161,9 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 
 ### 生成パイプライン
 
-1. **日次バッチ** (`scripts/build_index.py --mode daily --all-active`、JST 07:30): 当日のレース全件について、preview 非依存の成分(枠番・選手・モーター能力指数。v4_motor では motor の代わりにチューニング版 motor4、v2_tenkai では motor2rate)を計算し、preview 由来の成分(展示・気象・展開優位)は 50 (平均) で補完(`DAILY_NEUTRAL_COMPONENTS`)。状態 = `daily`、暫定の強さpt が入る。
-2. **直前バッチ** (`scripts/preview-realtime.py` から内部呼び出し): 各レースの締切 5 分前に preview を取得した直後、対応する index 行の展示・気象を実値で再計算。状態 = `realtime`、強さpt が確定値に更新される。**active な全予想者ぶん**を 1 サイクルで更新。
-3. **月次重み学習** (`scripts/build_weights.py --month YYYY-MM --all-active`、毎月 1 日 06:00 JST): 直近 6 ヶ月のデータから 24 場 × `n_components` 要素の重みを学習し、`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を生成。
+1. **日次バッチ** (`scripts/build_index.py --mode daily --all-active`、JST 07:30): 当日のレース全件について、preview 非依存の成分(枠番・選手・モーター能力指数。v4_motor では motor の代わりにチューニング版 motor4、v6_course では waku の代わりにコースpt(枠番フォールバックで計算)、v2_tenkai では motor2rate)を計算し、preview 由来の成分(展示・気象・展開優位)は 50 (平均) で補完(`DAILY_NEUTRAL_COMPONENTS`)。状態 = `daily`、暫定の強さpt が入る。
+2. **直前バッチ** (`scripts/preview-realtime.py` から内部呼び出し): 各レースの締切 5 分前に preview を取得した直後、対応する index 行の全成分を再計算(展示・気象が実値になるほか、枠番pt / コースpt / 気象pt はスタート展示の**実進入コース**基準に切り替わる)。状態 = `realtime`、強さpt が確定値に更新される。**active な全予想者ぶん**を 1 サイクルで更新。
+3. **月次重み学習** (`scripts/build_weights.py --month YYYY-MM --all-active`、毎月 1 日 06:00 JST): 直近 6 ヶ月のデータから 24 場 × `n_components` 要素の重みを学習し、`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を生成。同ジョブは学習前に `scripts/build_course_rate.py` で [`course_win_rate.csv`](#dataestimatestadiumcourse_win_ratecsv) を全履歴から再生成する。
 
 ### サンプルデータ(1行目、抜粋)
 
@@ -168,7 +185,8 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 
 **艇 N の 11 列**(N=1..6, 計 66 列):
 
-- `N枠_枠番pt`: 偏差値スケールの 枠番強度。`data/estimate/stadium/win_rate.csv` の場×季節×コース勝率を場別 (μ, σ) で標準化
+- `N枠_枠番pt`: 偏差値スケールの 枠番強度。`data/estimate/stadium/win_rate.csv` の場×季節×コース勝率を場別 (μ, σ) で標準化(v1_basic / v4_motor / v5_slit)
+- `N枠_コースpt`: 偏差値スケールの 場×レース番号別コース強度(`v6_course` のみ。枠番pt の代替)。`data/estimate/stadium/course_win_rate.csv` の収縮済み1着率を実進入コース(daily は枠番)で引いて場別標準化
 - `N枠_選手pt`: 偏差値スケールの 選手能力指数。`data/programs/recent_national/` + `data/programs/recent_local/` の着順列をグレード別に得点化(算出基準点合計÷出走回数)し場別標準化。式は br-racers.jp の能力指数算出式に準拠
 - `N枠_モーターpt`: 偏差値スケールの モーター強度。**モーター能力指数 v2**(直近 6 節の出走実績を「級別×グレード分類×コース」のセル統計で **z 残差**化し、半減期 60 日の **時間減衰**を加重して、サンプル不足モーターを平均(z 残差 0)へ **ベイズ収縮** (k=10) させた値)を場別標準化。`モーター期起算日`(`data/programs/motor_stats/`)で履歴をリセットし、期切替後の新モーターは収縮で平均寄りに引き戻される。スコアテーブルは [`data/estimate/motor_ability_score.csv`](./motor_ability_score.md) 参照。設計詳細は [`docs/design/motor_ability_index_v2.md`](../design/motor_ability_index_v2.md)(v1 設計は [`docs/design/motor_ability_index.md`](../design/motor_ability_index.md))。**`v4_motor` の CSV も同じ列名**だが、スコア表 v4・ペナルティ -50・直近 5 節で計算した `motor4` 成分の値になる(上記「v4_motor の特徴量」参照)
 - `N枠_展示pt`: 偏差値スケールの 展示パフォーマンス。展示タイム + オリジナル展示の3項目をレース内偏差値化して平均、その後場別標準化
@@ -251,6 +269,25 @@ GCS ミラーには `csv_type=racer_st` でアップロードされます(`gcs_p
 | `場コード` | "01"〜"24" |
 | `季節` | 春(3-5月)/ 夏(6-8月)/ 秋(9-11月)/ 冬(12-2月) |
 | `1コース勝率` 〜 `6コース勝率` | コース別の長期1着率(%) |
+
+### `data/estimate/stadium/course_win_rate.csv`
+
+場 × レース番号 × コース別の収縮済み1着率テーブル。`v6_course` の `コースpt` の生値ソース。
+`scripts/build_course_rate.py` が `data/results/realtime/` の**全履歴**から生成し、
+monthly-weights ジョブが毎月 1 日に再生成する。24 場 × 12 レース番号 = 288 行。
+
+| 列 | 説明 |
+| --- | --- |
+| `場コード` | "01"〜"24" |
+| `レース回` | 1〜12(整数、"R" なし) |
+| `n` | セルの集計レース数(収縮前の生 n。診断用) |
+| `1コース勝率` 〜 `6コース勝率` | 収縮済みコース別1着率(%) |
+
+セル値はベイズ収縮 `rate = (wins + k·base) / (n + k)`(k=50、base = 場×コースの
+全レース番号率)。k はホールドアウト検証(Brier / log-loss)で確定した値
+([`docs/design/course_strength_v6.md`](../design/course_strength_v6.md))。季節次元は
+持たない。読み込み側(`load_course_table`)はセル欠損 → 場×コース全体率 → NaN
+(偏差値 50 補完)の順でフォールバックし、ファイル自体が無い場合も安全に NaN 化する。
 
 ### `data/estimate/stadium/sui_params.csv`
 
