@@ -167,6 +167,9 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
         CsvUploadSpec("title", f"data/programs/title/{ymd}.csv"),
         CsvUploadSpec("race_cards", f"data/programs/race_cards/{ymd}.csv"),
         CsvUploadSpec("stt", f"data/previews/stt/{ymd}.csv"),
+        # 選手別 推定ST (build_racer_st.py 出力)。fun-site のスリット予想 /
+        # 1マーク予想が全国平均ST の代わりに読む (docs/design/st_estimation.md)。
+        CsvUploadSpec("racer_st", f"data/estimate/racer_st/{ymd}.csv"),
     ]
     for predictor in active_predictors():
         specs.append(CsvUploadSpec(

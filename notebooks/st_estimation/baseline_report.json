@@ -1,0 +1,200 @@
+{
+  "full_period": {
+    "daily_all_races": {
+      "formation_actual_dist": {
+        "内凹み": 8512,
+        "横一線": 15757,
+        "外凹み": 13757,
+        "majority_rate": 0.4144
+      },
+      "b0": {
+        "boat": {
+          "n": 233196,
+          "mae": 0.0548,
+          "rmse": 0.0714,
+          "bias": 0.0029
+        },
+        "race": {
+          "n_races_full6": 38026,
+          "spearman_mean": 0.2264,
+          "lead_hit_rate": 0.2342,
+          "formation3_acc": 0.4273
+        }
+      },
+      "b0raw": {
+        "boat": {
+          "n": 233196,
+          "mae": 0.0581,
+          "rmse": 0.0783,
+          "bias": -0.0067
+        },
+        "race": {
+          "n_races_full6": 38026,
+          "spearman_mean": 0.2021,
+          "lead_hit_rate": 0.2252,
+          "formation3_acc": 0.4081
+        }
+      }
+    },
+    "realtime_exh_races": {
+      "formation_actual_dist": {
+        "内凹み": 7842,
+        "横一線": 14497,
+        "外凹み": 12631,
+        "majority_rate": 0.4146
+      },
+      "b0": {
+        "boat": {
+          "n": 209820,
+          "mae": 0.0544,
+          "rmse": 0.0708,
+          "bias": 0.0021
+        },
+        "race": {
+          "n_races_full6": 34970,
+          "spearman_mean": 0.2271,
+          "lead_hit_rate": 0.2347,
+          "formation3_acc": 0.4271
+        }
+      },
+      "b1": {
+        "boat": {
+          "n": 209820,
+          "mae": 0.1221,
+          "rmse": 0.1517,
+          "bias": -0.0856
+        },
+        "race": {
+          "n_races_full6": 34970,
+          "spearman_mean": 0.0814,
+          "lead_hit_rate": 0.2241,
+          "formation3_acc": 0.3245
+        }
+      }
+    }
+  },
+  "test_window": {
+    "daily_all_races": {
+      "formation_actual_dist": {
+        "内凹み": 1052,
+        "横一線": 1948,
+        "外凹み": 1609,
+        "majority_rate": 0.4227
+      },
+      "b0": {
+        "boat": {
+          "n": 28201,
+          "mae": 0.0526,
+          "rmse": 0.0683,
+          "bias": 0.0077
+        },
+        "race": {
+          "n_races_full6": 4609,
+          "spearman_mean": 0.2308,
+          "lead_hit_rate": 0.2413,
+          "formation3_acc": 0.4339
+        }
+      },
+      "b0raw": {
+        "boat": {
+          "n": 28201,
+          "mae": 0.0547,
+          "rmse": 0.0732,
+          "bias": 0.0029
+        },
+        "race": {
+          "n_races_full6": 4609,
+          "spearman_mean": 0.2008,
+          "lead_hit_rate": 0.2326,
+          "formation3_acc": 0.414
+        }
+      }
+    },
+    "realtime_exh_races": {
+      "formation_actual_dist": {
+        "内凹み": 1051,
+        "横一線": 1941,
+        "外凹み": 1605,
+        "majority_rate": 0.4222
+      },
+      "b0": {
+        "boat": {
+          "n": 27582,
+          "mae": 0.0522,
+          "rmse": 0.0679,
+          "bias": 0.007
+        },
+        "race": {
+          "n_races_full6": 4597,
+          "spearman_mean": 0.2309,
+          "lead_hit_rate": 0.2412,
+          "formation3_acc": 0.4333
+        }
+      },
+      "b1": {
+        "boat": {
+          "n": 27582,
+          "mae": 0.1123,
+          "rmse": 0.1405,
+          "bias": -0.0695
+        },
+        "race": {
+          "n_races_full6": 4597,
+          "spearman_mean": 0.0829,
+          "lead_hit_rate": 0.2273,
+          "formation3_acc": 0.3256
+        }
+      }
+    }
+  },
+  "descriptive": {
+    "st_by_course": {
+      "1": 0.1524,
+      "2": 0.1638,
+      "3": 0.1586,
+      "4": 0.1621,
+      "5": 0.166,
+      "6": 0.1826
+    },
+    "st_by_class": {
+      "A1": {
+        "mean": 0.1464,
+        "count": 55564
+      },
+      "A2": {
+        "mean": 0.1607,
+        "count": 54441
+      },
+      "B1": {
+        "mean": 0.1722,
+        "count": 102572
+      },
+      "B2": {
+        "mean": 0.1871,
+        "count": 15792
+      }
+    },
+    "st_by_flying": {
+      "0.0": {
+        "mean": 0.1613,
+        "count": 177030
+      },
+      "1.0": {
+        "mean": 0.1795,
+        "count": 20864
+      },
+      "2.0": {
+        "mean": 0.2171,
+        "count": 462
+      }
+    },
+    "corr_pub_actual": 0.2369,
+    "corr_exh_actual": 0.0471,
+    "racer_st_std_median": 0.0678,
+    "racer_runs_median": 141.0,
+    "zero_pub_actual_mean": 0.1965,
+    "zero_pub_n": 4067,
+    "nonzero_pub_actual_mean": 0.1636,
+    "f_rate_overall": 0.00364
+  }
+}

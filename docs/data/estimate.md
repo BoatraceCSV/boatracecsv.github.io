@@ -4,6 +4,7 @@
 
 - [予想者(Predictor)レジストリ](#予想者predictorレジストリ) — 複数予想者の管理と CSV パス規約
 - [Strength Index](#strength-index) — レース 1 行 × 6 枠の「強さポイント」(偏差値)
+- [Racer ST](#racer-st) — レース 1 行 × 6 枠の「選手別 推定ST」(秒)
 - [Stadium Parameters](#stadium-parameters) — Index 計算で参照する場別パラメータ
 
 ---
@@ -33,8 +34,11 @@
 | `v2_tenkai` | B君予想 | **retired** (2026-07-19) | 2026-06-13 | waku, racer, **motor2rate**, exhibit, weather (5 成分) |
 | `v3_tenkai` | 展開予想 | **retired** (2026-07-19) | 2026-06-20 | waku, racer, motor, exhibit, weather, **tenkai** (6 成分) |
 | `v4_motor` | モーター予想 | active | 2026-07-20 | waku, racer, **motor4**, exhibit, weather (5 成分) |
+| `v5_slit` | スリット予想 | active | 2026-07-21 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**予測 ST のみ AI 推定 ST に差し替え**) |
 
-> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` と `v4_motor`(2026-07-20 投入)。退役した予想者は `active_predictors()` から除外されるため、preview-realtime / build_index / build_weights / GCS ミラーいずれの計算対象からも自動的に外れる。過去の index CSV(`data/estimate/{id}/…`)と成分定義(`motor2rate` / `tenkai`)・計算ロジックは将来の再利用に備えて残してある。命名規則どおり退役した `predictor_id` は再利用しない。
+> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` / `v4_motor`(2026-07-20 投入)/ `v5_slit`(2026-07-21 投入)。
+
+> **`v5_slit`(スリット予想)** は control (`v1_basic`) と **同一の 5 成分**(index / 強さpt は同値)で、fun-site 側の 1 マーク走行距離計算とスリット図が使う **予測 ST だけ**を全国平均 ST から [Racer ST](#racer-st)(AI 推定 ST)に差し替えた実験スロット。ST 推定の改善([`docs/design/st_estimation.md`](../design/st_estimation.md) M3 構成)単独の回収率効果を A/B 比較する。成分が同一のため weights も v1_basic と同値になり、初月分は v1_basic の weights ファイルをコピーしてブートストラップした(翌月からは build_weights --all-active が自動生成)。退役した予想者は `active_predictors()` から除外されるため、preview-realtime / build_index / build_weights / GCS ミラーいずれの計算対象からも自動的に外れる。過去の index CSV(`data/estimate/{id}/…`)と成分定義(`motor2rate` / `tenkai`)・計算ロジックは将来の再利用に備えて残してある。命名規則どおり退役した `predictor_id` は再利用しない。
 
 > `v2_tenkai` は実験スロットだった。当初(2026-05-30〜06-13)は展開優位pt (`tenkai`) を加えた 6 成分版だったが control を下回ったため撤去し、2026-06-13 に A君予想の 5 成分のうち着順ベースの **`motor` を公式モーター2連率 `motor2rate` に置き換えた** 5 成分構成へ差し替え(成分数は control と同じで motor 指標だけを差し替え。おかぺん評価との順位相関検証で有望だった指標。[`notebooks/motor_pt_okapen_validation.ipynb`](../../notebooks/motor_pt_okapen_validation.ipynb))、`started_at` を当日へリセットして再計測していた。
 
@@ -180,6 +184,55 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 - 重みファイル(`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv`)が見つからない月のデータは、すべて NaN を出力
 
 > **用途**: 単発レースの予想に直接使えるランキング指標。`強さpt` 順で買い目を組み立てたり、寄与列でなぜ強い/弱いかを分解できる。重みは 6 ヶ月ローリングで学習されるため、季節変動を反映。
+
+---
+
+## Racer ST
+
+**選手別 推定ST**(スリット予想 / 1マーク予想向けの予測 ST)
+
+- **ファイルパス**: `data/estimate/racer_st/YYYY/MM/DD.csv`
+- **URL 例**: https://boatracecsv.github.io/data/estimate/racer_st/2026/07/20.csv
+
+各レース 1 行で、6 枠分の「推定 ST」(秒) を出力するファイルです。fun-site では
+予想者 `v5_slit`(スリット予想)のスタート予想図と 1 マーク走行距離計算が、
+公表の全国平均 ST に代えてこの値を読みます(他の予想者は従来どおり全国平均 ST)。
+
+### 計算式(M3 構成)
+
+```
+推定ST = shrunk_EWMA(選手の実測ST履歴) + コース補正(枠番) + F本数補正
+```
+
+- **EWMA**: `data/results/realtime` の実測 ST を半減期 30 日で時間減衰平均。
+  対象日より前の日のぶんのみ使用(朝バッチ時点の情報制約)。F(負値 ST)は除外
+- **収縮**: 事前分布(公表 全国平均ST。0.00 の実績なし選手は級別平均)へ実効 10 走ぶん収縮
+- **コース補正**: 枠番別オフセット(1枠 -0.009 〜 6枠 +0.012)
+- **F本数補正**: F0 -0.002 / F1 +0.010 / F2+ +0.038
+
+パラメータは検証(テスト窓で現行比 MAE -4%・スリット順位 Spearman 0.231→0.296・
+先頭艇一致 24%→34%)で確定した値をコードに凍結:
+[`scripts/boatrace/racer_st.py`](../../scripts/boatrace/racer_st.py)。
+検証記録は [`notebooks/st_estimation/phase2_report.md`](../../notebooks/st_estimation/phase2_report.md)、
+設計は [`docs/design/st_estimation.md`](../design/st_estimation.md)。
+
+### 列構成
+
+- `レースコード` / `レース日` / `レース場コード` / `レース回`: 他ファイルと同じ識別子
+- `N枠_登録番号` (N=1..6): その枠の選手登録番号(race_cards 由来)
+- `N枠_推定ST` (N=1..6): 推定 ST 秒(小数 4 桁)。欠場等で選手が居ない枠は空欄
+
+### 生成パイプライン
+
+`scripts/build_racer_st.py --date YYYY-MM-DD` が日次バッチ(run-daily-sync、JST 07:30)で
+実行されます。選手別の EWMA 状態は `data/estimate/racer_st/state.csv`
+(登録番号 / 重み付き和 / 重み計 / 基準日)に永続化され、日次実行は前日結果だけを
+増分で取り込みます(同一日での再実行は冪等)。状態が壊れた・60 日超取りこぼした場合は
+全履歴が checkout されたローカルで `--rebuild` を実行して state.csv を作り直します。
+
+GCS ミラーには `csv_type=racer_st` でアップロードされます(`gcs_publisher.py`)。
+直前バッチ(preview-realtime)では更新しません(検証で展示進入・展示 ST の反映に
+効果が無いことを確認済みのため daily のみ)。
 
 ---
 

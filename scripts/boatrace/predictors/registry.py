@@ -229,6 +229,21 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         # motor4 = スコア表 v4 (γ=1.5 凸カーブ) + ペナルティ -50 + 直近 5 節。
         component_keys=("waku", "racer", "motor4", "exhibit", "weather"),
     ),
+    PredictorSpec(
+        predictor_id="v5_slit",
+        display_name="スリット予想",
+        slot=5,
+        status=STATUS_ACTIVE,
+        # 投入日 (累計回収率の起点)。デプロイ日の翌日に合わせる。
+        started_at=dt.date(2026, 7, 21),
+        # control (v1_basic) と同一の 5 成分 (index / 強さpt は同一になる)。
+        # 差分は fun-site 側の 1 マーク走行距離計算・スリット図が使う予測 ST のみ:
+        # 全国平均ST → AI 推定 ST (data/estimate/racer_st/, build_racer_st.py)。
+        # ST 推定の改善 (docs/design/st_estimation.md M3) だけを回収率 A/B で
+        # 比較する。weights は成分が同一のため v1_basic と同値になる
+        # (初月は v1_basic の weights ファイルをコピーしてブートストラップ)。
+        component_keys=("waku", "racer", "motor", "exhibit", "weather"),
+    ),
 )
 
 

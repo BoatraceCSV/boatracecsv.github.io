@@ -79,7 +79,7 @@ fi
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
-ACTIVE_PREDICTORS=(v1_basic v4_motor)  # 2026-07-20: v4_motor 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v4_motor v5_slit)  # 2026-07-20: v5_slit (AI推定ST) 投入・v4_motor 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 # ---------------------------------------------------------------------------
 # sparse-checkout 対象月の計算

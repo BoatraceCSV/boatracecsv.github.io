@@ -87,7 +87,7 @@ PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date -d "${TODAY_JST}" +'%Y-%m-
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
 # sparse-checkout と commit パス展開、--all-active 後の add 対象に使用。
-ACTIVE_PREDICTORS=(v1_basic v4_motor)  # 2026-07-20: v4_motor 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v4_motor v5_slit)  # 2026-07-20: v5_slit (AI推定ST) 投入・v4_motor 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 WORKDIR="$(mktemp -d -t daily-sync.XXXXXX)"
 cleanup() {
@@ -131,6 +131,12 @@ cd repo
 #   - data/programs/monthly_schedule/         race-card.py 出力 (bc_mon_2。月ファイル
 #                                              上書きのため dedup 用に既存分ごと取得)
 #   - data/programs/title/<YM>/               race-title.py 出力 (GCS ミラー対象)
+#   - data/programs/race_cards/<PREV_YM>/     build_racer_st.py の増分取り込みで
+#                                              前日 (月初は前月末) の艇番→登録番号
+#                                              紐付けに使用
+#   - data/results/realtime/<YM>,<PREV_YM>/   build_racer_st.py の増分取り込み対象
+#                                              (前日結果)
+#   - data/estimate/racer_st/                 build_racer_st.py の state.csv + 出力
 sparse_paths=(
   scripts
   .boatrace
@@ -145,6 +151,10 @@ sparse_paths=(
   "data/programs/motor_history/${TODAY_YM}"
   "data/programs/motor_history/${PREV_YM}"
   "data/programs/title/${TODAY_YM}"
+  "data/programs/race_cards/${PREV_YM}"
+  "data/results/realtime/${TODAY_YM}"
+  "data/results/realtime/${PREV_YM}"
+  data/estimate/racer_st
 )
 for predictor in "${ACTIVE_PREDICTORS[@]}"; do
   sparse_paths+=("data/estimate/${predictor}/${TODAY_YM}")
@@ -223,6 +233,15 @@ run_step "motor-stats" python scripts/motor-stats.py --date "${TODAY_JST}" --for
 run_step "build-index" python scripts/build_index.py --date "${TODAY_JST}" --mode daily --all-active
 
 # ---------------------------------------------------------------------------
+# 5.5. 選手別 推定ST (racer_st) の日次生成
+#    state.csv を前日結果まで増分更新し、当日レースの推定ST CSV を出力する。
+#    fun-site のスリット予想 / 1マーク予想が読む (docs/design/st_estimation.md)。
+#    初回は state.csv が無く失敗する → ローカルで --rebuild を 1 度実行して
+#    state.csv をコミットしてから有効になる (build_racer_st.py docstring 参照)。
+# ---------------------------------------------------------------------------
+run_step "build-racer-st" python scripts/build_racer_st.py --date "${TODAY_JST}"
+
+# ---------------------------------------------------------------------------
 # build_index.py は git にコミットしないため、ここで明示 commit/push する。
 # 旧 GHA workflow の "Commit Daily Index" ステップ相当。
 # 失敗を握り潰す: コミットが無い場合は no-op、push 競合は次回で吸収。
@@ -232,6 +251,8 @@ commit_and_push_index() {
   for predictor in "${ACTIVE_PREDICTORS[@]}"; do
     git add "data/estimate/${predictor}/"
   done
+  # racer_st: 当日出力 + state.csv (build_racer_st.py も git にコミットしない)
+  git add data/estimate/racer_st/
   if git diff --cached --quiet; then
     log "No daily index changes to commit"
     return 0
