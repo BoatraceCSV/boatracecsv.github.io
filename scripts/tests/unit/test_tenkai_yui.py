@@ -147,10 +147,13 @@ class TestRegistryV2Tenkai:
         v4_motor は 2026-07-20 投入 (docs/design/motor_score_tuning_v4.md)。
         v5_slit は 2026-07-21 投入 (docs/design/st_estimation.md)。
         v6_course は 2026-07-22 投入 (docs/design/course_strength_v6.md)。
+        v7_aggregate は 2026-07-23 投入 (docs/design/aggregate_v7.md)。
         """
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == ["v1_basic", "v4_motor", "v5_slit", "v6_course"]
+        assert ids == [
+            "v1_basic", "v4_motor", "v5_slit", "v6_course", "v7_aggregate",
+        ]
 
 
 class TestRegistryV3Tenkai:
@@ -176,3 +179,37 @@ class TestRegistryV3Tenkai:
 
     def test_v3_tenkai_started_at(self):
         assert predictor_by_id("v3_tenkai").started_at == dt.date(2026, 6, 20)
+
+
+class TestRegistryV7Aggregate:
+    """v7_aggregate(統合予想)= v4_motor + v5_slit + v6_course の 3 仮説統合。"""
+
+    def test_v7_aggregate_is_active(self):
+        v7 = predictor_by_id("v7_aggregate")
+        assert v7.is_active()
+        assert v7.status == "active"
+        assert v7.display_name == "統合予想"
+        assert v7.slot == 7
+
+    def test_v7_aggregate_combines_course_and_motor4(self):
+        # v6_course の course と v4_motor の motor4 を両取りした 5 成分。
+        v7 = predictor_by_id("v7_aggregate")
+        assert v7.component_keys == (
+            "course", "racer", "motor4", "exhibit", "weather",
+        )
+        # control (v1_basic) から waku→course・motor→motor4 の 2 成分だけ差し替え。
+        v1 = predictor_by_id("v1_basic")
+        assert len(v7.component_keys) == len(v1.component_keys)
+        expected = tuple(
+            {"waku": "course", "motor": "motor4"}.get(k, k)
+            for k in v1.component_keys
+        )
+        assert v7.component_keys == expected
+        # v6_course とは motor→motor4 の 1 成分だけ違う。
+        v6 = predictor_by_id("v6_course")
+        assert v7.component_keys == tuple(
+            "motor4" if k == "motor" else k for k in v6.component_keys
+        )
+
+    def test_v7_aggregate_started_at(self):
+        assert predictor_by_id("v7_aggregate").started_at == dt.date(2026, 7, 23)

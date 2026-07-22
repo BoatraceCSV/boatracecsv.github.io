@@ -263,6 +263,23 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         # 設計・ホールドアウト検証: docs/design/course_strength_v6.md
         component_keys=("course", "racer", "motor", "exhibit", "weather"),
     ),
+    PredictorSpec(
+        predictor_id="v7_aggregate",
+        display_name="統合予想",
+        slot=7,
+        status=STATUS_ACTIVE,
+        # 投入日 (累計回収率の起点)。デプロイ日に合わせること。
+        started_at=dt.date(2026, 7, 23),
+        # 統合予想 = v4_motor / v5_slit / v6_course の 3 仮説を全て適用した版。
+        #   - v6_course 由来: waku → course (場×レース番号×コースの収縮済み1着率)
+        #   - v4_motor  由来: motor → motor4 (スコア表 v4 + ペナルティ -50 + 直近 5 節)
+        #   - v5_slit   由来: 予測 ST を全国平均 ST → AI 推定 ST (racer_st) に差し替え
+        # component_keys には v6 の course と v4 の motor4 を両取りする。v5 の予測 ST
+        # 差し替えは index / 強さpt には影響せず (成分は同一)、fun-site 側の
+        # PredictorSpec.useEstimatedST フラグでのみ表現される (predictors.ts と同期)。
+        # 単一仮説の control 比較ではなく、有望だった 3 仮説を束ねた総合スロット。
+        component_keys=("course", "racer", "motor4", "exhibit", "weather"),
+    ),
 )
 
 
