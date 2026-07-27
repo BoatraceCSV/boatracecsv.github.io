@@ -178,6 +178,10 @@ class PredictorSpec:
 # v4_motor = "モーター予想"。control (v1_basic) の motor をエキスパート評価
 # チューニング版 (motor4) に差し替えた 5 成分版 (2026-07-20〜)。
 #
+# v8_aionly = "AI予想"。v7_aggregate と同一レシピ (index / 強さpt は同値) で、
+# fun-site 側の買い目候補の選定だけを走行距離基準から強さpt のみ (±5.0pt 窓)
+# に差し替えた版 (2026-07-28〜)。
+#
 # 2026-07-19 退役: v2_tenkai / v3_tenkai はいずれも control (v1_basic) に対して
 # 有意な回収率差が得られなかったため status を "retired" にした。次の仮説を検証する
 # ためのクリーンな状態へ戻す。退役後も過去データ (data/estimate/{id}/…) と成分定義
@@ -278,6 +282,25 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         # 差し替えは index / 強さpt には影響せず (成分は同一)、fun-site 側の
         # PredictorSpec.useEstimatedST フラグでのみ表現される (predictors.ts と同期)。
         # 単一仮説の control 比較ではなく、有望だった 3 仮説を束ねた総合スロット。
+        component_keys=("course", "racer", "motor4", "exhibit", "weather"),
+    ),
+    PredictorSpec(
+        predictor_id="v8_aionly",
+        display_name="AI予想",
+        slot=8,
+        status=STATUS_ACTIVE,
+        # 投入日 (累計回収率の起点)。デプロイ日に合わせること。
+        started_at=dt.date(2026, 7, 28),
+        # AI予想 = v7_aggregate と同一の 5 成分 (index / 強さpt は同値)。
+        # 差分は fun-site 側の買い目候補の選定方法のみ: 1 マーク走行距離
+        # (予測 ST + 強さpt/50) 基準の ±0.10 窓を、強さpt のみの ±5.0pt 窓
+        # (等価スケール) に差し替える (fun-site predictors.ts の
+        # PredictorSpec.strengthOnlyBetting)。予測 ST が買い目に与える影響を
+        # 外した回収率を v7_aggregate と A/B 比較する。boatracecsv 側の
+        # index / weights 計算は v7_aggregate と同一。weights は成分が同一の
+        # ため v7_aggregate と同値になる (初月は v7_aggregate の weights
+        # ファイルをコピーしてブートストラップ。翌月以降は monthly-weights の
+        # --all-active が自動生成)。
         component_keys=("course", "racer", "motor4", "exhibit", "weather"),
     ),
 )

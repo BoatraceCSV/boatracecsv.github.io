@@ -37,8 +37,11 @@
 | `v5_slit` | スリット予想 | active | 2026-07-21 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**予測 ST のみ AI 推定 ST に差し替え**) |
 | `v6_course` | コース予想 | active | 2026-07-22 | **course**, racer, motor, exhibit, weather (waku を場×レース番号別コース強度に差し替え) |
 | `v7_aggregate` | 統合予想 | active | 2026-07-23 | **course**, racer, **motor4**, exhibit, weather + **予測 ST を AI 推定 ST に差し替え** (v4/v5/v6 の 3 仮説統合) |
+| `v8_aionly` | AI予想 | active | 2026-07-28 | course, racer, motor4, exhibit, weather (v7_aggregate と同一 5 成分。**買い目候補の選定のみ強さpt 基準 ±5.0pt に差し替え** — fun-site 側フラグ) |
 
-> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` / `v4_motor`(2026-07-20 投入)/ `v5_slit`(2026-07-21 投入)/ `v6_course`(2026-07-22 投入)/ `v7_aggregate`(2026-07-23 投入)。
+> **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。現行の active 予想者は `v1_basic` / `v4_motor`(2026-07-20 投入)/ `v5_slit`(2026-07-21 投入)/ `v6_course`(2026-07-22 投入)/ `v7_aggregate`(2026-07-23 投入)/ `v8_aionly`(2026-07-28 投入)。
+
+> **`v8_aionly`(AI予想)** は `v7_aggregate` と **同一の 5 成分**(index / 強さpt は同値。boatracecsv 側の index / weights 計算も同一)で、fun-site 側の **買い目候補の選定方法だけ**を差し替えた実験スロット。従来の 1 マーク走行距離(予測 ST + 強さpt/50)基準の ±0.10 窓ではなく、**強さpt のみの ±5.0pt 窓**(距離式が強さpt/50 を項に持つため等価スケール。ST 項を外した形)で各着の候補を選定する(fun-site `predictors.ts` の `PredictorSpec.strengthOnlyBetting`)。予測 ST が買い目に与える影響を外した回収率を `v7_aggregate` と A/B 比較する。weights は成分が同一のため `v7_aggregate` と同値になり、初月分は v7_aggregate の weights ファイルをコピーしてブートストラップする(翌月以降は monthly-weights の `--all-active` が自動生成)。
 
 > **`v7_aggregate`(統合予想)** は、control に対して単独で検証してきた 3 仮説 — `v4_motor`(motor→**motor4**)・`v6_course`(waku→**course**)・`v5_slit`(予測 ST を **AI 推定 ST** に差し替え) — を **全て同時に適用**した総合スロット。`component_keys` は v6 の `course` と v4 の `motor4` を両取りした `course, racer, motor4, exhibit, weather`。v5 の予測 ST 差し替えは index / 強さpt には影響せず(成分は v6 系と同一)、fun-site 側の `PredictorSpec.useEstimatedST`(1 マーク走行距離計算・スリット図)でのみ効く。単一仮説の A/B ではなく、有望だった改善を束ねた版の回収率を control と比較する。設計は [`docs/design/aggregate_v7.md`](../design/aggregate_v7.md)。weights は独自の成分組み合わせ(`course` + `motor4`)のため他予想者からコピーできず、初月分は `build_weights.py --predictor v7_aggregate --month 2026-07` で生成してブートストラップする(翌月以降は monthly-weights の `--all-active` が自動生成)。
 
