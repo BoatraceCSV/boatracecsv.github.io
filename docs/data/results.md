@@ -2,19 +2,19 @@
 
 レース結果系の CSV ファイル群です。締切後数分〜数十分で取得できる準リアルタイム結果と、その払戻金です。
 
-- [Realtime Results](#realtime-results) — 締切後5〜30分のレース結果スナップショット
-- [Realtime Payouts](#realtime-payouts) — 締切後5〜30分の払戻金スナップショット
+- [Realtime Results](#realtime-results) — 締切後数分〜(遅延時は数十分後)のレース結果スナップショット
+- [Realtime Payouts](#realtime-payouts) — 締切後数分〜(遅延時は数十分後)の払戻金スナップショット
 
 ---
 
 ## Realtime Results
 
-**締切後5〜30分のレース結果スナップショット**
+**締切後数分のレース結果スナップショット(進行遅延時も終日キャッチアップ)**
 
 - **ファイルパス**: `data/results/realtime/YYYY/MM/DD.csv`
 - **URL**: https://boatracecsv.github.io/data/results/realtime/2026/05/06.csv
 
-`preview-realtime.py` が `bc_rs1_2_{ymd}_{jo}_{rno}.txt` (race.boatcast.jp) を `[締切+3分, 締切+30分]` の窓でポーリングし、レース確定直後のスナップショットを **1レース1行** で `data/results/realtime/YYYY/MM/DD.csv` に追記するファイルです。当日の締切〜数十分後にはレース結果(着順・決まり手・スタートタイミング・気象)が揃います。払戻金は別途 [Realtime Payouts](#realtime-payouts) に追記されます。
+`preview-realtime.py` が `bc_rs1_2_{ymd}_{jo}_{rno}.txt` (race.boatcast.jp) を締切+3分以降ポーリングし(未記録レースは終日再試行)、レース確定直後のスナップショットを **1レース1行** で `data/results/realtime/YYYY/MM/DD.csv` に追記するファイルです。当日の締切〜数十分後にはレース結果(着順・決まり手・スタートタイミング・気象)が揃います。払戻金は別途 [Realtime Payouts](#realtime-payouts) に追記されます。
 
 ### 列構成
 
@@ -33,7 +33,9 @@
 - 中止 / 順延 / 途中中止のレースはスキップ
 - bc_rs1_2 がまだ未公開(404 / 403)のレースは追記せずスキップ(次回 cron 実行で自動再試行)
 - 同一 `レースコード` は1日1行のみ
-- ポーリング窓は `--result-window-min` (default 3) ～ `--result-window-max` (default 30) 分。締切+3分より前は再現性が無いためチェックしない
+- ポーリングは `--result-window-min` (default 3) 分後から開始。締切+3分より前は再現性が無いためチェックしない
+- デフォルトは**キャッチアップモード**(`--result-window-max` 未指定): 当日CSVに未記録のレースは終日再試行される。SG進行遅延・悪天候中断などで実レースが予定締切から大幅に遅れても、`bc_rs1_2` 公開後の実行で回収される(2026-07-28 びわこ7R以降の取りこぼしの再発防止)。1回の実行で取得するのは締切の古い順に `--result-catchup-limit` (default 15) 件まで
+- `--result-window-max N` を明示すると従来の固定窓 `[締切+min, 締切+N]` 動作
 - `preview-realtime.py --skip-results` で結果取得をスキップ可能
 
 > **用途**: 締切〜数十分後の **準リアルタイム結果** を当日中に取得。当日のうちに買い目検証や強さptの実績照合が可能。同じ `レースコード` で realtime 系(preview/sui/stt/tkz/index/result) を時系列に並べられる
@@ -42,12 +44,12 @@
 
 ## Realtime Payouts
 
-**締切後5〜30分の払戻金スナップショット**
+**締切後数分の払戻金スナップショット(進行遅延時も終日キャッチアップ)**
 
 - **ファイルパス**: `data/results/payouts/YYYY/MM/DD.csv`
 - **URL**: https://boatracecsv.github.io/data/results/payouts/2026/05/16.csv
 
-`preview-realtime.py` が `bc_rs2_{ymd}_{jo}_{rno}.txt` (race.boatcast.jp) を `[締切+3分, 締切+30分]` の窓でポーリングし、レース確定直後の **払戻金** スナップショットを **1レース1行** で `data/results/payouts/YYYY/MM/DD.csv` に追記するファイルです。
+`preview-realtime.py` が `bc_rs2_{ymd}_{jo}_{rno}.txt` (race.boatcast.jp) を締切+3分以降ポーリングし(未記録レースは終日再試行)、レース確定直後の **払戻金** スナップショットを **1レース1行** で `data/results/payouts/YYYY/MM/DD.csv` に追記するファイルです。
 
 Realtime Results (`data/results/realtime/...`) が **着順・ST・気象** を持つのに対し、こちらは **単勝 / 複勝 / 2連単 / 2連複 / 拡連複 / 3連単 / 3連複** の払戻金・組番・人気を持ちます。両者は同じ `レースコード` で JOIN すれば当日中に的中率・回収率の集計が可能です。
 
@@ -67,7 +69,7 @@ Realtime Results (`data/results/realtime/...`) が **着順・ST・気象** を�
 - 中止 / 順延 / 途中中止のレースはスキップ
 - bc_rs2 がまだ未公開(404 / 403)のレースは追記せずスキップ(次回 cron 実行で自動再試行)
 - 同一 `レースコード` は1日1行のみ
-- ポーリング窓は `bc_rs1_2` と共通の `--result-window-min` / `--result-window-max` を使用
+- ポーリング条件は `bc_rs1_2` と共通の `--result-window-min` / `--result-window-max` / `--result-catchup-limit` を使用(デフォルトは同じくキャッチアップモード)
 - `preview-realtime.py --skip-payouts` で払戻取得のみスキップ可能(`--skip-results` とは独立)
 - bc_rs1_2 と bc_rs2 は **独立に append** される。片方だけが取得できたサイクルは次サイクルでもう片方がリトライされる
 - 拡連複が販売されていないレース (5艇立て以下) は 9 列すべて空

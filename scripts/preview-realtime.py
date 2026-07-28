@@ -26,7 +26,12 @@ Each invocation:
    ``data/results/realtime/`` and ``data/results/payouts/`` respectively.
    The two are fetched independently — a race may show up in one CSV
    first and the other a sub-second later, and each subsequent
-   invocation will fill the gap.
+   invocation will fill the gap. By default this pass runs in *catch-up
+   mode*: any race still missing from the day's CSV is retried on every
+   invocation until end of day (capped per invocation by
+   ``--result-catchup-limit``), so races running far behind their
+   scheduled deadline (SG progression delays, weather interruptions)
+   are recovered once their files appear.
 5. Commits and pushes the changes (one commit per invocation, only when
    rows were actually appended).
 
@@ -459,42 +464,65 @@ def select_finished_races(
     now_jst: datetime,
     date_str: str,
     finished_min: int,
-    finished_max: int,
+    finished_max: Optional[int],
     already_recorded: Set[str],
+    catchup_limit: Optional[int] = None,
 ) -> List[HoldingRace]:
     """Filter the holding-list to races whose deadline already passed.
 
     A race is a candidate for realtime result fetch when:
       * ``cancel_status`` is empty (not 中止 / 順延 / 途中中止)
-      * its deadline is between ``finished_min`` and ``finished_max``
-        minutes *in the past* relative to ``now_jst``
+      * its deadline passed at least ``finished_min`` minutes ago
+        relative to ``now_jst`` — the race file does not appear until a
+        few minutes after the deadline; checking earlier would always 403
       * its ``race_code`` is not yet present in the realtime results CSV
 
-    The window has both bounds because:
-      * lower bound (``finished_min``): the race file does not appear
-        until a few minutes after the deadline; checking earlier would
-        always 403.
-      * upper bound (``finished_max``): once the file has been recorded
-        we don't need to keep retrying every minute for hours; idempotency
-        already handles the no-op, but skipping cuts HTTP traffic.
+    ``finished_max`` (upper bound on minutes-since-deadline):
+      * ``None`` (default = *catch-up mode*): no upper bound — a race
+        stays a candidate for the rest of the day until its row lands in
+        the CSV. This recovers races whose live progress drifted far
+        behind the scheduled deadline (SG ceremonies, weather
+        interruptions — e.g. びわこ 2026-07-28 ran 30-50 min late and a
+        fixed 30-min window permanently missed 7R-12R).
+      * an ``int``: legacy fixed window ``[now-max, now-min]``.
+
+    ``catchup_limit`` caps how many candidates a single invocation may
+    return (oldest deadline first) so a large backlog after an outage
+    drains across successive 5-min ticks instead of blowing the
+    Cloud Run Job's 300 s timeout. ``None`` = unlimited.
     """
     upper = now_jst - timedelta(minutes=finished_min)  # latest allowable deadline
-    lower = now_jst - timedelta(minutes=finished_max)  # earliest allowable deadline
+    lower: Optional[datetime] = (
+        now_jst - timedelta(minutes=finished_max)
+        if finished_max is not None
+        else None
+    )  # earliest allowable deadline; None = start of day (catch-up)
 
-    candidates: List[HoldingRace] = []
+    candidates: List[Tuple[datetime, HoldingRace]] = []
     for race in races:
         if not race.is_open:
             continue
         deadline_dt = deadline_to_jst_datetime(date_str, race.deadline_time)
         if deadline_dt is None:
             continue
-        if not (lower <= deadline_dt <= upper):
+        if deadline_dt > upper:
+            continue
+        if lower is not None and deadline_dt < lower:
             continue
         race_code = build_race_code(date_str, race.stadium_code, race.race_number)
         if race_code in already_recorded:
             continue
-        candidates.append(race)
-    return candidates
+        candidates.append((deadline_dt, race))
+
+    candidates.sort(key=lambda item: item[0])
+    if catchup_limit is not None and len(candidates) > catchup_limit:
+        logging_module.info(
+            "result_realtime_candidates_truncated",
+            total=len(candidates),
+            limit=catchup_limit,
+        )
+        candidates = candidates[:catchup_limit]
+    return [race for _, race in candidates]
 
 
 def fetch_and_build_result_rows(
@@ -665,10 +693,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--result-window-max",
         type=int,
-        default=30,
+        default=None,
         help=(
-            "Minutes since deadline to stop checking bc_rs1_2. Default: 30 "
-            "— anything older has already been written or is unrecoverable."
+            "Minutes since deadline to stop checking bc_rs1_2. Default: "
+            "unset = catch-up mode — every unrecorded race whose deadline "
+            "already passed stays a candidate until end of day, so races "
+            "delayed past a fixed window (SG progression delays, weather "
+            "interruptions) are still recovered. Pass an integer to "
+            "restore the legacy fixed window (e.g. 30)."
+        ),
+    )
+    parser.add_argument(
+        "--result-catchup-limit",
+        type=int,
+        default=15,
+        help=(
+            "Max result/payout candidates fetched per pass per invocation "
+            "(oldest first). Bounds the Cloud Run Job runtime when a "
+            "backlog accumulates; the rest drains on subsequent 5-min "
+            "ticks. Default: 15. Pass 0 for unlimited."
         ),
     )
     parser.add_argument(
@@ -902,6 +945,7 @@ def main() -> int:
             args.result_window_min,
             args.result_window_max,
             already_results,
+            catchup_limit=(args.result_catchup_limit or None),
         )
 
         logging_module.info(
@@ -967,6 +1011,7 @@ def main() -> int:
             args.result_window_min,
             args.result_window_max,
             already_payouts,
+            catchup_limit=(args.result_catchup_limit or None),
         )
 
         logging_module.info(

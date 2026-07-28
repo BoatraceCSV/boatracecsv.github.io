@@ -108,8 +108,8 @@ data/                            # Published data (created at runtime)
 │   ├── od2/YYYY/MM/DD.csv                  # realtime: 集計中オッズ(2連単・2連複)
 │   └── od3/YYYY/MM/DD.csv                  # realtime: 集計中オッズ(3連単)
 ├── results/
-│   ├── realtime/YYYY/MM/DD.csv             # bc_rs1_2 由来の締切後5〜30分スナップショット
-│   └── payouts/YYYY/MM/DD.csv              # bc_rs2 由来の締切後5〜30分払戻金スナップショット
+│   ├── realtime/YYYY/MM/DD.csv             # bc_rs1_2 由来の締切後スナップショット(終日キャッチアップ)
+│   └── payouts/YYYY/MM/DD.csv              # bc_rs2 由来の締切後払戻金スナップショット(終日キャッチアップ)
 └── estimate/
     ├── index/YYYY/MM/DD.csv                # 派生: 強さポイント (5要素偏差値+寄与+合計)
     └── stadium/
@@ -153,7 +153,8 @@ python scripts/race-title.py   --date 2026-05-12 --force
 
 ```bash
 # Default: target today (JST), preview window = [now+1min, now+10min],
-# result window = [now-30min, now-3min]
+# result pass = catch-up mode (締切+3分以降、未記録レースを終日再試行、
+# 1回あたり締切の古い順に15件まで)
 python scripts/preview-realtime.py
 
 # Plan only — log eligible races but write nothing
@@ -174,15 +175,20 @@ python scripts/preview-realtime.py --skip-results
 # Skip the realtime-payout step (bc_rs2)
 python scripts/preview-realtime.py --skip-payouts
 
-# Custom result polling window (minutes since deadline)
+# Custom result polling window (minutes since deadline)。--result-window-max を
+# 明示すると固定窓(レガシー動作)。省略時(デフォルト)はキャッチアップモード:
+# 未記録レースを終日再試行する
 python scripts/preview-realtime.py --result-window-min 5 --result-window-max 45
+
+# キャッチアップモードの1回あたり取得上限(締切の古い順。0 = 無制限)
+python scripts/preview-realtime.py --result-catchup-limit 15
 ```
 
 Designed to run every minute via `.github/workflows/preview-realtime.yml`. On each invocation it:
 
 1. Fetches `https://race.boatcast.jp/api_txt/getHoldingList2_{YYYYMMDD}.json` to discover open venues + per-race deadline times (no caching, no persistence).
 2. **Preview pass** — selects races whose deadline falls in `[now+window-min, now+window-max]` AND that are not yet recorded in every per-source CSV. Scrapes `bc_j_tkz` / `bc_j_stt` / `bc_sui` / `bc_oriten` for each eligible race and appends one row per source. After appending, also updates the corresponding rows in `data/estimate/{predictor_id}/YYYY/MM/DD.csv` for every active predictor (展示・気象 を実値で再計算 → 状態 = `realtime`).
-3. **Result pass** — selects races whose deadline already passed by `[result-window-min, result-window-max]` minutes and whose `レースコード` is not yet in `data/results/realtime/YYYY/MM/DD.csv`. Scrapes `bc_rs1_2` for each candidate and appends one row to the realtime results CSV (skips silently when the file is not yet published).
+3. **Result pass** — selects races whose deadline already passed by at least `result-window-min` minutes and whose `レースコード` is not yet in `data/results/realtime/YYYY/MM/DD.csv`. By default (**catch-up mode**, `--result-window-max` unset) a missing race stays a candidate until end of day — races that run far behind their scheduled deadline (SG 進行遅延・悪天候中断。例: 2026-07-28 びわこ 7R-12R) are recovered once `bc_rs1_2` appears. Candidates are fetched oldest-deadline first, capped per invocation by `--result-catchup-limit` (default 15) so a backlog drains across 5-min ticks without hitting the Cloud Run Job's 300 s timeout. Passing an explicit `--result-window-max N` restores the legacy fixed window. Scrapes `bc_rs1_2` for each candidate and appends one row to the realtime results CSV (skips silently when the file is not yet published).
 4. **Payout pass** — same eligibility window as the result pass but keyed off `data/results/payouts/YYYY/MM/DD.csv`. Scrapes `bc_rs2` and appends one row per race. Independent of the result pass: a race may show up in one CSV first and the other a cycle later.
 5. Commits & pushes the changes in a single commit (preview + result + payout + index updates batched). Nothing is committed when no rows were appended.
 

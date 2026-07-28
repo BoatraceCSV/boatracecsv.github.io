@@ -31,7 +31,7 @@ GitHub Actions ワークフロー、設定ファイル、運用上のメモを�
 - **`preview-realtime.yml`** — `workflow_dispatch` manual fallback only. The production schedule (JST 08:00-22:59, every 5 minutes) has been migrated to **Cloud Scheduler + Cloud Run Jobs** because GitHub Actions cron was being throttled. Four passes per invocation:
   1. **Preview pass** — scrapes per-source preview data (`tkz` / `stt` / `sui` / `original_exhibition`) for races whose deadline falls in `[now+1min, now+10min]` and updates `data/estimate/{predictor_id}/YYYY/MM/DD.csv` for every active predictor (展示・気象 を実値で再計算 → 状態 = `realtime`).
   2. **Odds pass** — scrapes the aggregating odds `bc_smt_od{1,2,3}` for the same eligibility window and appends one row per source to `data/previews/{od1,od2,od3}/YYYY/MM/DD.csv`(締切約5分前のスナップショット。確定オッズではない)。The three sources are fetched and deduped independently, so a partial success is completed on the next cycle.
-  3. **Result pass** — scrapes `bc_rs1_2` for races whose deadline already passed by 3〜30 分 and appends one row to `data/results/realtime/YYYY/MM/DD.csv`.
+  3. **Result pass** — scrapes `bc_rs1_2` for races whose deadline already passed by 3 分以上 and whose row is still missing from `data/results/realtime/YYYY/MM/DD.csv`(**catch-up mode**: 終日再試行。SG 進行遅延・悪天候中断で予定締切から大幅に遅れたレースも公開後に回収する。1 回の実行で締切の古い順に `--result-catchup-limit` 件まで。`--result-window-max` 明示時は従来の固定窓)and appends one row.
   4. **Payout pass** — scrapes `bc_rs2` (払戻金) for the same eligibility window, independent of the result pass, and appends one row to `data/results/payouts/YYYY/MM/DD.csv`.
 
   All changes (preview + odds + index + result + payout) go in a single commit. Idempotent and resilient to cron drift; commits one batch per invocation only when rows are actually appended.
