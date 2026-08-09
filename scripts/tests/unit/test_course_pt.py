@@ -266,7 +266,10 @@ def test_feature_context_course_table_cached(tmp_path: Path):
 # ─────────────────────────────────────────────────────────────────────
 def test_registry_v6_course_spec():
     spec = predictor_by_id("v6_course")
-    assert spec.is_active()
+    # 2026-08-09 退役 (control 比 -6.91pt, p=0.0047)。成分定義と course の計算
+    # ロジックは残すので、以下の構成アサーションはそのまま維持する。
+    assert not spec.is_active()
+    assert spec.status == "retired"
     assert spec.component_keys == (
         "course", "racer", "motor", "exhibit", "weather",
     )

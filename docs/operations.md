@@ -36,7 +36,7 @@ GitHub Actions ワークフロー、設定ファイル、運用上のメモを�
 
   All changes (preview + odds + index + result + payout) go in a single commit. Idempotent and resilient to cron drift; commits one batch per invocation only when rows are actually appended.
   - **Cloud Run Jobs 構成**: `boatrace-487212/asia-northeast1` の Cloud Scheduler `preview-realtime-daytime` (`*/5 8-22 * * *`, Asia/Tokyo) が Cloud Run Job `preview-realtime` を発火します。詳細は [`infrastructure.md`](./infrastructure.md) を参照。
-- **`monthly-weights.yml`** — Runs on the 1st of each month at 06:00 JST. First rebuilds `data/estimate/stadium/course_win_rate.csv` (v6_course の場×レース番号×コース別テーブル、`scripts/build_course_rate.py`、全履歴から再生成), then re-learns 24-stadium × n_components weights for every active predictor from the prior 6 months of data and writes `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv`. `build_index.py` automatically picks up the latest weights ≤ the target month per predictor.
+- **`monthly-weights.yml`** — Runs on the 1st of each month at 06:00 JST. First rebuilds `data/estimate/stadium/course_win_rate.csv` (`course` 成分の場×レース番号×コース別テーブル、`scripts/build_course_rate.py`、全履歴から再生成。`course` を使う v6_course / v7_aggregate / v8_aionly は 2026-08-09 に退役済みで現在の消費者はいないが、再挑戦に備えて再生成は継続している), then re-learns 24-stadium × n_components weights for every active predictor from the prior 6 months of data and writes `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv`. `build_index.py` automatically picks up the latest weights ≤ the target month per predictor.
 
 ### 予想者(Predictor)の運用
 

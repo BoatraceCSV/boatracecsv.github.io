@@ -79,7 +79,7 @@ fi
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
-ACTIVE_PREDICTORS=(v1_basic v4_motor v5_slit v6_course v7_aggregate v8_aionly)  # 2026-07-28: v8_aionly (AI予想: 買い目選定を強さpt基準に差し替え。index/weights は v7_aggregate と同値) 投入 / 2026-07-23: v7_aggregate (統合予想: motor4+course+AI推定ST) 投入 / 2026-07-22: v6_course (コースpt) 投入 / 2026-07-20: v5_slit (AI推定ST)・v4_motor 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v4_motor v5_slit)  # 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-20〜21: v4_motor・v5_slit 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 # ---------------------------------------------------------------------------
 # sparse-checkout 対象月の計算
@@ -184,13 +184,18 @@ mkdir -p logs
 # data/estimate/stadium/weights/{predictor_id}/{TARGET_MONTH}.csv。
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# course_win_rate.csv 再生成 (v6_course の生値ソース)
+# course_win_rate.csv 再生成 (course 成分の生値ソース)
 # data/results/realtime の全履歴 (sparse-checkout で全期間取得済み) から
 # 場×レース番号×コースの収縮済み1着率を再計算する。build_weights より前に
 # 実行し、当月の重み学習が最新テーブルの成分値で行われるようにする。
 # 設計: docs/design/course_strength_v6.md
+#
+# 2026-08-09 時点で course を使う予想者 (v6_course / v7_aggregate / v8_aionly) は
+# 全て退役済みで、このテーブルを読む active 予想者はいない。course を作り直して
+# 再挑戦する余地を残すため再生成は継続する (テーブルが古いと再投入時に過去分の
+# 学習ができない)。course を今後使わないと決めたらこのブロックごと削除してよい。
 # ---------------------------------------------------------------------------
-log "Rebuilding course_win_rate.csv (v6_course raw source)"
+log "Rebuilding course_win_rate.csv (course component raw source; no active predictor consumes it as of 2026-08-09)"
 python scripts/build_course_rate.py
 
 log "Building monthly weights for ${TARGET_MONTH} (predictors: ${ACTIVE_PREDICTORS[*]})"

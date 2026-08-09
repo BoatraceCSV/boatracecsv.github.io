@@ -190,6 +190,35 @@ class PredictorSpec:
 # active_predictors() から除外されるので、preview-realtime / build_index /
 # build_weights / gcs_publisher いずれの計算対象からも自動的に外れる。
 #
+# 2026-08-09 退役: v6_course / v7_aggregate / v8_aionly の 3 つは、control
+# (v1_basic) と同一レースで突き合わせたペア比較で **有意に悪い** と判定されたため
+# status を "retired" にした。直前 (realtime) 買い目・確定レースのみを対象に、
+# 各予想者の started_at 以降で control と同一レースを突き合わせた結果:
+#
+#   予想者          n      回収率   control  差        95%CI          p (並替) Holm
+#   v6_course     3002   79.06%   85.97%   -6.91pt  [-13.1, -0.5]  0.0047   0.016
+#   v7_aggregate  2717   78.10%   85.86%   -7.76pt  [-13.9, -1.7]  0.0040   0.016
+#   v8_aionly     1892   77.30%   87.92%  -10.62pt  [-18.5, -2.9]  0.0001   0.0005
+#   (参考) v4_motor 3035 85.97%   85.66%   +0.30pt  [ -2.4, +3.6]  0.884    0.884
+#   (参考) v5_slit  3035 82.95%   85.66%   -2.72pt  [ -7.0, +1.2]  0.377    0.755
+#
+# 頑健性: 差分上位 20 レースを除外しても差はほぼ不変 (外れ値依存ではない)。日次でも
+# control を下回った日が v6 17/20 日 (符号検定 p=0.0026)・v8 13/13 日 (p=0.0002)。
+# 3 者とも control より買い目点数が多い (v8 は 14.7 点 vs 11.7 点) が、点数分布を
+# control に合わせて標準化しても回収率は 76〜78% にとどまり、点数ではなく選定自体の
+# 問題と判断した。
+#
+# 3 者に共通するのは waku → course の差し替え (v7/v8 は course + motor4)。course を
+# 持たない v4_motor / v5_slit が control と同水準なので、course 成分が回収率を毀損
+# している可能性が高い。的中率だけは v6/v7/v8 が高く (46.8〜48.9% vs 46.1〜46.6%)、
+# 堅い決着は当てるが安いオッズを厚く買って EV を落とす負け方に見える。ただし 3 者は
+# course を共有するため独立検定ではなく、実質「course 仮説を 1 回否定した」重み。
+# 期間も 13〜20 日と短い。
+#
+# v2/v3 と同じく、退役後も過去データ (data/estimate/{id}/…) と成分定義 (course)・
+# 計算ロジック (index_features.py の course_pt / build_course_rate.py) は保持する。
+# course を作り直して再挑戦する場合は、退役した ID は再利用せず新しい ID を立てる。
+#
 # started_at は累計回収率の起点として fun-site 側で参照される。
 PREDICTORS: tuple[PredictorSpec, ...] = (
     PredictorSpec(
@@ -259,7 +288,9 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         predictor_id="v6_course",
         display_name="コース予想",
         slot=6,
-        status=STATUS_ACTIVE,
+        # 2026-08-09 退役。control (v1_basic) との同一レース比較で -6.91pt
+        # (95%CI [-13.1, -0.5], p=0.0047, n=3002)。詳細は上のレジストリ冒頭コメント。
+        status=STATUS_RETIRED,
         # 投入日 (累計回収率の起点)。デプロイ日に合わせること。
         started_at=dt.date(2026, 7, 22),
         # control (v1_basic) の waku を course (場×レース番号×コースの収縮済み
@@ -271,7 +302,9 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         predictor_id="v7_aggregate",
         display_name="統合予想",
         slot=7,
-        status=STATUS_ACTIVE,
+        # 2026-08-09 退役。control (v1_basic) との同一レース比較で -7.76pt
+        # (95%CI [-13.9, -1.7], p=0.0040, n=2717)。詳細は上のレジストリ冒頭コメント。
+        status=STATUS_RETIRED,
         # 投入日 (累計回収率の起点)。デプロイ日に合わせること。
         started_at=dt.date(2026, 7, 23),
         # 統合予想 = v4_motor / v5_slit / v6_course の 3 仮説を全て適用した版。
@@ -288,7 +321,10 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         predictor_id="v8_aionly",
         display_name="AI予想",
         slot=8,
-        status=STATUS_ACTIVE,
+        # 2026-08-09 退役。control (v1_basic) との同一レース比較で -10.62pt
+        # (95%CI [-18.5, -2.9], p=0.0001, n=1892)。日次でも 13/13 日 control 未満。
+        # 詳細は上のレジストリ冒頭コメント。
+        status=STATUS_RETIRED,
         # 投入日 (累計回収率の起点)。デプロイ日に合わせること。
         started_at=dt.date(2026, 7, 28),
         # AI予想 = v7_aggregate と同一の 5 成分 (index / 強さpt は同値)。

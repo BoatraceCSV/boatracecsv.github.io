@@ -91,3 +91,13 @@ python scripts/build_weights.py --predictor v7_aggregate --month 2026-07
 - 2026-07-23: `v4_motor`(motor4)・`v6_course`(course)・`v5_slit`(AI 推定 ST)の
   3 仮説を統合した `v7_aggregate`(統合予想、slot=7)を投入。新規の特徴量計算・
   データファイルはなく、既存 3 仮説の成分・ロジックの組み合わせで構成。
+- 2026-08-09: `v7_aggregate` を退役。control (`v1_basic`) と同一レースで突き合わせた
+  ペア比較(直前買い目・確定レースのみ、2026-07-23〜08-09、n=2,717)で
+  **78.10% vs 85.86%(-7.76pt、95%CI [-13.9, -1.7]、p=0.0040、Holm 補正後 0.016)**。
+  差分上位 20 レースを除いても差は不変。同一レシピで買い目選定だけを変えた
+  `v8_aionly` も同日退役(-10.62pt、p=0.0001)。
+  §4 のとおり本スロット単独では寄与を分離できないが、同時期の単独スロット比較で
+  `v4_motor` は +0.30pt(p=0.884)・`v5_slit` は -2.72pt(p=0.377)と control 同水準
+  だったのに対し `v6_course` が -6.91pt(p=0.0047)だったため、**`course` の
+  持ち込みが主因**と判断した。詳細は [`docs/data/estimate.md`](../data/estimate.md#現行レジストリ)
+  の退役ノートおよび [`docs/design/course_strength_v6.md`](./course_strength_v6.md) を参照。

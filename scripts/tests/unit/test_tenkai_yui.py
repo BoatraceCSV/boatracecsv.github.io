@@ -142,18 +142,18 @@ class TestRegistryV2Tenkai:
         assert COMPONENT_KEYS == list(v1.component_keys)
 
     def test_active_predictors_after_retirement(self):
-        """v2_tenkai / v3_tenkai 退役後の active (slot 順)。
+        """退役を反映した現在の active (slot 順)。
 
         v4_motor は 2026-07-20 投入 (docs/design/motor_score_tuning_v4.md)。
         v5_slit は 2026-07-21 投入 (docs/design/st_estimation.md)。
-        v6_course は 2026-07-22 投入 (docs/design/course_strength_v6.md)。
-        v7_aggregate は 2026-07-23 投入 (docs/design/aggregate_v7.md)。
+        v6_course (2026-07-22 投入) / v7_aggregate (2026-07-23 投入) /
+        v8_aionly (2026-07-28 投入) は 2026-08-09 に退役。いずれも control
+        (v1_basic) との同一レース比較で有意に回収率が低かった (registry.py
+        冒頭コメントに検定結果)。
         """
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == [
-            "v1_basic", "v4_motor", "v5_slit", "v6_course", "v7_aggregate",
-        ]
+        assert ids == ["v1_basic", "v4_motor", "v5_slit"]
 
 
 class TestRegistryV3Tenkai:
@@ -184,12 +184,12 @@ class TestRegistryV3Tenkai:
 class TestRegistryV7Aggregate:
     """v7_aggregate(統合予想)= v4_motor + v5_slit + v6_course の 3 仮説統合。"""
 
-    def test_v7_aggregate_is_active(self):
+    def test_v7_aggregate_is_retired(self):
+        # 2026-08-09 退役。定義自体は残るが is_active() は False。
         v7 = predictor_by_id("v7_aggregate")
-        assert v7.is_active()
-        assert v7.status == "active"
+        assert not v7.is_active()
+        assert v7.status == "retired"
         assert v7.display_name == "統合予想"
-        assert v7.slot == 7
 
     def test_v7_aggregate_combines_course_and_motor4(self):
         # v6_course の course と v4_motor の motor4 を両取りした 5 成分。
