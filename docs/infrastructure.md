@@ -933,3 +933,17 @@ gcloud logging read \
 (`data/estimate/stadium/`, `data/programs/recent_*/`, `data/programs/motor_stats/` 等)
 が漏れている可能性。スクリプト側で新たに参照ファイルを増やしたら
 `run.sh` も同時に更新し、イメージを再ビルドする必要がある。
+
+## 穴予想 `v9_suji` の追加(2026-08-12)
+
+- `infra/run.sh` / `run-daily-sync.sh` / `run-monthly-weights.sh` の
+  `ACTIVE_PREDICTORS` を `(v1_basic v9_suji)` に変更
+- `run.sh` / `run-daily-sync.sh` の sparse-checkout に
+  **`data/estimate/suji/tables`(静的)と `data/estimate/suji/${TODAY_YM}`(日次)を
+  別々に**追加。cone-mode で `data/estimate/suji` をまとめて指定すると
+  日次ファイルの全履歴まで checkout されるため
+- `run-daily-sync.sh` に `build-suji-picks` ステップを追加(`build-index` の後)。
+  commit 対象に `data/estimate/suji/` を追加
+- `run-monthly-weights.sh` に `build_suji_table.py` を追加(`build_course_rate.py` の隣)
+
+詳細は [operations.md](./operations.md#穴予想-v9_suji-の運用2026-08-12)。

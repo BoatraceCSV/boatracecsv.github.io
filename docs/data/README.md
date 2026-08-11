@@ -22,6 +22,8 @@
 | 派生 | Strength Index | `data/estimate/{predictor_id}/YYYY/MM/DD.csv` | [estimate.md#strength-index](./estimate.md#strength-index) |
 | 派生 | Stadium Parameters | `data/estimate/stadium/*.csv`, `data/estimate/stadium/weights/{predictor_id}/*.csv` | [estimate.md#stadium-parameters](./estimate.md#stadium-parameters) |
 | 派生 | Motor Ability Score | `data/estimate/motor_ability_score.csv` | [motor_ability_score.md](./motor_ability_score.md) |
+| 派生 | スジ表 / 決まり手注釈 (穴予想 v9_suji) | `data/estimate/suji/tables/{suji_table,kimarite_table}.csv` | [estimate.md#穴予想-v9_suji-スジ表と買い目](./estimate.md#穴予想-v9_suji-スジ表と買い目) |
+| 派生 | 穴予想の買い目 (v9_suji) | `data/estimate/suji/YYYY/MM/DD.csv` | [estimate.md#穴予想-v9_suji-スジ表と買い目](./estimate.md#穴予想-v9_suji-スジ表と買い目) |
 
 ## ファイル間の関係性
 

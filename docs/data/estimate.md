@@ -5,6 +5,7 @@
 - [予想者(Predictor)レジストリ](#予想者predictorレジストリ) — 複数予想者の管理と CSV パス規約
 - [Strength Index](#strength-index) — レース 1 行 × 6 枠の「強さポイント」(偏差値)
 - [Racer ST](#racer-st) — レース 1 行 × 6 枠の「選手別 推定ST」(秒)
+- [穴予想 v9_suji: スジ表と買い目](#穴予想-v9_suji-スジ表と買い目) — スジ表 / 決まり手注釈テーブル / 日次の買い目
 - [Stadium Parameters](#stadium-parameters) — Index 計算で参照する場別パラメータ
 
 ---
@@ -33,15 +34,40 @@
 | `v1_basic` | A君予想 | active | 2026-05-01 | waku, racer, motor, exhibit, weather (5 成分) |
 | `v2_tenkai` | B君予想 | **retired** (2026-07-19) | 2026-06-13 | waku, racer, **motor2rate**, exhibit, weather (5 成分) |
 | `v3_tenkai` | 展開予想 | **retired** (2026-07-19) | 2026-06-20 | waku, racer, motor, exhibit, weather, **tenkai** (6 成分) |
-| `v4_motor` | モーター予想 | active | 2026-07-20 | waku, racer, **motor4**, exhibit, weather (5 成分) |
-| `v5_slit` | スリット予想 | active | 2026-07-21 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**予測 ST のみ AI 推定 ST に差し替え**) |
+| `v4_motor` | モーター予想 | **retired** (2026-08-10) | 2026-07-20 | waku, racer, **motor4**, exhibit, weather (5 成分) |
+| `v5_slit` | スリット予想 | **retired** (2026-08-10) | 2026-07-21 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**予測 ST のみ AI 推定 ST に差し替え**) |
 | `v6_course` | コース予想 | **retired** (2026-08-09) | 2026-07-22 | **course**, racer, motor, exhibit, weather (waku を場×レース番号別コース強度に差し替え) |
 | `v7_aggregate` | 統合予想 | **retired** (2026-08-09) | 2026-07-23 | **course**, racer, **motor4**, exhibit, weather + **予測 ST を AI 推定 ST に差し替え** (v4/v5/v6 の 3 仮説統合) |
 | `v8_aionly` | AI予想 | **retired** (2026-08-09) | 2026-07-28 | course, racer, motor4, exhibit, weather (v7_aggregate と同一 5 成分。**買い目候補の選定のみ強さpt 基準 ±5.0pt に差し替え** — fun-site 側フラグ) |
+| `v9_suji` | スジ予想 | active | 2026-08-12 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**買い目の作り方のみ差し替え** — 下記) |
+
+> **2026-08-10 退役**: `v4_motor` / `v5_slit` は control (`v1_basic`) と有意差が無く
+> (p=0.884 / 0.377)、レシピが近いため買い目も control とほぼ重複していた。
+> `registry.py` 冒頭コメントに検定結果。
+
+> **`v9_suji`(スジ予想、2026-08-12 投入)** は **穴予想**。control (`v1_basic`) と
+> **同一の 5 成分**(index / 強さpt は同値)で、差分は **買い目の作り方だけ**:
+>
+> * **1着** = **1 コース以外**で 強さpt が最大の艇
+> * **2-3着** = スジ表 `P(2着コース, 3着コース | 1着コース)` の上位 5 ペア
+>
+> フォーメーション(各着の候補窓の直積)では表現できない出目集合になるため、
+> **買い目は boatracecsv 側で確定させて [`data/estimate/suji/`](#穴予想-v9_suji-スジ表と買い目) に出力する**
+> (fun-site は表示と集計のみ)。他の予想者は fun-site が強さpt から買い目を計算する
+> ので、ここが構造的に違う。
+>
+> ホールドアウト実測(test 3,532 レース): 回収率 **80.6%** / 的中率 10.25% /
+> 平均配当 **3,931 円** / **5.0 点** / 万舟 27 本。control (86.2% / 11.5 点 /
+> 2,166 円) と回収率は同水準で、**購入額 43%・平均配当 1.8 倍**。
+> 設計・検証は [`docs/design/ana_prediction.md`](../design/ana_prediction.md)(§13 A案)、
+> テーブル構成の選定記録は
+> [`notebooks/ana_prediction/report.md`](../../notebooks/ana_prediction/report.md)。
+> weights は成分が同一のため v1_basic と同値になる(初月は v1_basic の weights を
+> コピーしてブートストラップ)。
 
 > **2026-07-19 退役**: `v2_tenkai`(motor2rate 版)と `v3_tenkai`(展開優位pt 版)はいずれも control である `v1_basic`(A君予想)に対して有意な回収率差が得られなかったため、`status` を `retired` にして運用から外した。
 
-> **2026-08-09 退役**: `v6_course` / `v7_aggregate` / `v8_aionly` の 3 つは、control (`v1_basic`) と **同一レースで突き合わせたペア比較**で **有意に回収率が低い**と判定されたため `status` を `retired` にした。現行の active 予想者は `v1_basic` / `v4_motor`(2026-07-20 投入)/ `v5_slit`(2026-07-21 投入)の 3 つ。
+> **2026-08-09 退役**: `v6_course` / `v7_aggregate` / `v8_aionly` の 3 つは、control (`v1_basic`) と **同一レースで突き合わせたペア比較**で **有意に回収率が低い**と判定されたため `status` を `retired` にした。
 >
 > 検定は直前(realtime)買い目が組めた確定レースのみを対象に、各予想者の `started_at` 以降で control と同一レースを突き合わせて実施(ペア bootstrap 20,000 反復の 95% CI と、1 レースあたり収支差のペア並べ替え検定)。
 >
@@ -347,6 +373,71 @@ GCS ミラーには `csv_type=racer_st` でアップロードされます(`gcs_p
 > 既存 CSV を `atomic_write_csv` で丸ごと上書きし、`--mode realtime` 側にある
 > 上書き防止ガードが daily 側には無いため、preview-realtime が積んだ
 > `状態=realtime` 行を消してしまいます。
+
+---
+
+## 穴予想 v9_suji: スジ表と買い目
+
+`v9_suji`(スジ予想)が使うファイル群。設計は
+[`docs/design/ana_prediction.md`](../design/ana_prediction.md)(§13 A案 / §14 決まり手の表示方式)。
+
+### `data/estimate/suji/tables/suji_table.csv`(静的・月次再生成)
+
+**スジ表** — 1着コースを与えたときの 2-3 着コースの条件付き確率 `P(R2, R3 | R1)`。
+`scripts/build_suji_table.py` が `results/realtime` × `previews/stt` の**全履歴**から生成し、
+monthly-weights ジョブが毎月 1 日に再生成する。
+
+| 列 | 説明 |
+| --- | --- |
+| `場コード` | `"00"` = 全場プール。**本番は全場プールのみ**(場別は予測を悪化させる。下記) |
+| `1着コース` / `2着コース` / `3着コース` | 1〜6 |
+| `n` | そのセルの観測レース数 |
+| `確率` | `P(2着, 3着 \| 1着)`。1着コースごとに合計 1 |
+
+行数は 6 通りの 1着コース × 残り 5 コースから 2 つの順列 20 = **120 行**。
+
+> **場の次元を持たない理由**: 場別テーブル(全場プールへベイズ収縮)を試したが、
+> どの収縮強度でもプールに追いつかなかった。**場差は「誰が 1着になるか」に出て、
+> 「1着が決まった後の 2-3 着の並び」には出ない**(1コース1着率は戸田 42% ⇔ 大村 62% と
+> 20pt 違うのに、`P(2着=1c | 1着=3c)` は標本誤差の範囲)。しかも 1着コースは 強さpt で
+> 選んでおり、強さpt の `waku` 成分は場×季節×コース勝率で重みも場別に学習済みなので、
+> **場の情報はすでに 1着選択側に入っている**。検証は
+> [`notebooks/ana_prediction/report.md`](../../notebooks/ana_prediction/report.md)。
+> `--by-stadium` フラグと `場コード` 列は将来の再検証のために残してある。
+
+### `data/estimate/suji/tables/kimarite_table.csv`(静的・月次再生成)
+
+**決まり手注釈テーブル** — 出目(1-2-3 着のコース並び)ごとの決まり手分布と最頻値。
+買い目 1 点ごとの注釈(「3コースの まくり差し」)に使う。同じく 120 行。
+
+| 列 | 説明 |
+| --- | --- |
+| `場コード` / `1着コース` / `2着コース` / `3着コース` | 出目の識別 |
+| `n` | その出目が出たレース数 |
+| `最頻決まり手` | 逃げ / 差し / まくり / まくり差し / 抜き / 恵まれ。観測ゼロなら空欄 |
+| `逃げ` 〜 `恵まれ` | 各決まり手の構成比 |
+
+> **これはレース単位の決まり手予測ではない。** 「この出目の並びは実際にはどの決まり手で
+> 決まっていることが多いか」を引くだけ。決まり手をレース単位で当てることは
+> できていない(条件付きでもベースレートを超えない)が、**出目ごとの注釈としては
+> 的中率 63.2% 対 ベースライン 48.7%** で情報がある。決まり手を特定しているのは
+> 事前情報ではなく **2着・3着の並びそのもの**(1コースが残っていればまくり差し、
+> 外が続いていればまくり)。設計書 §14 を参照。
+
+### `data/estimate/suji/YYYY/MM/DD.csv`(日次 + 直前)
+
+**買い目** — `scripts/build_suji_picks.py` が出力する。レース × 状態 で 1 行。
+
+| 列 | 説明 |
+| --- | --- |
+| `レースコード` / `レース日` / `レース場コード` / `レース回` | 他ファイルと同じ識別子 |
+| `状態` | `daily`(朝バッチ。枠なり + 暫定 強さpt)/ `realtime`(直前バッチ。展示進入 + 確定 強さpt) |
+| `1着コース` / `1着艇番` | 1 コース以外で 強さpt が最大だった艇とそのコース |
+| `買い目1` 〜 `買い目5` | `"3-1-4"` 形式の出目(**艇番**)。5 点未満なら末尾が空欄 |
+| `決まり手1` 〜 `決まり手5` | 各出目の最頻決まり手(`kimarite_table.csv` 由来) |
+
+`daily` 行と `realtime` 行は index CSV と同様に**両方保持**する。
+回収率の集計母数になるのは直前買い目(`realtime`)のみ。
 
 ---
 

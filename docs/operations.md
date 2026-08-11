@@ -79,3 +79,27 @@ Official Boatrace Races Server: http://www1.mbrace.or.jp/od2/
 ## License
 
 MIT License
+
+## 穴予想 `v9_suji` の運用(2026-08-12〜)
+
+穴予想の買い目は **boatracecsv 側で確定させて CSV に出す**(fun-site は表示と集計のみ)。
+そのため他の予想者と違い、index に加えて 2 系統のファイルが要る。
+
+| ジョブ | 追加された処理 | 出力 |
+| --- | --- | --- |
+| monthly-weights(毎月 1 日 06:00 JST) | `scripts/build_suji_table.py` | `data/estimate/suji/tables/{suji_table,kimarite_table}.csv` |
+| daily-sync(07:30 JST) | `scripts/build_suji_picks.py --mode daily` | `data/estimate/suji/YYYY/MM/DD.csv`(状態=daily) |
+| preview-realtime(締切 5 分前) | `build_suji_picks.write_day(..., realtime)` を内部呼び出し | 同上(状態=realtime を upsert) |
+
+**依存順序**: `build_suji_picks.py` は `build_index.py`(強さpt)と
+`build_suji_table.py`(スジ表)の両方の出力を読む。どちらかが欠けている場合は
+**作り方を示すメッセージ付きで落ちる**(素の FileNotFoundError にはしない)。
+
+**sparse-checkout**: 静的テーブルは `data/estimate/suji/tables`、日次の買い目は
+`data/estimate/suji/${TODAY_YM}` と**別パスで指定**している。同じ階層に置くと
+cone-mode が日次ファイルの全履歴まで checkout してしまうため。
+
+**ロールバック**: `registry.py` / fun-site `predictors.ts` の `v9_suji` を
+`status: retired` にすると `active_predictors()` から外れ、preview-realtime /
+build_index / GCS ミラー / 集計すべての対象から自動的に落ちる。
+`infra/run*.sh` の `ACTIVE_PREDICTORS` も同期すること。

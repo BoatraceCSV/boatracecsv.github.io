@@ -366,6 +366,35 @@ python scripts/build_sui_params.py \
 
 ---
 
+### `scripts/build_suji_table.py`
+
+穴予想 `v9_suji` が使う静的テーブル 2 枚(スジ表 / 決まり手注釈)を
+`results/realtime` × `previews/stt` の全履歴から生成する。monthly-weights ジョブが
+毎月 1 日に再生成する。stdlib のみで動く(venv 不要)。
+
+```sh
+python scripts/build_suji_table.py                    # 本番構成 (全履歴・収縮なし)
+python scripts/build_suji_table.py --k 50             # 収縮あり (本番では使わない)
+python scripts/build_suji_table.py --by-stadium       # 場別テーブルも出す (検証用)
+python scripts/build_suji_table.py --from-date 2026-05-01 --to-date 2026-06-25
+```
+
+構成選定の記録は [`notebooks/ana_prediction/report.md`](../notebooks/ana_prediction/report.md)。
+
+### `scripts/build_suji_picks.py`
+
+穴予想 `v9_suji` の買い目 CSV(`data/estimate/suji/YYYY/MM/DD.csv`)を生成する。
+`build_index.py` の後に走らせる(強さpt を読むため)。
+
+```sh
+# 朝バッチ: 当日の全レースを 状態=daily で出力
+python scripts/build_suji_picks.py --date 2026-08-11 --mode daily
+
+# 直前バッチ: 指定レースの 状態=realtime 行を upsert (preview-realtime.py が内部で呼ぶ)
+python scripts/build_suji_picks.py --date 2026-08-11 --mode realtime \
+    --update-races 202608112301,202608112302
+```
+
 ## Testing
 
 ```bash

@@ -123,6 +123,15 @@ _spec.loader.exec_module(_build_index)
 update_index_for_races = _build_index.update_index_for_races
 index_csv_path = _build_index.index_csv_path
 
+# 穴予想 v9_suji の買い目 (build_suji_picks.py)。index と同じく直前バッチで
+# 状態=realtime 行を upsert する。設計: docs/design/ana_prediction.md §13
+_build_suji_picks_path = Path(__file__).parent / "build_suji_picks.py"
+_suji_spec = importlib.util.spec_from_file_location(
+    "build_suji_picks", _build_suji_picks_path
+)
+_build_suji_picks = importlib.util.module_from_spec(_suji_spec)
+_suji_spec.loader.exec_module(_build_suji_picks)
+
 from boatrace.predictors import active_predictors  # noqa: E402
 
 
@@ -908,6 +917,29 @@ def main() -> int:
                 logging_module.error(
                     "preview_realtime_index_update_failed",
                     predictor_id=predictor.predictor_id,
+                    error=str(exc),
+                )
+
+        # 穴予想 v9_suji の買い目。index (強さpt) を更新した直後に組み直す。
+        # 失敗しても他の成果物を巻き添えにしない (index と同じ防御方針)。
+        if any(p.predictor_id == _build_suji_picks.PREDICTOR_ID
+               for p in active_predictors()):
+            try:
+                n_suji = _build_suji_picks.write_day(
+                    PROJECT_ROOT, day, _build_suji_picks.STATE_REALTIME,
+                    set(updated_codes),
+                )
+                if n_suji > 0:
+                    paths.append(_build_suji_picks.picks_csv_path(PROJECT_ROOT, day))
+                logging_module.info(
+                    "preview_realtime_suji_updated",
+                    date=date_str,
+                    n_updated=n_suji,
+                    race_codes=updated_codes,
+                )
+            except Exception as exc:  # pragma: no cover — defensive
+                logging_module.error(
+                    "preview_realtime_suji_update_failed",
                     error=str(exc),
                 )
 

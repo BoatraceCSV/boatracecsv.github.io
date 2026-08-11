@@ -81,7 +81,9 @@ def test_build_csv_specs_includes_results():
         "race_cards",
         "stt",
         "racer_st",
+        "suji",
         "index:v1_basic",
+        "index:v9_suji",
         "results",
         "payouts",
     ]

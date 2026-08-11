@@ -375,6 +375,28 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         # --all-active が自動生成)。
         component_keys=("course", "racer", "motor4", "exhibit", "weather"),
     ),
+    PredictorSpec(
+        predictor_id="v9_suji",
+        display_name="スジ予想",
+        slot=9,
+        status=STATUS_ACTIVE,
+        # 投入日 (累計回収率の起点)。デプロイ日の翌日に合わせる。
+        started_at=dt.date(2026, 8, 12),
+        # 穴予想 (A案)。control (v1_basic) と **同一の 5 成分** で index / 強さpt は
+        # 同値になる。差分は買い目の作り方だけ:
+        #   1着   = 1 コース以外で 強さpt が最大の艇
+        #   2-3着 = スジ表 P(2着, 3着 | 1着) の上位 5 ペア
+        # フォーメーションでは表現できない出目集合になるため、買い目は
+        # boatracecsv 側で確定させて data/estimate/suji/YYYY/MM/DD.csv に出す
+        # (fun-site は表示と集計のみ。scripts/build_suji_picks.py)。
+        # スジ表と決まり手注釈テーブルは data/estimate/suji/tables/ に月次生成
+        # (scripts/build_suji_table.py)。
+        # weights は成分が同一のため v1_basic と同値になる (初月は v1_basic の
+        # weights ファイルをコピーしてブートストラップ。翌月以降は
+        # monthly-weights の --all-active が自動生成)。
+        # 設計・検証: docs/design/ana_prediction.md (§13 A案)
+        component_keys=("waku", "racer", "motor", "exhibit", "weather"),
+    ),
 )
 
 

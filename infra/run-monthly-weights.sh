@@ -79,7 +79,7 @@ fi
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
-ACTIVE_PREDICTORS=(v1_basic)  # 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v9_suji)  # 2026-08-12: 穴予想 v9_suji を投入 (control と同一成分・買い目のみ差分) / 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 # ---------------------------------------------------------------------------
 # sparse-checkout 対象月の計算
@@ -197,6 +197,11 @@ mkdir -p logs
 # ---------------------------------------------------------------------------
 log "Rebuilding course_win_rate.csv (course component raw source; no active predictor consumes it as of 2026-08-09)"
 python scripts/build_course_rate.py
+
+# 穴予想 v9_suji のスジ表 / 決まり手注釈テーブル (全履歴・収縮なし)。
+# 構成の根拠は notebooks/ana_prediction/report.md。
+log "Rebuilding suji tables (v9_suji buy-list source)"
+python scripts/build_suji_table.py
 
 log "Building monthly weights for ${TARGET_MONTH} (predictors: ${ACTIVE_PREDICTORS[*]})"
 python scripts/build_weights.py --month "${TARGET_MONTH}" --all-active

@@ -87,7 +87,7 @@ PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date -d "${TODAY_JST}" +'%Y-%m-
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
 # sparse-checkout と commit パス展開、--all-active 後の add 対象に使用。
-ACTIVE_PREDICTORS=(v1_basic)  # 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v9_suji)  # 2026-08-12: 穴予想 v9_suji を投入 (control と同一成分・買い目のみ差分) / 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 WORKDIR="$(mktemp -d -t daily-sync.XXXXXX)"
 cleanup() {
@@ -155,6 +155,9 @@ sparse_paths=(
   "data/results/realtime/${TODAY_YM}"
   "data/results/realtime/${PREV_YM}"
   data/estimate/racer_st
+  # 穴予想 v9_suji: 静的テーブル (スジ表 / 決まり手注釈) と当月の買い目 CSV
+  data/estimate/suji/tables
+  "data/estimate/suji/${TODAY_YM}"
 )
 for predictor in "${ACTIVE_PREDICTORS[@]}"; do
   sparse_paths+=("data/estimate/${predictor}/${TODAY_YM}")
@@ -247,6 +250,13 @@ run_step "build-index" python scripts/build_index.py --date "${TODAY_JST}" --mod
 run_step "build-racer-st" python scripts/build_racer_st.py --date "${TODAY_JST}"
 
 # ---------------------------------------------------------------------------
+# 穴予想 v9_suji の当日買い目 (状態=daily)。build_index.py の後に走らせる
+# (強さpt を読むため)。直前バッチ (preview-realtime) が同じ CSV に
+# 状態=realtime 行を upsert する。設計: docs/design/ana_prediction.md §13
+# ---------------------------------------------------------------------------
+run_step "build-suji-picks" python scripts/build_suji_picks.py --date "${TODAY_JST}" --mode daily
+
+# ---------------------------------------------------------------------------
 # build_index.py は git にコミットしないため、ここで明示 commit/push する。
 # 旧 GHA workflow の "Commit Daily Index" ステップ相当。
 # 失敗を握り潰す: コミットが無い場合は no-op、push 競合は次回で吸収。
@@ -258,6 +268,8 @@ commit_and_push_index() {
   done
   # racer_st: 当日出力 + state.csv (build_racer_st.py も git にコミットしない)
   git add data/estimate/racer_st/
+  # 穴予想 v9_suji の買い目 (build_suji_picks.py も git にコミットしない)
+  git add data/estimate/suji/
   if git diff --cached --quiet; then
     log "No daily index changes to commit"
     return 0
