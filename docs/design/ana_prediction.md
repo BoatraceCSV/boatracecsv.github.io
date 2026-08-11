@@ -490,7 +490,19 @@ abstain は採用しないため([§11.1](#111-b1-の解決--argmax-を捨て荒
 | 平均配当 | control の **1.5 倍以上** | **3,427 円 vs 2,166 円 = 1.58 倍 → 合格** |
 | 購入点数 | control の **半分以下** | **5.0 点 vs 11.5 点 = 43% → 合格** |
 | **万舟的中数 / 1 万円賭け** | control より多い | **0.12 vs 0.10 = 1.2 倍 → 合格** |
+| **買い目パターンの異なり数** | control と同水準(下記) | **A案は 1 日 20 種類(上位 4 つで 83%)→ 要観察** |
 | P(逃げ) の校正誤差 | 各予測帯で実測との差が ±5pt 以内 | 8 帯中 7 帯で ±3pt 以内、最大 -6.6pt → **ほぼ合格** |
+
+> **買い目パターンの異なり数について**(実装時に判明): A案は 2-3 着がスジ表由来の
+> **定数**で、per-race の情報は「1着に誰を選ぶか」だけ。実データ(2026-08-10、
+> 156 レース)では **20 種類**しか出ず、上位 4 パターンが 83% を占めた
+> (残りは前付けで艇番が入れ替わったもの)。設計どおりの挙動だが、
+> 「毎回同じ買い目が出る」とユーザーには見える。
+>
+> B案(`v10_kimarite`)はレースごとに確率分布が変わるのでこの性質は無い。
+> **A案 vs B案 の体験上の差**として、log-loss や回収率とは別に観察する。
+> 集計は fun-site `predictor-stats.ts` の `averagePayoutYen` / `averageBetCount` /
+> `bigHitPer10kYen` で見る。
 
 > **万舟 KPI は「本数」ではなく「1 万円賭けあたりの本数」で見ること。**
 > 素の本数では 穴予想 21 本に対し control 40 本で**負けている**が、これは control が
@@ -543,7 +555,7 @@ Phase 1 の校正が確認でき、B1〜B3 が解消してから着手する。
 | 2-1 | ~~B3 の解消~~ **完了**([§11.3](#113-b3-の解決--valid-だけでルールを固定))。実装時は選定ルールを `1着≠1 / top5 / abstain なし` に固定 | `notebooks/ana_prediction/` |
 | 2-2 | ~~B2 の解消~~ **完了**([§11.2](#112-b2-の解決--control-を再現して同一レースでペア比較))。ペア比較スクリプトを notebooks に移設 | 同上 |
 | 2-3 | H2 の対応: [§3](#3-決まり手のデータ構造) の条件表と Stage2 のペア表を **stt 基準**で作り直す([§12.2](#122-h2--進入コースの定義は展示進入stt-に統一採用)) | 同上 |
-| 2-4 | 集計の拡張(平均配当 / 平均点数 / 万舟的中数 / 発火率) | fun-site `predictor-stats.ts` |
+| 2-4 | ~~集計の拡張~~ **完了**(`averagePayoutYen` / `averageBetCount` / `bigHitCount` / `bigHitPer10kYen`) | fun-site `predictor-stats.ts` |
 | 2-5 | Stage2 テーブルの生成と出目出力 | `data/estimate/kimarite/pair_table.csv`、`data/estimate/v9_kimarite/` |
 | 2-6 | レジストリ登録 | `predictors/registry.py`、fun-site `predictors.ts`、`infra/run-*.sh` |
 | 2-7 | 出目リスト型への対応 | fun-site `one-mark-distance.ts` / `bet-hit.ts` / `bet-payout.ts` / `BettingPicks.astro` |
