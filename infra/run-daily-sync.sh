@@ -87,7 +87,7 @@ PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date -d "${TODAY_JST}" +'%Y-%m-
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
 # sparse-checkout と commit パス展開、--all-active 後の add 対象に使用。
-ACTIVE_PREDICTORS=(v1_basic v4_motor v5_slit)  # 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-20〜21: v4_motor・v5_slit 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic)  # 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 WORKDIR="$(mktemp -d -t daily-sync.XXXXXX)"
 cleanup() {
@@ -235,9 +235,14 @@ run_step "build-index" python scripts/build_index.py --date "${TODAY_JST}" --mod
 # ---------------------------------------------------------------------------
 # 5.5. 選手別 推定ST (racer_st) の日次生成
 #    state.csv を前日結果まで増分更新し、当日レースの推定ST CSV を出力する。
-#    fun-site のスリット予想 / 1マーク予想が読む (docs/design/st_estimation.md)。
+#    fun-site の 1マーク予想が読む (docs/design/st_estimation.md)。
 #    初回は state.csv が無く失敗する → ローカルで --rebuild を 1 度実行して
 #    state.csv をコミットしてから有効になる (build_racer_st.py docstring 参照)。
+#
+#    2026-08-10 時点で推定ST を予想に使う予想者 (v5_slit / v7_aggregate) は
+#    いずれも退役済み。state.csv は増分更新のため止めると再開時に穴が空くので
+#    生成は継続する (再挑戦の余地を残す)。ただし推定 ST の精度改善そのものは
+#    投資対効果が低いと結論済み (docs/design/slit_tenkai.md)。
 # ---------------------------------------------------------------------------
 run_step "build-racer-st" python scripts/build_racer_st.py --date "${TODAY_JST}"
 

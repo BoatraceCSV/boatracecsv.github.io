@@ -176,7 +176,11 @@ class PredictorSpec:
 # 加えた 6 成分版 (2026-06-20〜)。
 #
 # v4_motor = "モーター予想"。control (v1_basic) の motor をエキスパート評価
-# チューニング版 (motor4) に差し替えた 5 成分版 (2026-07-20〜)。
+# チューニング版 (motor4) に差し替えた 5 成分版 (2026-07-20〜08-10)。
+#
+# v5_slit = "スリット予想"。control と同一の 5 成分で、fun-site 側の 1 マーク
+# 走行距離計算・スリット図が使う予測 ST だけを AI 推定 ST (racer_st) に差し替えた
+# 版 (2026-07-21〜08-10)。
 #
 # v8_aionly = "AI予想"。v7_aggregate と同一レシピ (index / 強さpt は同値) で、
 # fun-site 側の買い目候補の選定だけを走行距離基準から強さpt のみ (±5.0pt 窓)
@@ -218,6 +222,29 @@ class PredictorSpec:
 # v2/v3 と同じく、退役後も過去データ (data/estimate/{id}/…) と成分定義 (course)・
 # 計算ロジック (index_features.py の course_pt / build_course_rate.py) は保持する。
 # course を作り直して再挑戦する場合は、退役した ID は再利用せず新しい ID を立てる。
+#
+# 2026-08-10 退役: v4_motor / v5_slit の 2 つは、上の比較 (2026-08-09 実施) で
+# control (v1_basic) と **有意差なし** だったため status を "retired" にした。
+#
+#   予想者        n      回収率   control  差        95%CI          p (並替) Holm
+#   v4_motor    3035   85.97%   85.66%   +0.30pt  [ -2.4, +3.6]  0.884    0.884
+#   v5_slit     3035   82.95%   85.66%   -2.72pt  [ -7.0, +1.2]  0.377    0.755
+#
+# 「有意に悪い」ではないので消極的な退役だが、2 者とも control とレシピが近く
+# (v5_slit は 5 成分が control と完全に同一で、差は fun-site 側の予測 ST のみ。
+# v4_motor は motor → motor4 の 1 成分差)、実際に表示される買い目が control と
+# 大きく重なる。似た買い目のスロットを並べても情報が増えないため、次の仮説を
+# 検証するクリーンな状態 (active = control のみ) に戻すことを優先した。
+#
+# v5_slit については、退役を後押しする独立の観測がある: 実測 ST から組んだ
+# スリット隊形は 1 着コースを強く規定する (強さpt に足して log loss -0.143) が、
+# 締切前に取れる ST ではその 12% しか回収できず、75% を取るには ST の
+# MAE 0.016 秒 (現行 0.053 秒) が必要という逆算結果 (docs/design/slit_tenkai.md)。
+# 予測 ST の精度改善という v5_slit の路線は投資対効果が低い。
+#
+# 他と同じく、退役後も過去データ (data/estimate/{id}/…) と成分定義 (motor4)・
+# 計算ロジック (index_features.py の motor4 / build_racer_st.py の racer_st) は
+# 保持する。再挑戦する場合は退役した ID は再利用せず新しい ID を立てる。
 #
 # started_at は累計回収率の起点として fun-site 側で参照される。
 PREDICTORS: tuple[PredictorSpec, ...] = (
@@ -261,7 +288,11 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         predictor_id="v4_motor",
         display_name="モーター予想",
         slot=4,
-        status=STATUS_ACTIVE,
+        # 2026-08-10 退役。control (v1_basic) との同一レース比較で +0.30pt
+        # (95%CI [-2.4, +3.6], p=0.884, n=3035) と有意差なし。control との差が
+        # motor → motor4 の 1 成分のみで買い目も大きく重なるため、control 単独に
+        # 戻した。詳細は上のレジストリ冒頭コメント。
+        status=STATUS_RETIRED,
         # 投入日 (累計回収率の起点)。デプロイ日に合わせること。
         started_at=dt.date(2026, 7, 20),
         # control (v1_basic) の motor をチューニング済み motor4 に差し替えた
@@ -273,7 +304,12 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         predictor_id="v5_slit",
         display_name="スリット予想",
         slot=5,
-        status=STATUS_ACTIVE,
+        # 2026-08-10 退役。control (v1_basic) との同一レース比較で -2.72pt
+        # (95%CI [-7.0, +1.2], p=0.377, Holm 0.755, n=3035) と有意差なし。成分が
+        # control と完全に同一で買い目もほぼ重なること、および予測 ST の精度改善の
+        # 上限が低いこと (docs/design/slit_tenkai.md) から退役。
+        # 詳細は上のレジストリ冒頭コメント。
+        status=STATUS_RETIRED,
         # 投入日 (累計回収率の起点)。デプロイ日の翌日に合わせる。
         started_at=dt.date(2026, 7, 21),
         # control (v1_basic) と同一の 5 成分 (index / 強さpt は同一になる)。

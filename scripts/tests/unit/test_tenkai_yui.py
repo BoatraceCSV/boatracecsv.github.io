@@ -144,16 +144,17 @@ class TestRegistryV2Tenkai:
     def test_active_predictors_after_retirement(self):
         """退役を反映した現在の active (slot 順)。
 
-        v4_motor は 2026-07-20 投入 (docs/design/motor_score_tuning_v4.md)。
-        v5_slit は 2026-07-21 投入 (docs/design/st_estimation.md)。
         v6_course (2026-07-22 投入) / v7_aggregate (2026-07-23 投入) /
         v8_aionly (2026-07-28 投入) は 2026-08-09 に退役。いずれも control
-        (v1_basic) との同一レース比較で有意に回収率が低かった (registry.py
-        冒頭コメントに検定結果)。
+        (v1_basic) との同一レース比較で有意に回収率が低かった。
+        v4_motor (2026-07-20 投入) / v5_slit (2026-07-21 投入) は 2026-08-10 に
+        退役。control と有意差がなく (p=0.884 / 0.377)、レシピが近いため買い目も
+        control とほぼ重複していた (registry.py 冒頭コメントに検定結果)。
+        現在の active は control (v1_basic) のみ。
         """
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == ["v1_basic", "v4_motor", "v5_slit"]
+        assert ids == ["v1_basic"]
 
 
 class TestRegistryV3Tenkai:

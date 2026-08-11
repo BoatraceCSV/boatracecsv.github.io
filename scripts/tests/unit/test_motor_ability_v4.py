@@ -171,7 +171,10 @@ class TestMotorAbilityPtV4Args:
 class TestV4Registry:
     def test_v4_motor_spec(self):
         spec = predictor_by_id("v4_motor")
-        assert spec.is_active()
+        # 2026-08-10 退役 (control 比 +0.30pt, p=0.884 で有意差なし)。成分定義と
+        # motor4 の計算ロジックは残すので、以下の構成アサーションは維持する。
+        assert not spec.is_active()
+        assert spec.status == "retired"
         assert spec.component_keys == (
             "waku", "racer", "motor4", "exhibit", "weather")
         assert spec.started_at == dt.date(2026, 7, 20)

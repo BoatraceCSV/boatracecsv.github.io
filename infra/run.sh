@@ -103,7 +103,7 @@ PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +'%Y-%m-15') -1 month" +'%
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
-ACTIVE_PREDICTORS=(v1_basic v4_motor v5_slit)  # 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-20〜21: v4_motor・v5_slit 投入 / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic)  # 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, ym=${TODAY_YM}, prev=${PREV_YM})"
 git clone \
