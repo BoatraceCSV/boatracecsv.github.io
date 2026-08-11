@@ -329,7 +329,24 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 
 GCS ミラーには `csv_type=racer_st` でアップロードされます(`gcs_publisher.py`)。
 直前バッチ(preview-realtime)では更新しません(検証で展示進入・展示 ST の反映に
-効果が無いことを確認済みのため daily のみ)。
+効果が無いことを確認済みのため daily のみ)。preview-realtime の sparse-checkout
+([`infra/run.sh`](../../infra/run.sh))に `data/estimate/racer_st/` が無いため、
+そちらの publisher は `local_file_missing` でスキップします。
+
+> **列を増やしたときの反映は翌朝**: fun-site は GitHub Pages ではなく **GCS ミラー**
+> から CSV を読みます(`CSV_SOURCE=gcs`)。ミラーの racer_st を更新するのは
+> daily-sync(JST 07:30)だけなので、**日中に列を追加して push しても、その日のうちは
+> fun-site に届きません**(リポジトリには入っているのにサイトが変わらない、という形で
+> 現れる)。当日中に反映したい場合はミラーへ直接コピーし、fun-site を強制再ビルドします:
+>
+> ```bash
+> gsutil cp data/estimate/racer_st/$(date +%Y/%m/%d).csv gs://boatrace-realtime-data-boatrace-487212/data/estimate/racer_st/$(date +%Y/%m/%d).csv
+> ```
+>
+> **daily-sync の手動再実行で代用しないこと。** `build_index.py --mode daily` は
+> 既存 CSV を `atomic_write_csv` で丸ごと上書きし、`--mode realtime` 側にある
+> 上書き防止ガードが daily 側には無いため、preview-realtime が積んだ
+> `状態=realtime` 行を消してしまいます。
 
 ---
 
