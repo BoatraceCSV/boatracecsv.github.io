@@ -1,0 +1,33 @@
+{
+  "note": "撤退ライン1/2 の判定",
+  "beta": 0.7628,
+  "retreat1_3class": {
+    "marginal_actual": [
+      0.05459438677431757,
+      0.5561963347430475,
+      0.38920927848263487
+    ],
+    "marginal_mc": [
+      0.04060047417659868,
+      0.5687456747404844,
+      0.39065385108291706
+    ],
+    "diff_pt": [
+      -1.4,
+      1.25,
+      0.14
+    ],
+    "brier_mc": 0.5269,
+    "brier_const": 0.5362,
+    "max_calib_gap_pt": 8.02,
+    "prob_sd_across_races": [
+      0.0325,
+      0.1264,
+      0.1493
+    ],
+    "marginal_pass": true,
+    "brier_pass": true,
+    "calib_pass": false,
+    "pass": false
+  }
+}

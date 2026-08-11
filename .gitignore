@@ -12,5 +12,8 @@ scripts/tests/unit/__pycache__/
 scripts/tests/integration/__pycache__/
 logs
 docs/notebooks/.ipynb_checkpoints
+notebooks/**/__pycache__/
+# build_panel.py が生成する中間パネル (4MB, 再生成可能)
+notebooks/**/st_panel.csv.gz
 .DS_Store
 *.pyc

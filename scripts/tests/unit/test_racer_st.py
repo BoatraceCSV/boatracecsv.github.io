@@ -21,9 +21,14 @@ from boatrace.racer_st import (  # type: ignore[import-not-found]
     GLOBAL_PRIOR,
     HALF_LIFE_DAYS,
     K_PRIOR,
+    K_SIGMA,
+    Q75_K,
+    SD_PRIOR,
+    SIGMA_BASE,
     RacerStState,
     advance_state,
     build_day_estimates,
+    estimate_band_for_racer,
     estimate_for_racer,
     load_state,
     save_state,
@@ -35,10 +40,11 @@ from boatrace.racer_st import (  # type: ignore[import-not-found]
 # ---------------------------------------------------------------------------
 def test_decay_half_life():
     """半減期日数ぶん進めると重みがちょうど半分になる。"""
-    state = RacerStState(base_day=dt.date(2026, 1, 1), racers={100: (0.2, 1.0)})
+    state = RacerStState(base_day=dt.date(2026, 1, 1), racers={100: (0.2, 0.04, 1.0)})
     state.decay_to(dt.date(2026, 1, 1) + dt.timedelta(days=int(HALF_LIFE_DAYS)))
-    ws, wt = state.racers[100]
+    ws, ws2, wt = state.racers[100]
     assert ws == pytest.approx(0.1)
+    assert ws2 == pytest.approx(0.02)
     assert wt == pytest.approx(0.5)
 
 
@@ -160,8 +166,9 @@ def test_advance_and_estimate(synth_repo: Path):
     assert est == pytest.approx(expected_base + COURSE_OFFSET[1] + F_OFFSET[0])
 
     # 選手600 の d1 は F → 除外され、d2 の 0.20 のみが履歴に入る
-    ws, wt = state.racers[600]
+    ws, ws2, wt = state.racers[600]
     assert ws == pytest.approx(0.20)
+    assert ws2 == pytest.approx(0.04)
     assert wt == pytest.approx(1.0)
 
 
@@ -195,9 +202,10 @@ def test_state_roundtrip(synth_repo: Path):
     loaded = load_state(synth_repo)
     assert loaded.base_day == state.base_day
     assert set(loaded.racers) == set(state.racers)
-    for regno, (ws, wt) in state.racers.items():
-        lws, lwt = loaded.racers[regno]
+    for regno, (ws, ws2, wt) in state.racers.items():
+        lws, lws2, lwt = loaded.racers[regno]
         assert lws == pytest.approx(ws)
+        assert lws2 == pytest.approx(ws2)
         assert lwt == pytest.approx(wt)
 
 
@@ -213,3 +221,74 @@ def test_build_day_estimates_columns(synth_repo: Path):
     # 全艇に数値の推定 ST が入る
     for b in range(1, 7):
         assert float(df.iloc[0][f"{b}枠_推定ST"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# ST 予測区間 (スリット図の帯)
+# 経緯: notebooks/slit_sim/report.md §4 / docs/design/slit_sim_plan.md §9
+# ---------------------------------------------------------------------------
+def test_sigma_multiplier_no_history_is_neutral():
+    """履歴 1 走以下は倍率 1.0 (= 全体平均の帯幅)。"""
+    state = RacerStState(base_day=dt.date(2026, 1, 1))
+    assert state.sigma_multiplier(999) == pytest.approx(1.0)
+    state.add_run(999, 0.15)
+    assert state.sigma_multiplier(999) == pytest.approx(1.0)
+
+
+def test_sigma_multiplier_orders_stable_and_unstable():
+    """ばらつきの大きい選手ほど倍率が大きく、収縮で 1.0 側へ寄る。"""
+    stable = RacerStState(base_day=dt.date(2026, 1, 1))
+    wild = RacerStState(base_day=dt.date(2026, 1, 1))
+    for i in range(20):
+        stable.add_run(1, 0.15 + (0.005 if i % 2 else -0.005))
+        wild.add_run(1, 0.15 + (0.08 if i % 2 else -0.08))
+    m_stable, m_wild = stable.sigma_multiplier(1), wild.sigma_multiplier(1)
+    assert m_stable < 1.0 < m_wild
+    # 収縮: 生の sd 比 (0.005/SD_PRIOR, 0.08/SD_PRIOR) よりは 1.0 に近い
+    assert m_stable > (0.005 / SD_PRIOR)
+    assert m_wild < (0.08 / SD_PRIOR)
+
+
+def test_sigma_multiplier_shrinkage_strength():
+    """実効走数 = K_SIGMA なら 生の sd と SD_PRIOR のちょうど中間になる。"""
+    state = RacerStState(base_day=dt.date(2026, 1, 1))
+    sd = 0.02
+    for i in range(int(K_SIGMA)):
+        state.add_run(1, 0.15 + (sd if i % 2 else -sd))
+    assert state.sigma_multiplier(1) == pytest.approx((sd + SD_PRIOR) / (2 * SD_PRIOR), rel=1e-6)
+
+
+def test_estimate_band_scales_with_sigma():
+    state = RacerStState(base_day=dt.date(2026, 1, 1))
+    assert estimate_band_for_racer(state, 999) == pytest.approx(Q75_K * SIGMA_BASE)
+    for i in range(20):
+        state.add_run(1, 0.15 + (0.08 if i % 2 else -0.08))
+    assert estimate_band_for_racer(state, 1) > Q75_K * SIGMA_BASE
+
+
+def test_band_columns_bracket_the_estimate(synth_repo: Path):
+    state = RacerStState()
+    advance_state(synth_repo, state, dt.date(2026, 1, 12), start_day=dt.date(2026, 1, 10))
+    df = build_day_estimates(synth_repo, state, dt.date(2026, 1, 12))
+    row = df.iloc[0]
+    for b in range(1, 7):
+        est = float(row[f"{b}枠_推定ST"])
+        p25, p75 = float(row[f"{b}枠_推定ST_p25"]), float(row[f"{b}枠_推定ST_p75"])
+        assert p25 < est < p75
+        # 推定 ST を中心に対称 (許容は CSV の丸め 4 桁ぶん)
+        assert (est - p25) == pytest.approx(p75 - est, abs=2e-4)
+
+
+def test_load_state_without_ws2_column_falls_back(synth_repo: Path, tmp_path: Path):
+    """旧 state.csv (重み付き二乗和 なし) は帯幅一定へ退避し、例外を投げない。"""
+    state = RacerStState()
+    advance_state(synth_repo, state, dt.date(2026, 1, 12), start_day=dt.date(2026, 1, 10))
+    save_state(synth_repo, state)
+    path = synth_repo / "data/estimate/racer_st/state.csv"
+    legacy = pd.read_csv(path).drop(columns=["重み付き二乗和"])
+    legacy.to_csv(path, index=False)
+
+    loaded = load_state(synth_repo)
+    assert set(loaded.racers) == set(state.racers)
+    for regno in loaded.racers:
+        assert loaded.sigma_multiplier(regno) == pytest.approx(1.0)
