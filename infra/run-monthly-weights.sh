@@ -208,6 +208,9 @@ python scripts/build_suji_table.py
 log "Retraining kimarite cell model (荒れ度メーター)"
 python scripts/build_kimarite.py
 
+# Stage2: 決まり手セル条件付きの 2-3 着テーブル (B案 v10_kimarite 用)。
+python scripts/build_kimarite_pairs.py
+
 # 荒れ度メーターの校正監視 (予測帯ごとの 予測 vs 実測、および log-loss)。
 # 再学習の後に走らせて、新しいモデルが校正を保っているかを記録する。
 log "Recomputing kimarite calibration"

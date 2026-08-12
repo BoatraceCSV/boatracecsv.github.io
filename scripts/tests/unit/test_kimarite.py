@@ -253,3 +253,70 @@ class TestCalibration:
 
         for v in (0.0, 0.15, 0.5, 0.99, 1.0):
             assert cal.band_label(v)
+
+
+class TestPairTable:
+    """Stage2: 決まり手セル条件付きの 2-3 着テーブル。"""
+
+    @staticmethod
+    def _repo(tmp_path: Path) -> Path:
+        _write(
+            tmp_path / "data" / "results" / "realtime" / "2026" / "08" / "12.csv",
+            ["レースコード", "レース日", "決まり手", "1着_艇番", "2着_艇番", "3着_艇番"],
+            [
+                # まくり差し 1着3c → 2着1c (内が残る形)
+                ["202608120101", "2026-08-12", "まくり差し", "3", "1", "4"],
+                ["202608120102", "2026-08-12", "まくり差し", "3", "1", "5"],
+                # 2着が 2c のケースも入れておく (周辺分布に 2c を乗せるため。
+                # 収縮の事前分布は m2 ⊗ m3 なので、m2 に無いコースは
+                # どれだけ収縮しても 0 のまま持ち上がらない)
+                ["202608120104", "2026-08-12", "まくり差し", "3", "2", "1"],
+                # まくり 1着3c → 2着4c (外が続く形)
+                ["202608120103", "2026-08-12", "まくり", "3", "4", "5"],
+            ],
+        )
+        return tmp_path
+
+    def test_same_first_course_splits_by_kimarite(self, tmp_path: Path) -> None:
+        """同じ 1着3コースでも、まくりとまくり差しで別セルに入る。"""
+        import build_kimarite_pairs as bkp
+
+        counts, used = bkp.collect(self._repo(tmp_path), None, None)
+        assert used == 4
+        assert counts["まくり差し_3"][(1, 4)] == 1
+        assert counts["まくり差し_3"][(1, 5)] == 1
+        assert counts["まくり_3"][(4, 5)] == 1
+        assert (4, 5) not in counts["まくり差し_3"]
+
+    def test_probabilities_normalize_per_cell(self, tmp_path: Path) -> None:
+        import build_kimarite_pairs as bkp
+
+        counts, _ = bkp.collect(self._repo(tmp_path), None, None)
+        rows = bkp.build_rows(counts, k=150.0)
+        assert len(rows) == len(kimarite.CELLS) * 20
+        by_cell: dict[str, float] = {}
+        for cell, _a, _b, _n, prob in rows:
+            by_cell[cell] = by_cell.get(cell, 0.0) + float(prob)
+        for cell, total in by_cell.items():
+            assert total == pytest.approx(1.0, abs=1e-5), cell
+
+    def test_shrinkage_pulls_unobserved_cells_off_zero(self, tmp_path: Path) -> None:
+        import build_kimarite_pairs as bkp
+
+        counts, _ = bkp.collect(self._repo(tmp_path), None, None)
+        raw = {(c, a, b): float(p) for c, a, b, _n, p in bkp.build_rows(counts, 0.0)}
+        shrunk = {(c, a, b): float(p) for c, a, b, _n, p in bkp.build_rows(counts, 150.0)}
+        # (2,4) は未観測だが、2着=2c と 3着=4c はどちらも周辺分布に乗っているので
+        # 収縮で 0 から持ち上がる
+        assert raw[("まくり差し_3", 2, 4)] == 0.0
+        assert shrunk[("まくり差し_3", 2, 4)] > 0.0
+        # (2,6) は 3着=6c が周辺分布に無いので、収縮しても 0 のまま
+        assert shrunk[("まくり差し_3", 2, 6)] == 0.0
+
+    def test_pair_keys_exclude_first_course(self) -> None:
+        import build_kimarite_pairs as bkp
+
+        for first in range(1, 7):
+            keys = bkp.pair_keys(first)
+            assert len(keys) == 20
+            assert all(first not in pair and pair[0] != pair[1] for pair in keys)

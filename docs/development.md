@@ -430,6 +430,16 @@ python scripts/build_kimarite_calibration.py --from-date 2026-09-01
 出力は `data/estimate/kimarite/tables/calibration.csv`。集計対象は
 **直前予測 (状態=realtime) のみ**で、朝の暫定値は混ぜない。
 
+### `scripts/build_kimarite_pairs.py`
+
+決まり手セル条件付きの 2-3 着テーブル (Stage2)。B案 `v10_kimarite` が
+Stage1 の出力に掛けて 3連単 120 通りの分布にする。monthly-weights が生成。
+
+```sh
+python scripts/build_kimarite_pairs.py          # 既定 k=150
+python scripts/build_kimarite_pairs.py --k 300
+```
+
 ## Testing
 
 ```bash
