@@ -1,4 +1,4 @@
-# 穴予想(決まり手ベース)設計 — `v9_kimarite`
+# 穴予想(決まり手ベース)設計 — `v10_kimarite`
 
 本命予想(`v1_basic` 系)とは**別の生成原理**で「的中率は低いが配当が大きい買い目」を
 出す予想者の設計。**決まり手を多クラス予測し、決まり手条件付きの着順分布から出目を作る**
@@ -14,9 +14,16 @@
 > High / Medium 7 件は [§12](#12-high--medium-指摘の解決案と検証結果) で解消済み。
 > 最終構成は **A案 `v9_suji`(スジ予想)を control、B案 `v10_kimarite`(穴予想)を
 > 実験スロットとする 2 スロット運用**([§13](#13-a案--b案-の-2-スロット構成採用))。
-> **判定は回収率ではなく log-loss で行う**(回収率では 17 ヶ月かかる /
+> **判定は回収率ではなく log-loss で行う**(回収率では 8.2 ヶ月かかる /
 > [§13.3](#133-判定基準--回収率では決着しない))。決まり手は**買い目 1 点ごとの注釈**
-> として両案で表示する([§14](#14-決まり手の表示方式))。実装は未着手。**
+> として両案で表示する([§14](#14-決まり手の表示方式))。**
+>
+> **【2026-08-13】両案とも実装・投入済み**(A案 2026-08-12 / B案 2026-08-13)。
+> **本番のファイル構成・スキーマ・定数は [`docs/data/estimate.md`](../data/estimate.md) を正とすること。**
+> 本書は設計と検証の記録で、§8 の実装計画は計画時のまま残してある
+> (実際のパスとの差分は [§8.1](#81-新規データファイル) に明記)。
+> ハイパラは本番構成で選び直しており、§4 以前に出てくる γ / β / w は**古い値**
+> ([§4.3](#43-合成とブレンド) の更新注記を参照)。
 
 ---
 
@@ -305,10 +312,17 @@ P(c1,c2,c3) = Σ_cell:1着=c1  P1[cell] · P(c2,c3 | cell)
 **両者は補完的**で、混ぜると単独より良くなる([§5.1](#51-確率予測の精度))。
 最後にコース → 艇番へ写像して出目にする。
 
-> **予想者間の依存**: Stage2 の γ と このブレンドにより、`v9_kimarite` は
-> `data/estimate/v1_basic` に依存する。**v1_basic の月次 weights が変わると
-> v9 の出目が動く**。予想者どうしを独立に扱ってきた既存の前提と異なるので、
-> レジストリと `docs/data/estimate.md` に明記すること。
+> **強さpt への依存**: Stage2 の γ 変調とこのブレンドで 強さpt を使うので、
+> `v10_kimarite` は index を必要とする([§12.3](#123-h3--v1_basic-への依存は残す除去を試して断念))。
+>
+> **【実装時に解消】** 当初は「`data/estimate/v1_basic` を直接読む = 予想者間の
+> 依存」を想定していたが、実装では **`v10_kimarite` が自分の index
+> (`data/estimate/v10_kimarite/`)を持つ**形にした。成分・重みが control と同一
+> なので値は v1_basic と一致するが、**参照は自分のファイルに閉じている**ため
+> 「予想者どうしは独立」という既存の前提を崩していない。A案 `v9_suji` も同じ形。
+>
+> 残る依存は運用上の 1 点だけ: **初月の weights を v1_basic からコピーして
+> ブートストラップする**(翌月以降は monthly-weights が自前で生成する)。
 
 ---
 
@@ -352,7 +366,7 @@ P(c1,c2,c3) = Σ_cell:1着=c1  P1[cell] · P(c2,c3 | cell)
 参考値としての control(`v1_basic` ≒ 86%・11.7 点・的中率 46%・平均配当 ≒ 2,200 円)
 との対比。**同一レースでの比較ではない**ので、方向感の確認までにとどめること:
 
-| | control `v1_basic`(別期間) | `v9_kimarite`(1着≠1 top5) |
+| | control `v1_basic`(別期間) | `v10_kimarite`(1着≠1 top5) |
 | --- | ---: | ---: |
 | 回収率 | ≒ 86% | 84.9%(95%CI [74, 97]) |
 | 的中率 | ≒ 46% | 12.4% |
@@ -389,7 +403,7 @@ od3(集計中オッズ)が取れる 3,352 レースで、オッズ帯フィル�
 | 1着≠1 top5 × 20〜200 倍 | 82.1% | 4,299 |
 
 オッズ帯で絞ると、モデルが上位に置いた出目を捨てて下位を買うことになるため悪化する。
-**`v9_kimarite` はオッズを使わない**。オッズを主役にする案(検討時の案A: EV = 確率 × オッズ
+**`v10_kimarite` はオッズを使わない**。オッズを主役にする案(検討時の案A: EV = 確率 × オッズ
 の上位を買う)は 30〜100 倍帯で 87.4% を出したが、生成原理が「市場との乖離」で
 人間に説明しづらいため今回は採らない。将来 od3 の履歴が貯まったら別スロットで再検討する。
 
@@ -567,14 +581,19 @@ Stage1 の `1 − P(逃げ_1)` だけを既存のレース詳細に表示する�
 - **3 ヶ月の実運用で校正を確認**できる。B1 の abstain しきい値と
   条件付きナラティブの文面も、そのデータで決められる
 
-| Step | 内容 | 対象 |
-| --- | --- | --- |
-| 1-1 | Stage1 の学習スクリプトと係数テーブル | `scripts/build_kimarite.py`(新規)、`data/estimate/kimarite/cell_coef.csv` |
-| 1-2 | 直前バッチでの推論と CSV 出力(セル確率のみ) | `scripts/boatrace/kimarite.py`(新規)、`preview-realtime.py` から呼び出し |
-| 1-3 | UI 表示 | fun-site レース詳細 |
-| 1-4 | 校正モニタリング(予測帯別の実測ずれ) | fun-site 集計 |
+> **【2026-08-13】Phase 1 / 1' / 2 とも実装完了。** 以下の表は計画時のもので、
+> **実際に作られたファイル名・パスは一部違う**。現物は
+> [`docs/data/estimate.md`](../data/estimate.md) を正とすること
+> (この節は「なぜその順で作ったか」の記録として残す)。
 
-### Phase 2: 買い目を出す予想者 `v9_kimarite`
+| Step | 内容 | 実際の成果物 |
+| --- | --- | --- |
+| 1-1 | Stage1 の学習スクリプトと係数テーブル | `scripts/build_kimarite.py` / `data/estimate/kimarite/tables/cell_coef_{daily,realtime}.csv` |
+| 1-2 | 直前バッチでの推論と CSV 出力(セル確率のみ) | `scripts/build_kimarite_probs.py`(推論)+ `scripts/boatrace/kimarite.py`(特徴量を学習と共有)。`preview-realtime.py` から呼ぶ |
+| 1-3 | UI 表示 | fun-site `UpsetMeter.astro` |
+| 1-4 | 校正モニタリング(予測帯別の実測ずれ) | `scripts/build_kimarite_calibration.py` → `data/estimate/kimarite/tables/calibration.csv`(**fun-site ではなく boatracecsv 側**で月次集計) |
+
+### Phase 2: 買い目を出す予想者 `v10_kimarite`
 
 Phase 1 の校正が確認でき、B1〜B3 が解消してから着手する。
 
@@ -584,23 +603,40 @@ Phase 1 の校正が確認でき、B1〜B3 が解消してから着手する。
 | 2-2 | ~~B2 の解消~~ **完了**([§11.2](#112-b2-の解決--control-を再現して同一レースでペア比較))。ペア比較スクリプトを notebooks に移設 | 同上 |
 | 2-3 | H2 の対応: [§3](#3-決まり手のデータ構造) の条件表と Stage2 のペア表を **stt 基準**で作り直す([§12.2](#122-h2--進入コースの定義は展示進入stt-に統一採用)) | 同上 |
 | 2-4 | ~~集計の拡張~~ **完了**(`averagePayoutYen` / `averageBetCount` / `bigHitCount` / `bigHitPer10kYen`) | fun-site `predictor-stats.ts` |
-| 2-5 | Stage2 テーブルの生成と出目出力 | `data/estimate/kimarite/pair_table.csv`、`data/estimate/v9_kimarite/` |
-| 2-6 | レジストリ登録 | `predictors/registry.py`、fun-site `predictors.ts`、`infra/run-*.sh` |
-| 2-7 | 出目リスト型への対応 | fun-site `one-mark-distance.ts` / `bet-hit.ts` / `bet-payout.ts` / `BettingPicks.astro` |
-| 2-8 | 3 ヶ月 A/B | — |
+| 2-5 | Stage2 テーブルの生成と出目出力 | **完了**。`scripts/build_kimarite_pairs.py` → `data/estimate/kimarite/tables/pair_table.csv`、`scripts/build_kimarite_picks.py` → `data/estimate/kimarite/picks/` |
+| 2-6 | レジストリ登録 | **完了**。`predictors/registry.py`(slot=10)、fun-site `predictors.ts`、`infra/run-*.sh` |
+| 2-7 | 出目リスト型への対応 | **完了**(Phase 1 で先行実装)。fun-site `one-mark-distance.ts` / `bet-hit.ts` / `bet-payout.ts` / `BettingPicks.astro` |
+| 2-8 | ハイパラの再選定 | **完了**。`notebooks/ana_prediction/kimarite_backtest.py`。γ=0.5 / β=2.4 / w=0.7([§4.3](#43-合成とブレンド)) |
+| 2-9 | log-loss の A/B 集計(**主判定**) | **完了**。`scripts/build_kimarite_logloss.py` → `data/estimate/kimarite/tables/logloss.csv` |
+| 2-10 | 3 ヶ月 A/B | **運用中**(2026-08-13〜) |
 
 ### 8.1 新規データファイル
 
+**以下は実装後の実際のパス**(計画時から 2 点変わっている。理由は表の下)。
+
 | パス | 内容 | 更新頻度 | Phase |
 | --- | --- | --- | --- |
-| `data/estimate/kimarite/cell_coef_daily.csv` | Stage1(daily 版・`race_cards` のみ)の多項ロジスティック係数(**凍結した 32 クラス** × 特徴量)+ 標準化の μ / σ | 月次 | 1 |
-| `data/estimate/kimarite/cell_coef_realtime.csv` | Stage1(realtime 版・preview 込み)の同上 | 月次 | 1 |
-| `data/estimate/kimarite/YYYY/MM/DD.csv` | レース 1 行。`状態` + セル確率 32 列 | 日次 + 直前 | 1 |
-| `data/estimate/kimarite/pair_table.csv` | セル × 2着コース × 3着コース の収縮済み確率(32 × 30 行) | 月次 | 2 |
-| `data/estimate/v9_kimarite/YYYY/MM/DD.csv` | レース 1 行。買い目(出目 + 確率)+ abstain フラグ | 日次 + 直前 | 2 |
+| `data/estimate/kimarite/tables/cell_coef_daily.csv` | Stage1(daily 版・`race_cards` のみ)の多項ロジスティック係数(**凍結した 32 クラス** × 特徴量)+ 補完 median と標準化の中心 / 尺度 | 月次 | 1 |
+| `data/estimate/kimarite/tables/cell_coef_realtime.csv` | Stage1(realtime 版・preview 込み)の同上 | 月次 | 1 |
+| `data/estimate/kimarite/YYYY/MM/DD.csv` | レース 1 行。`状態` + 荒れ度 + セル確率 32 列 | 日次 + 直前 | 1 |
+| `data/estimate/kimarite/tables/calibration.csv` | 荒れ度の校正監視(予測帯別の実測ずれ) | 月次 | 1' |
+| `data/estimate/kimarite/tables/pair_table.csv` | セル × 2着コース × 3着コース の収縮済み確率(**32 × 20 = 640 行**) | 月次 | 2 |
+| `data/estimate/kimarite/picks/YYYY/MM/DD.csv` | レース 1 行。買い目 5 点 + 決まり手注釈 | 日次 + 直前 | 2 |
+| `data/estimate/kimarite/tables/logloss.csv` | **主判定**。PL 対 ブレンドの 3連単 log-loss(月次 + 累計) | 月次 | 2 |
+| `data/estimate/v10_kimarite/YYYY/MM/DD.csv` | 既存形式の index(`N枠_強さpt` ほか)。買い目はここではなく `picks/` | 日次 + 直前 | 2 |
+
+計画時からの変更点:
+
+1. **静的テーブルは `tables/` サブディレクトリに置いた。** 日次 CSV と同階層に
+   置くと Cloud Run の cone-mode sparse-checkout が日次ファイルの**全履歴**まで
+   checkout してしまうため。`suji` 側も同じ構造にしてある。
+2. **買い目は `data/estimate/v10_kimarite/` ではなく `data/estimate/kimarite/picks/`。**
+   `data/estimate/{predictor_id}/` は index(強さpt)の置き場という既存の規約が
+   あり、そこに別形式のファイルを混ぜない。A案 `v9_suji`(index は
+   `estimate/v9_suji/`、買い目は `estimate/suji/`)と同じ分け方。
+   **abstain フラグは実測で有害と判明したため列自体が無い**([§11.1](#111-b1-の解決--argmax-を捨て荒れ度と1着コースで語る))。
 
 月次再生成は既存の monthly-weights ジョブに相乗りする(`build_course_rate.py` と同じ扱い)。
-`docs/data/estimate.md` と `docs/data/README.md` の更新が必要。
 
 ### 8.2 既存アーキテクチャとの差分(注意点)
 
@@ -616,8 +652,11 @@ Phase 1 の校正が確認でき、B1〜B3 が解消してから着手する。
   全レースで買い目を出すので、母数の定義(`isSettledResult` かつ買い目が組めたレース)は
   既存予想者と同じでよい。「意図的に買わないレース」を後から入れる場合は、
   取得失敗と区別するフラグが必要になる。
-- **強さpt を経由しない**。`data/estimate/v9_kimarite/` は既存の
-  `N枠_{成分}pt` / `N枠_強さpt` 形式ではない。UI の寄与バーは出せない。
+- ~~**強さpt を経由しない**~~ **【実装時に変更】** `data/estimate/v10_kimarite/`
+  は **既存の `N枠_{成分}pt` / `N枠_強さpt` 形式のまま**にした(成分は control と
+  同一)。ブレンドの Plackett-Luce 側と Stage2 の γ 変調が 強さpt を要るので、
+  どのみち index が必要だったため。おかげで **UI の寄与バーもそのまま出る**。
+  買い目だけを別ファイル(`estimate/kimarite/picks/`)に分けている。
 - **`v1_basic` に依存する**([§4.3](#43-合成とブレンド))。予想者どうしを独立に扱ってきた
   既存の前提と異なる。
 - **daily でも出す**([§12.7](#127-m4--朝バッチdailyでも出せる方針変更))。当初は
@@ -625,12 +664,34 @@ Phase 1 の校正が確認でき、B1〜B3 が解消してから着手する。
   realtime の情報利得の 79% が取れるため、**既存予想者と同じく `状態=daily` から出して
   直前バッチで差し替える**。特徴量セットが違うので **daily 用と realtime 用の
   2 本のモデル**を持つ。
-- **予想者 ID**。命名規則どおり退役済み ID は再利用しないため `v9_kimarite`。
+- **予想者 ID**。命名規則どおり退役済み ID は再利用しないため `v10_kimarite`。
   表示名は「穴予想」。
 
 ## 9. 再現方法
 
-検討に使ったスクリプトは scratchpad にある(Phase 2-1 で `notebooks/ana_prediction/` に移す前提)。
+> **【2026-08-13】下の表のスクリプトは検討時の scratchpad にあったもので、
+> リポジトリには入っていない。** 実装で必要になった部分は
+> `notebooks/ana_prediction/` と `scripts/` に書き直してある(対応は下記)。
+> **数値を引き直すときは下の「現在のスクリプト」を使うこと。**
+
+### 現在のスクリプト(リポジトリにあるもの)
+
+| パス | 内容 |
+| --- | --- |
+| `notebooks/ana_prediction/dataset.py` | 進入コース順のパネル(`results` × `stt` × `payouts` × `estimate/v1_basic`) |
+| `notebooks/ana_prediction/suji_backtest.py` | A案の買い目バックテストと条件付き log-loss(§13.2) |
+| `notebooks/ana_prediction/kimarite_backtest.py` | B案の γ / β / w 再選定と test 報告(§4.3 / §5) |
+| `notebooks/ana_prediction/report.md` | 選定記録(スジ表の窓・収縮、B案のハイパラ) |
+| `scripts/build_kimarite.py --report` | Stage1 のホールドアウト log-loss |
+| `scripts/build_kimarite_calibration.py` | 荒れ度の校正(§14.3) |
+| `scripts/build_kimarite_logloss.py` | 運用中の A/B(§13.3 の主判定) |
+
+実行には `.venv`(scikit-learn / pandas / numpy)が要る。ただし **`scripts/` 配下の
+推論・集計系は意図的に stdlib のみ**で、venv 無しでも動く。
+
+### 検討時のスクリプト(scratchpad。現存しない)
+
+以下は「どう検証したか」の記録。再実行はできない。
 
 | スクリプト | 内容 |
 | --- | --- |
@@ -648,8 +709,8 @@ Phase 1 の校正が確認でき、B1〜B3 が解消してから着手する。
 | `kimarite_display.py` | 決まり手の表示可否の検証(§14) |
 | (§13 の比較) | A案の再現・両案のペア比較・検出力の逆算。`resolve_blockers.py` のヘルパーを再利用したワンライナーなので、実装時に `notebooks/ana_prediction/` へ関数化して移すこと |
 
-実行には `.venv`(scikit-learn / pandas / numpy)が要る。
-`lightgbm` は `libomp.dylib` が無いため現状このマシンでは動かない。
+`lightgbm` は `libomp.dylib` が無いため現状このマシンでは動かない
+(そのため Stage1 は sklearn の多項ロジスティック回帰にした。§5.3)。
 
 ## 10. レビュー指摘と対応
 
@@ -850,8 +911,8 @@ H1〜H3 / M1〜M4 を実測で検討した記録。検証は **`estimate/v1_basi
 | Stage1(セル多クラス) | **2025-11-01〜(全履歴)** | `results` / `previews` / `race_cards` のみ |
 | Stage2(γ 変調)・最終ブレンド | 2026-05-01〜(index のある期間) | **`estimate/v1_basic`** |
 
-運用上の含意: **`v1_basic` の月次 weights が更新されると `v9_kimarite` の出目も動く**。
-`v1_basic` を退役させる場合は `v9_kimarite` も同時に見直しが要る。
+運用上の含意: **`v1_basic` の月次 weights が更新されると `v10_kimarite` の出目も動く**。
+`v1_basic` を退役させる場合は `v10_kimarite` も同時に見直しが要る。
 レジストリと [`docs/data/estimate.md`](../data/estimate.md) に依存関係を明記すること。
 
 ### 12.4 M1 — 欠損補完は現行のまま(指摘が過大だった)
@@ -962,7 +1023,7 @@ train の開始日だけを振った実測(index 非依存の特徴量、test �
 | | **A案 `v9_suji`「スジ予想」(control)** | **B案 `v10_kimarite`「穴予想」(実験)** |
 | --- | --- | --- |
 | 1着の決め方 | 1コース以外で **強さpt 最大**の艇(決め打ち 1 つ) | Stage1 の `P(決まり手, 1着コース)` から 120 通り確率を作り、その中で決まる |
-| 2-3着の条件 | **`P(R2,R3 | R1)`**(1着コースだけで条件付け。6 × 30 行) | **`P(R2,R3 | 決まり手, R1)`**(セルで条件付け。28 × 30 行)+ 強さpt 変調 |
+| 2-3着の条件 | **`P(R2,R3 \| R1)`**(1着コースだけで条件付け。6 × 20 = 120 行) | **`P(R2,R3 \| 決まり手, R1)`**(セルで条件付け。32 × 20 = 640 行)+ 強さpt 変調 |
 | 強さpt の使い方 | 1着の選定に直接使う | Stage2 の γ 変調と最終ブレンドのみ |
 | 学習が要るもの | **スジ表 1 枚だけ** | Stage1 の係数(daily / realtime 2 本)+ ペア表 |
 | 依存 | `estimate/v1_basic` のみ | `v1_basic` + 新規学習パイプライン |
@@ -1100,7 +1161,7 @@ type BettingPicks =
 | --- | ---: |
 | 1着コース別の最頻決まり手(コースしか見ない) | 48.7% |
 | **出目(3 コースの並び)別の最頻決まり手 — 静的テーブル** | **63.2%** |
-| モデルの `P(セル | その出目)` の最有力セル | 60.6% |
+| モデルの `P(セル \| その出目)` の最有力セル | 60.6% |
 
 **+14.5pt の情報がある。** 効く理由は明快で、**決まり手を特定しているのは
 事前情報ではなく「2着・3着の並び」**だから。1コースが 2着に残っていれば

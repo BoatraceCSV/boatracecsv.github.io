@@ -11,7 +11,7 @@
 
 いずれも 1 行 = 1 クラス で、標準化パラメータ (mu / sigma) と係数を持つ。
 推論側は sklearn を使わず、この CSV だけで softmax を計算できる
-(scripts/boatrace/kimarite_infer.py)。
+(scripts/build_kimarite_probs.py)。
 
 構成は検証で確定済み (docs/design/ana_prediction.md §12):
     学習窓 = 全履歴 / クラス = 凍結 32 個 / 場・天候 one-hot / 風向 sin-cos /
