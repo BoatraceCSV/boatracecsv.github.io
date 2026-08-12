@@ -187,6 +187,78 @@ class OriginalExhibitionData:
 
 
 @dataclass
+class TokutenHayamiRacer:
+    """One racer's row of 得点率早見 (bc_j_tokuten_hayami)."""
+
+    boat_number: int  # 1..6
+    class_grade: Optional[str] = None  # A1 / A2 / B1 / B2
+    registration_number: Optional[str] = None
+    racer_name: Optional[str] = None
+
+    # Border flag from col[4] ("00" / "01"). The SPA highlights 得点率 / 順位
+    # when the last digit is "1", i.e. the racer is at or above the border
+    # rank (see ``TokutenHayamiData.border_rank``).
+    border_status: Optional[str] = None
+
+    # col[5]. Normally a numeric score rate ("6.33"), but the source puts a
+    # status word here for racers with no score: 賞除 / 欠場 / 帰郷 / 追配.
+    score_rate: Optional[str] = None
+
+    # col[6]. Rank within the series (1 = best).
+    rank: Optional[str] = None
+
+    # col[20]. The racer's *other* race number today ("7" = 7R), blank when
+    # they only race once. Same semantics as 早見 in bc_j_str3.
+    other_race_number: Optional[str] = None
+
+    # col[7..18] as 6 pairs, index 0 = 1着 .. index 5 = 6着.
+    # ``if_rank_score_rates[k]``: the score rate this racer would end up with
+    # if they finish (k+1)th in this race.
+    # ``if_rank_statuses[k]``: the source's colour code for that cell.
+    # Observed bit semantics (from the SPA's class mapping):
+    #   1 = 得点率がボーダー以上 / 2 = 次レースの結果次第でボーダー以上の可能性
+    #   4 = 当レース終了時点でボーダー以上
+    if_rank_score_rates: List[Optional[str]] = field(default_factory=list)
+    if_rank_statuses: List[Optional[str]] = field(default_factory=list)
+
+
+@dataclass
+class TokutenHayamiData:
+    """得点率早見 (score-rate quick reference) for a single race.
+
+    Source: https://race.boatcast.jp/hp_txt/{jo}/bc_j_tokuten_hayami_{YYYYMMDD}_{jo}_{race}.txt
+    """
+
+    date: str  # YYYY-MM-DD
+    stadium_number: int  # 1..24
+    race_number: int  # 1..12
+    race_code: str  # YYYYMMDDCCNN
+
+    # Line 2 of the source. "1" = ready. Anything else means the table is not
+    # published for this race yet (the SPA shows a "please wait" notice).
+    status: Optional[str] = None
+
+    # Placement points for *this* race, index 0 = 1着 .. index 5 = 6着.
+    # 予選 is 10/8/6/4/2/1; 準優・特別レース shift up by 1 (11/9/7/5/3/2).
+    rank_points: List[Optional[str]] = field(default_factory=list)
+
+    # Border rank of the series (e.g. 18 = top 18 advance to 準優勝戦).
+    # Taken from the trailing line of the source; cross-checked against
+    # ``TokutenHayamiRacer.border_status``.
+    border_rank: Optional[str] = None
+
+    racers: List[TokutenHayamiRacer] = field(default_factory=list)
+
+    def is_valid(self) -> bool:
+        """Check if the race data has all 6 racers."""
+        return len(self.racers) == 6
+
+    def is_ready(self) -> bool:
+        """Return True when the source says the table is published."""
+        return self.status == "1"
+
+
+@dataclass
 class RaceCardSession:
     """One slot of 節間成績 (in-series race-by-race breakdown).
 

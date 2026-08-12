@@ -9,7 +9,10 @@ This module is invoked at the very end of ``preview-realtime.py`` to:
    Mirrored objects:
    * ``data/programs/title/YYYY/MM/DD.csv`` (daily-sync の成果物)
    * ``data/programs/race_cards/YYYY/MM/DD.csv`` (daily-sync の成果物)
-   * ``data/previews/stt/YYYY/MM/DD.csv`` (preview-realtime が追記)
+   * ``data/programs/{recent_national,recent_local,waku10,motor_stats}/YYYY/MM/DD.csv``
+     (daily-sync の成果物)
+   * ``data/previews/{stt,tkz,sui,original_exhibition,tokuten_hayami}/YYYY/MM/DD.csv``
+     (preview-realtime が追記)
    * ``data/estimate/{predictor_id}/YYYY/MM/DD.csv`` (各 active 予想者 1 件ずつ。
      csv_type は ``index:{predictor_id}`` 形式)
    * ``data/results/realtime/YYYY/MM/DD.csv`` (preview-realtime が追記)
@@ -167,6 +170,27 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
         CsvUploadSpec("title", f"data/programs/title/{ymd}.csv"),
         CsvUploadSpec("race_cards", f"data/programs/race_cards/{ymd}.csv"),
         CsvUploadSpec("stt", f"data/previews/stt/{ymd}.csv"),
+        # 直前情報の残り 3 種 + 得点率早見 (preview-realtime が追記)。
+        # fun-site のレース詳細ページの「直前情報」「得点率早見」セクションが読む。
+        CsvUploadSpec("tkz", f"data/previews/tkz/{ymd}.csv"),
+        CsvUploadSpec("sui", f"data/previews/sui/{ymd}.csv"),
+        CsvUploadSpec(
+            "original_exhibition",
+            f"data/previews/original_exhibition/{ymd}.csv",
+        ),
+        CsvUploadSpec(
+            "tokuten_hayami",
+            f"data/previews/tokuten_hayami/{ymd}.csv",
+        ),
+        # daily-sync の成果物。fun-site の「近況5節」「枠番別過去10走」
+        # 「出走表のモーター期成績」が読む。
+        CsvUploadSpec(
+            "recent_national",
+            f"data/programs/recent_national/{ymd}.csv",
+        ),
+        CsvUploadSpec("recent_local", f"data/programs/recent_local/{ymd}.csv"),
+        CsvUploadSpec("waku10", f"data/programs/waku10/{ymd}.csv"),
+        CsvUploadSpec("motor_stats", f"data/programs/motor_stats/{ymd}.csv"),
         # 選手別 推定ST (build_racer_st.py 出力)。fun-site のスリット予想 /
         # 1マーク予想が全国平均ST の代わりに読む (docs/design/st_estimation.md)。
         CsvUploadSpec("racer_st", f"data/estimate/racer_st/{ymd}.csv"),

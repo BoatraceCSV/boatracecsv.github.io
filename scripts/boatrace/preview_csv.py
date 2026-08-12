@@ -1,12 +1,14 @@
 """CSV writers for the realtime preview pipeline.
 
-Four sibling files, all append-only and idempotent per ``レースコード``:
+Five sibling files, all append-only and idempotent per ``レースコード``:
 
 * ``data/previews/tkz/{YYYY}/{MM}/{DD}.csv`` - bc_j_tkz (体重 / 展示タイム / チルト)
 * ``data/previews/stt/{YYYY}/{MM}/{DD}.csv`` - bc_j_stt (進入コース / ST 展示)
 * ``data/previews/sui/{YYYY}/{MM}/{DD}.csv`` - bc_sui  (水面気象スナップショット)
 * ``data/previews/original_exhibition/{YYYY}/{MM}/{DD}.csv`` - bc_oriten
   (場ごとに2〜3項目のオリジナル展示計測。一周/まわり足/直線 等)
+* ``data/previews/tokuten_hayami/{YYYY}/{MM}/{DD}.csv`` - bc_j_tokuten_hayami
+  (得点率早見。現在の得点率・節内順位と、このレースで各着順を取った場合の得点率)
 
 Each file shares the same first six columns (the *common* identifiers) so the
 three CSVs can be joined on ``レースコード`` after the fact:
@@ -92,6 +94,32 @@ for _n in range(1, 7):
             f"艇{_n}_値3",
         ]
     )
+
+# 得点率早見 (bc_j_tokuten_hayami)。``{k}着点`` はこのレースの着順点
+# (予選 10/8/6/4/2/1、準優・特別レースは +1)、``ボーダー順位`` は準優進出
+# ラインの人数 (例: 18 = 上位18名)。``艇N_{k}着時得点率`` はこのレースで
+# k 着を取った場合の得点率、``艇N_{k}着時状態`` は元データの色分けコード
+# (bit1=ボーダー以上 / bit2=次レース次第 / bit4=当レース終了時点でボーダー以上)。
+# realtime モードは status == "1" (公開済み) の行しか書かないため状態列は持たない。
+TOKUTEN_HAYAMI_HEADERS: List[str] = list(COMMON_HEADERS) + ["ボーダー順位"]
+for _n in range(1, 7):
+    TOKUTEN_HAYAMI_HEADERS.append(f"{_n}着点")
+for _n in range(1, 7):
+    TOKUTEN_HAYAMI_HEADERS.extend(
+        [
+            f"艇{_n}_級別",
+            f"艇{_n}_登録番号",
+            f"艇{_n}_選手名",
+            f"艇{_n}_得点率",
+            f"艇{_n}_順位",
+            f"艇{_n}_ボーダー状態",
+            f"艇{_n}_早見",
+        ]
+    )
+    for _k in range(1, 7):
+        TOKUTEN_HAYAMI_HEADERS.extend(
+            [f"艇{_n}_{_k}着時得点率", f"艇{_n}_{_k}着時状態"]
+        )
 
 
 # --- Path helpers -----------------------------------------------------------
@@ -243,6 +271,56 @@ def build_oex_row(
     return row
 
 
+def build_tokuten_hayami_row(
+    *,
+    race_code: str,
+    date_str: str,
+    stadium_code: int,
+    race_number: int,
+    deadline_time: str,
+    fetched_at_iso: str,
+    border_rank: Optional[str],
+    rank_points: List[Optional[str]],
+    racers,
+) -> List[str]:
+    """Compose one 得点率早見 CSV row.
+
+    ``racers`` is an iterable of :class:`TokutenHayamiRacer` returned by
+    :meth:`TokutenHayamiScraper.scrape_race` (always 6 entries when valid,
+    indexed by ``boat_number``).
+    """
+    row = _common_cells(
+        race_code, date_str, stadium_code, race_number,
+        deadline_time, fetched_at_iso,
+    )
+    row.append(_fmt(border_rank))
+    points = list(rank_points) + [None] * 6
+    row.extend(_fmt(points[i]) for i in range(6))
+
+    racers_by_number = {r.boat_number: r for r in racers}
+    for boat_num in range(1, 7):
+        r = racers_by_number.get(boat_num)
+        if r is None:
+            row.extend([""] * (7 + 12))
+            continue
+        row.extend(
+            [
+                _fmt(r.class_grade),
+                _fmt(r.registration_number),
+                _fmt(r.racer_name),
+                _fmt(r.score_rate),
+                _fmt(r.rank),
+                _fmt(r.border_status),
+                _fmt(r.other_race_number),
+            ]
+        )
+        rates = list(r.if_rank_score_rates) + [None] * 6
+        statuses = list(r.if_rank_statuses) + [None] * 6
+        for k in range(6):
+            row.extend([_fmt(rates[k]), _fmt(statuses[k])])
+    return row
+
+
 def build_sui_row(
     *,
     race_code: str,
@@ -346,11 +424,13 @@ __all__ = [
     "STT_HEADERS",
     "SUI_HEADERS",
     "OEX_HEADERS",
+    "TOKUTEN_HAYAMI_HEADERS",
     "csv_path_for",
     "build_tkz_row",
     "build_stt_row",
     "build_sui_row",
     "build_oex_row",
+    "build_tokuten_hayami_row",
     "existing_race_codes",
     "append_rows",
 ]

@@ -70,16 +70,21 @@ from boatrace.preview_tsv_scraper import PreviewTsvScraper  # noqa: E402
 from boatrace.original_exhibition_scraper import (  # noqa: E402
     OriginalExhibitionScraper,
 )
+from boatrace.tokuten_hayami_scraper import (  # noqa: E402
+    TokutenHayamiScraper,
+)
 from boatrace.preview_csv import (  # noqa: E402
     OEX_HEADERS,
     STT_HEADERS,
     SUI_HEADERS,
     TKZ_HEADERS,
+    TOKUTEN_HAYAMI_HEADERS,
     append_rows,
     build_oex_row,
     build_stt_row,
     build_sui_row,
     build_tkz_row,
+    build_tokuten_hayami_row,
     csv_path_for,
     existing_race_codes,
 )
@@ -157,7 +162,7 @@ from boatrace.predictors import active_predictors  # noqa: E402
 # fetch_and_build_rows) + aggregating-odds sources (bc_smt_od*, handled
 # by fetch_and_build_odds_rows). All seven share the same eligibility
 # window, per-source dedupe and daily-CSV layout.
-PREVIEW_SOURCES = ("tkz", "stt", "sui", "original_exhibition")
+PREVIEW_SOURCES = ("tkz", "stt", "sui", "original_exhibition", "tokuten_hayami")
 SOURCES = PREVIEW_SOURCES + ODDS_SOURCES
 
 
@@ -262,27 +267,39 @@ def select_eligible_races(
 def fetch_and_build_rows(
     scraper: PreviewTsvScraper,
     oex_scraper: OriginalExhibitionScraper,
+    tokuten_scraper: TokutenHayamiScraper,
     eligible: List[HoldingRace],
     date_str: str,
     fetched_at_iso: str,
     already_recorded: Dict[str, Set[str]],
-) -> Tuple[List[List[str]], List[List[str]], List[List[str]], List[List[str]]]:
+) -> Tuple[
+    List[List[str]],
+    List[List[str]],
+    List[List[str]],
+    List[List[str]],
+    List[List[str]],
+]:
     """Scrape each eligible race and build per-source CSV rows.
 
-    Returns ``(tkz_rows, stt_rows, sui_rows, oex_rows)`` containing only
-    rows for races whose source data could be fetched & parsed and which
-    are not already present in that source's CSV.
+    Returns ``(tkz_rows, stt_rows, sui_rows, oex_rows, tokuten_rows)``
+    containing only rows for races whose source data could be fetched &
+    parsed and which are not already present in that source's CSV.
 
     Per-source skip rules:
       * tkz: ``status`` of ``"0"`` (計測中) or ``"2"`` (計測不能) -> skip
       * stt / sui: source file absent -> skip
       * original_exhibition (oex): ``status`` not ``"1"`` (i.e. measuring
         or unmeasurable) or source file absent -> skip
+      * tokuten_hayami: ``status`` not ``"1"`` (未公開) or source file
+        absent -> skip. The table only exists up to 予選最終日 and some
+        series never publish it at all, so a permanently-missing source
+        here is normal.
     """
     tkz_rows: List[List[str]] = []
     stt_rows: List[List[str]] = []
     sui_rows: List[List[str]] = []
     oex_rows: List[List[str]] = []
+    tokuten_rows: List[List[str]] = []
 
     # Per-invocation cache: bc_sui content is the same for all races at
     # the same stadium at any given moment. Within one minute's run we
@@ -389,7 +406,41 @@ def fetch_and_build_rows(
                     )
                 )
 
-    return tkz_rows, stt_rows, sui_rows, oex_rows
+        # --- tokuten_hayami (bc_j_tokuten_hayami) ---
+        if race_code not in already_recorded.get("tokuten_hayami", set()):
+            tokuten_data = tokuten_scraper.scrape_race(
+                date_str, race.stadium_code, race.race_number
+            )
+            if tokuten_data is None:
+                logging_module.info(
+                    "preview_realtime_tokuten_hayami_skipped",
+                    race_code=race_code,
+                    reason="file_missing",
+                )
+            elif not tokuten_data.is_ready():
+                logging_module.info(
+                    "preview_realtime_tokuten_hayami_skipped",
+                    race_code=race_code,
+                    status=tokuten_data.status,
+                    reason="not_published",
+                )
+            elif not tokuten_data.is_valid():
+                logging_module.info(
+                    "preview_realtime_tokuten_hayami_skipped",
+                    race_code=race_code,
+                    reason="invalid_boat_count",
+                )
+            else:
+                tokuten_rows.append(
+                    build_tokuten_hayami_row(
+                        border_rank=tokuten_data.border_rank,
+                        rank_points=tokuten_data.rank_points,
+                        racers=tokuten_data.racers,
+                        **common,
+                    )
+                )
+
+    return tkz_rows, stt_rows, sui_rows, oex_rows, tokuten_rows
 
 
 def fetch_and_build_odds_rows(
@@ -444,6 +495,7 @@ def write_all(
     stt_rows: List[List[str]],
     sui_rows: List[List[str]],
     oex_rows: List[List[str]],
+    tokuten_rows: List[List[str]],
     odds_rows: Dict[str, List[List[str]]],
     dry_run: bool,
 ) -> Tuple[List[Path], int]:
@@ -460,6 +512,7 @@ def write_all(
         ("stt", STT_HEADERS, stt_rows),
         ("sui", SUI_HEADERS, sui_rows),
         ("original_exhibition", OEX_HEADERS, oex_rows),
+        ("tokuten_hayami", TOKUTEN_HAYAMI_HEADERS, tokuten_rows),
     ] + [
         (source, ODDS_HEADERS[source], odds_rows.get(source, []))
         for source in ODDS_SOURCES
@@ -854,9 +907,14 @@ def main() -> int:
             timeout_seconds=config.get("request_timeout_seconds", 30),
             rate_limiter=rate_limiter,
         )
-        tkz_rows, stt_rows, sui_rows, oex_rows = fetch_and_build_rows(
+        tokuten_scraper = TokutenHayamiScraper(
+            timeout_seconds=config.get("request_timeout_seconds", 30),
+            rate_limiter=rate_limiter,
+        )
+        tkz_rows, stt_rows, sui_rows, oex_rows, tokuten_rows = fetch_and_build_rows(
             scraper,
             oex_scraper,
+            tokuten_scraper,
             eligible,
             date_str,
             fetched_at_iso,
@@ -874,13 +932,13 @@ def main() -> int:
             already_recorded,
         )
     else:
-        tkz_rows = stt_rows = sui_rows = oex_rows = []
+        tkz_rows = stt_rows = sui_rows = oex_rows = tokuten_rows = []
         odds_rows = {src: [] for src in ODDS_SOURCES}
 
     # --- 5. Write CSVs -------------------------------------------------
     paths, total = write_all(
-        date_str, tkz_rows, stt_rows, sui_rows, oex_rows, odds_rows,
-        args.dry_run,
+        date_str, tkz_rows, stt_rows, sui_rows, oex_rows, tokuten_rows,
+        odds_rows, args.dry_run,
     )
 
     logging_module.info(
@@ -892,6 +950,7 @@ def main() -> int:
         stt=len(stt_rows),
         sui=len(sui_rows),
         original_exhibition=len(oex_rows),
+        tokuten_hayami=len(tokuten_rows),
         od1=len(odds_rows["od1"]),
         od2=len(odds_rows["od2"]),
         od3=len(odds_rows["od3"]),
@@ -901,11 +960,18 @@ def main() -> int:
     #         whose preview we just appended (展示・気象を再計算 → 状態=realtime).
     #         Loops over every active predictor; a single predictor's failure
     #         is logged but doesn't block the others.
+    # 得点率早見 (tokuten_hayami) は index の特徴量ではないので、ここには
+    # 含めない (含めると得点率早見だけが landed したサイクルで無駄に index を
+    # 再計算してしまう)。Pub/Sub 通知には別途 preview_updated_codes で乗せる。
     updated_codes = sorted({
         row[0]  # 1st column = レースコード
         for source_rows in (tkz_rows, stt_rows, sui_rows, oex_rows)
         for row in source_rows
     })
+    # fun-site への通知対象。得点率早見だけが更新されたレースも再ビルド対象にする。
+    preview_updated_codes = sorted(
+        set(updated_codes) | {row[0] for row in tokuten_rows}
+    )
     if updated_codes and not args.dry_run:
         day = datetime.strptime(date_str, "%Y-%m-%d").date()
         for predictor in active_predictors():
@@ -1196,7 +1262,7 @@ def main() -> int:
                 PROJECT_ROOT,
                 day,
                 upload_results,
-                realtime_updated_codes=updated_codes,
+                realtime_updated_codes=preview_updated_codes,
                 result_updated_codes=result_updated_codes,
                 payout_updated_codes=payout_updated_codes,
             )

@@ -301,7 +301,9 @@ run_step "commit-index" commit_and_push_index
 # ---------------------------------------------------------------------------
 # GCS ミラー / Pub/Sub publish (Open Question 1: 有効化)
 # preview-realtime.py が呼ぶのと同じ publisher 経路を 1 回叩く。
-# - upload_csvs: title/race_cards/stt/index/results を MD5 dedup でアップロード
+# - upload_csvs: title/race_cards/recent_national/recent_local/waku10/motor_stats
+#   /previews(stt,tkz,sui,original_exhibition,tokuten_hayami)/index/results を
+#   MD5 dedup でアップロード
 # - assemble_updated_races: 更新があった race code を集約 (title/race_cards
 #   が変わっていれば trigger は "daily-bootstrap")
 # - publish_realtime_completed: 1 件だけ Pub/Sub に publish

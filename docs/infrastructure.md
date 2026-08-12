@@ -41,7 +41,11 @@ monthly-weights:  python scripts/build_course_rate.py + build_weights.py --month
    │   ├─ git commit && git push origin main   (boatrace.git_operations / bash)
    │   ├─ ★ GCS mirror upload (boatrace.gcs_publisher.upload_csvs)        ← preview-realtime / daily-sync のみ
    │   │     gs://${BOATRACE_GCS_CSV_BUCKET}/data/{programs/title,programs/race_cards,
-   │   │                                            previews/stt,estimate/{predictor_id},
+   │   │                                            programs/{recent_national,recent_local,
+   │   │                                                      waku10,motor_stats},
+   │   │                                            previews/{stt,tkz,sui,
+   │   │                                                      original_exhibition,tokuten_hayami},
+   │   │                                            estimate/{predictor_id},
    │   │                                            results/realtime,results/payouts}/...
    │   │     (active 予想者ごとに csv_type=index:{predictor_id} で 1 件ずつ mirror)
    │   └─ ★ Pub/Sub publish (boatrace.gcs_publisher.publish_realtime_completed) ← preview-realtime / daily-sync のみ

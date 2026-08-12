@@ -78,10 +78,22 @@ def test_build_csv_specs_includes_results():
     # racer_st は予想者非依存の固定 spec なので、v5_slit 退役後も出力し続ける。
     # suji / kimarite / kimarite_picks も同じく予想者 ID を持たない固定 spec
     # (買い目そのものを配るため。docs/design/ana_prediction.md §13)。
+    # 直前情報の残り (tkz / sui / original_exhibition / tokuten_hayami) と
+    # daily-sync 系 (recent_national / recent_local / waku10 / motor_stats) は
+    # 2026-08-12 に mirror 対象へ追加した (fun-site の直前情報・近況5節・
+    # 枠番別過去10走・得点率早見セクションが GCS 経由でしか読めないため)。
     assert csv_types == [
         "title",
         "race_cards",
         "stt",
+        "tkz",
+        "sui",
+        "original_exhibition",
+        "tokuten_hayami",
+        "recent_national",
+        "recent_local",
+        "waku10",
+        "motor_stats",
         "racer_st",
         "suji",
         "kimarite",
@@ -92,6 +104,36 @@ def test_build_csv_specs_includes_results():
         "results",
         "payouts",
     ]
+
+
+def test_build_csv_specs_preview_and_program_paths():
+    """新しく mirror 対象にした CSV のパスを固定する。"""
+    specs = _build_csv_specs(Path("/tmp"), dt.date(2026, 5, 7))
+    by_type = {s.csv_type: s for s in specs}
+
+    assert by_type["tkz"].repo_relative_path == "data/previews/tkz/2026/05/07.csv"
+    assert by_type["sui"].repo_relative_path == "data/previews/sui/2026/05/07.csv"
+    assert (
+        by_type["original_exhibition"].repo_relative_path
+        == "data/previews/original_exhibition/2026/05/07.csv"
+    )
+    assert (
+        by_type["tokuten_hayami"].repo_relative_path
+        == "data/previews/tokuten_hayami/2026/05/07.csv"
+    )
+    assert (
+        by_type["recent_national"].repo_relative_path
+        == "data/programs/recent_national/2026/05/07.csv"
+    )
+    assert (
+        by_type["recent_local"].repo_relative_path
+        == "data/programs/recent_local/2026/05/07.csv"
+    )
+    assert by_type["waku10"].repo_relative_path == "data/programs/waku10/2026/05/07.csv"
+    assert (
+        by_type["motor_stats"].repo_relative_path
+        == "data/programs/motor_stats/2026/05/07.csv"
+    )
 
 
 def test_build_csv_specs_results_path():
