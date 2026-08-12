@@ -58,13 +58,18 @@ STATES = ("daily", "realtime")
 
 
 def collect(repo: Path, from_date: str | None, to_date: str | None):
-    """(state → 特徴量行列, ラベル, レース日) を返す。
+    """(state → 特徴量行列, ラベル, レース日, レースコード) を返す。
 
     ``to_date`` は **未満**(学習窓から検証期間を落とすときに端が重ならないよう)。
+
+    レースコードは学習では使わないが、検証スクリプト
+    (``notebooks/ana_prediction/kimarite_backtest.py``)が他の CSV と
+    突き合わせるために要る。
     """
     rows = {s: [] for s in STATES}
     labels: list[int] = []
     days: list[str] = []
+    codes: list[str] = []
 
     for res_path in sorted(
         (repo / "data" / "results" / "realtime").glob("*/*/*.csv")
@@ -111,11 +116,13 @@ def collect(repo: Path, from_date: str | None, to_date: str | None):
                     )
                 labels.append(label)
                 days.append(day)
+                codes.append(code)
 
     return (
         {s: np.array(rows[s], dtype=float) for s in STATES},
         np.array(labels, dtype=int),
         np.array(days),
+        np.array(codes),
     )
 
 
@@ -198,7 +205,7 @@ def main() -> int:
     repo = Path(args.repo_root).resolve()
     out_dir = Path(args.out_dir) if args.out_dir else repo / OUT_DIR
 
-    X_by_state, y, days = collect(repo, args.from_date, args.to_date)
+    X_by_state, y, days, _codes = collect(repo, args.from_date, args.to_date)
     n = len(y)
     if n == 0:
         print("no races collected", file=sys.stderr)

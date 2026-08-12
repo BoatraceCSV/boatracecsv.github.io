@@ -397,6 +397,33 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         # 設計・検証: docs/design/ana_prediction.md (§13 A案)
         component_keys=("waku", "racer", "motor", "exhibit", "weather"),
     ),
+    PredictorSpec(
+        predictor_id="v10_kimarite",
+        display_name="穴予想",
+        slot=10,
+        status=STATUS_ACTIVE,
+        # 投入日 (累計回収率の起点)。デプロイ日の翌日に合わせる。
+        started_at=dt.date(2026, 8, 13),
+        # 穴予想 (B案)。index / 強さpt は control (v1_basic) と同値で、差分は
+        # 買い目の作り方:
+        #   Stage1  決まり手 × 1着コース の 32 クラス確率 (多項ロジスティック回帰)
+        #   Stage2  セル条件付きの 2-3 着表 P(2着, 3着 | セル)
+        #   合成    120 通り → Plackett-Luce(強さpt) と w:1−w でブレンド
+        #   買い目  1 コース頭を除いた上位 5 点
+        # 買い目は boatracecsv 側で確定させて
+        # data/estimate/kimarite/picks/YYYY/MM/DD.csv に出す
+        # (fun-site は表示と集計のみ。scripts/build_kimarite_picks.py)。
+        #
+        # **A案 v9_suji との A/B は回収率では決着しない** (差 +4.2pt を検出するのに
+        # 約 8.2 ヶ月かかる)。主判定は 3連単 log-loss
+        # (scripts/build_kimarite_logloss.py が月次集計)。回収率は
+        # 「control 比 -7pt 級の劣化」を見るガードレールとしてのみ使う。
+        # 設計・検証: docs/design/ana_prediction.md (§13.3 判定基準)
+        #
+        # weights は成分が同一のため v1_basic と同値になる (初月は v1_basic の
+        # weights ファイルをコピーしてブートストラップ)。
+        component_keys=("waku", "racer", "motor", "exhibit", "weather"),
+    ),
 )
 
 

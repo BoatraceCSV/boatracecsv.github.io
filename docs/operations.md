@@ -104,6 +104,31 @@ cone-mode が日次ファイルの全履歴まで checkout してしまうため
 build_index / GCS ミラー / 集計すべての対象から自動的に落ちる。
 `infra/run*.sh` の `ACTIVE_PREDICTORS` も同期すること。
 
+## 穴予想 v10_kimarite の運用(2026-08-13〜)
+
+B案。買い目を CSV で配る点は A案と同じだが、**荒れ度メーターと同じ Stage1
+モデルを土台にする**ので依存が 1 段深い。
+
+**依存順序**(これを崩すと買い目が 0 行になる):
+
+```
+build_index.py --predictor v10_kimarite   … 強さpt
+build_kimarite_probs.py                   … Stage1 の 32 クラス確率
+        ↓
+build_kimarite_picks.py                   … 合成 → ブレンド → 上位 5 点
+```
+
+Stage1 の確率が無いレースは **無言でスキップ**する(買い目を出さない)。
+index が無い場合は作り方を示して落ちる。
+
+**sparse-checkout**: 買い目は `data/estimate/kimarite/picks/${TODAY_YM}` を
+**独立したパスとして**追加している(`data/estimate/kimarite/${TODAY_YM}` と別)。
+
+**退役判定**: `data/estimate/kimarite/tables/logloss.csv` の `95%CI下限` が
+0 を下回ったら退役する。**回収率では判定しない**(A案との差 +4.2pt を有意に
+するには 8.2 ヶ月かかる)。詳細は
+[`docs/design/ana_prediction.md`](../design/ana_prediction.md) §13.3。
+
 ## 荒れ度メーターの運用(2026-08-12〜)
 
 予想者に紐づかない独立の指標なので、`ACTIVE_PREDICTORS` とは無関係に毎回動く。
@@ -111,8 +136,12 @@ build_index / GCS ミラー / 集計すべての対象から自動的に落ち�
 | ジョブ | 処理 | 出力 |
 | --- | --- | --- |
 | monthly-weights | `build_kimarite.py`(全履歴で再学習) | `data/estimate/kimarite/tables/cell_coef_*.csv` |
+| monthly-weights | `build_kimarite_pairs.py`(Stage2 再生成) | `data/estimate/kimarite/tables/pair_table.csv` |
+| monthly-weights | `build_kimarite_calibration.py` | `data/estimate/kimarite/tables/calibration.csv` |
+| monthly-weights | `build_kimarite_logloss.py`(**B案の主判定**) | `data/estimate/kimarite/tables/logloss.csv` |
 | daily-sync | `build_kimarite_probs.py --mode daily` | `data/estimate/kimarite/YYYY/MM/DD.csv` |
-| preview-realtime | `write_day(..., realtime)` を内部呼び出し | 同上(realtime を upsert) |
+| daily-sync | `build_kimarite_picks.py --mode daily`(**v10_kimarite の買い目**) | `data/estimate/kimarite/picks/YYYY/MM/DD.csv` |
+| preview-realtime | `write_day(..., realtime)` を内部呼び出し(probs → picks の順) | 同上(realtime を upsert) |
 
 **学習と推論を分けている理由**: 推論を sklearn 非依存にしておくと、
 毎回の直前バッチでモデルを読み込む必要がなく、係数 CSV さえあれば動く。

@@ -937,7 +937,7 @@ gcloud logging read \
 ## 穴予想 `v9_suji` の追加(2026-08-12)
 
 - `infra/run.sh` / `run-daily-sync.sh` / `run-monthly-weights.sh` の
-  `ACTIVE_PREDICTORS` を `(v1_basic v9_suji)` に変更
+  `ACTIVE_PREDICTORS` を `(v1_basic v9_suji)` に変更(その後 v10_kimarite を追加)
 - `run.sh` / `run-daily-sync.sh` の sparse-checkout に
   **`data/estimate/suji/tables`(静的)と `data/estimate/suji/${TODAY_YM}`(日次)を
   別々に**追加。cone-mode で `data/estimate/suji` をまとめて指定すると
@@ -955,3 +955,22 @@ gcloud logging read \
 - `run-daily-sync.sh` に `build-kimarite-probs` ステップと commit 対象を追加
 - `run-monthly-weights.sh` に `build_kimarite.py`(再学習)を追加
 - `gcs_publisher.py` に `csv_type=kimarite` を追加
+
+## 穴予想 v10_kimarite の追加(2026-08-13)
+
+- `run.sh` / `run-daily-sync.sh` / `run-monthly-weights.sh` の
+  `ACTIVE_PREDICTORS` を `(v1_basic v9_suji v10_kimarite)` に変更
+- `run.sh` / `run-daily-sync.sh` の sparse-checkout に
+  **`data/estimate/kimarite/picks/${TODAY_YM}`** を追加
+  (`data/estimate/kimarite/${TODAY_YM}` とは別パス。cone-mode の都合)
+- `run-daily-sync.sh` に `build-kimarite-picks` ステップを追加
+  (**`build-index` と `build-kimarite-probs` の両方の後**)
+- `run-monthly-weights.sh` に `build_kimarite_logloss.py`(A/B の主判定)を追加
+- `gcs_publisher.py` に `csv_type=kimarite_picks` を追加
+- 初月の weights は成分が同一なので v1_basic からコピーしてブートストラップ:
+  ```sh
+  cp data/estimate/stadium/weights/v1_basic/$(date +%Y-%m).csv \
+     data/estimate/stadium/weights/v10_kimarite/$(date +%Y-%m).csv
+  ```
+
+詳細は [operations.md](./operations.md#穴予想-v10_kimarite-の運用2026-08-13)。

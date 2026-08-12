@@ -175,6 +175,9 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
         CsvUploadSpec("suji", f"data/estimate/suji/{ymd}.csv"),
         # 荒れ度メーター (build_kimarite_probs.py 出力)。
         CsvUploadSpec("kimarite", f"data/estimate/kimarite/{ymd}.csv"),
+        # 穴予想 v10_kimarite の買い目 (build_kimarite_picks.py 出力)。suji と
+        # 同じく買い目そのものを配る (docs/design/ana_prediction.md §13)。
+        CsvUploadSpec("kimarite_picks", f"data/estimate/kimarite/picks/{ymd}.csv"),
     ]
     for predictor in active_predictors():
         specs.append(CsvUploadSpec(

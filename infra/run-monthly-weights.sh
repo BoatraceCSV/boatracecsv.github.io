@@ -79,7 +79,7 @@ fi
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
-ACTIVE_PREDICTORS=(v1_basic v9_suji)  # 2026-08-12: 穴予想 v9_suji を投入 (control と同一成分・買い目のみ差分) / 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v9_suji v10_kimarite)  # 2026-08-13: 穴予想 B案 v10_kimarite を投入 (決まり手モデル。判定は 3連単 log-loss) / 2026-08-12: 穴予想 A案 v9_suji を投入 (control と同一成分・買い目のみ差分) / 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 # ---------------------------------------------------------------------------
 # sparse-checkout 対象月の計算
@@ -215,6 +215,12 @@ python scripts/build_kimarite_pairs.py
 # 再学習の後に走らせて、新しいモデルが校正を保っているかを記録する。
 log "Recomputing kimarite calibration"
 python scripts/build_kimarite_calibration.py
+
+# 穴予想 B案 v10_kimarite の**主判定**。3連単 log-loss で
+# Plackett-Luce(強さpt) と比べる。回収率では 8 ヶ月かかって決着しないため
+# (設計書 §13.3)、退役判定はこの CSV を見て行う。
+log "Recomputing kimarite log-loss A/B"
+python scripts/build_kimarite_logloss.py
 
 log "Building monthly weights for ${TARGET_MONTH} (predictors: ${ACTIVE_PREDICTORS[*]})"
 python scripts/build_weights.py --month "${TARGET_MONTH}" --all-active

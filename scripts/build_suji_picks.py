@@ -125,14 +125,19 @@ def load_stt_courses(repo: Path, day: dt.date) -> dict[str, list[int]]:
     return out
 
 
-def load_index_rows(repo: Path, day: dt.date, state: str) -> dict[str, dict[str, str]]:
-    """予想者 index CSV から、指定 状態 の行を レースコード 引きで返す。"""
-    path = (repo / "data" / "estimate" / PREDICTOR_ID
+def load_index_rows(
+    repo: Path, day: dt.date, state: str, predictor_id: str = PREDICTOR_ID
+) -> dict[str, dict[str, str]]:
+    """予想者 index CSV から、指定 状態 の行を レースコード 引きで返す。
+
+    ``predictor_id`` は B案 (`build_kimarite_picks.py`) からも使うので引数にしてある。
+    """
+    path = (repo / "data" / "estimate" / predictor_id
             / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.csv")
     _require(
         path,
         f"python scripts/build_index.py --date {day:%Y-%m-%d} "
-        f"--predictor {PREDICTOR_ID} を先に実行してください",
+        f"--predictor {predictor_id} を先に実行してください",
     )
     out: dict[str, dict[str, str]] = {}
     with open(path, newline="", encoding="utf-8") as fh:

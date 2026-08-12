@@ -140,6 +140,16 @@ _kim_spec = importlib.util.spec_from_file_location(
 _build_kimarite_probs = importlib.util.module_from_spec(_kim_spec)
 _kim_spec.loader.exec_module(_build_kimarite_probs)
 
+# 穴予想 v10_kimarite の買い目 (build_kimarite_picks.py)。Stage1 の確率と
+# index の 強さpt の**両方**を読むので、この 2 つより後に走らせる。
+# 設計: docs/design/ana_prediction.md §4.3
+_kim_picks_path = Path(__file__).parent / "build_kimarite_picks.py"
+_kim_picks_spec = importlib.util.spec_from_file_location(
+    "build_kimarite_picks", _kim_picks_path
+)
+_build_kimarite_picks = importlib.util.module_from_spec(_kim_picks_spec)
+_kim_picks_spec.loader.exec_module(_build_kimarite_picks)
+
 from boatrace.predictors import active_predictors  # noqa: E402
 
 
@@ -971,6 +981,29 @@ def main() -> int:
                 "preview_realtime_kimarite_update_failed",
                 error=str(exc),
             )
+
+        # 穴予想 v10_kimarite の買い目。Stage1 の確率を書いた**後**に組む。
+        if any(p.predictor_id == _build_kimarite_picks.PREDICTOR_ID
+               for p in active_predictors()):
+            try:
+                n_picks = _build_kimarite_picks.write_day(
+                    PROJECT_ROOT, day, _build_kimarite_picks.STATE_REALTIME,
+                    set(updated_codes),
+                )
+                if n_picks > 0:
+                    paths.append(
+                        _build_kimarite_picks.picks_csv_path(PROJECT_ROOT, day))
+                logging_module.info(
+                    "preview_realtime_kimarite_picks_updated",
+                    date=date_str,
+                    n_updated=n_picks,
+                    race_codes=updated_codes,
+                )
+            except Exception as exc:  # pragma: no cover — defensive
+                logging_module.error(
+                    "preview_realtime_kimarite_picks_update_failed",
+                    error=str(exc),
+                )
 
     # --- 5c & 5d shared: finished-race source list -------------------
     # The live holding list rewrites a race's ``deadline_time`` to

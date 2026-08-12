@@ -150,12 +150,13 @@ class TestRegistryV2Tenkai:
         v4_motor (2026-07-20 投入) / v5_slit (2026-07-21 投入) は 2026-08-10 に
         退役。control と有意差がなく (p=0.884 / 0.377)、レシピが近いため買い目も
         control とほぼ重複していた (registry.py 冒頭コメントに検定結果)。
-        2026-08-12 に穴予想 v9_suji を投入 (control と同一成分・買い目のみ差分)。
-        現在の active は control (v1_basic) と v9_suji の 2 つ。
+        2026-08-12 に穴予想 A案 v9_suji を、2026-08-13 に B案 v10_kimarite を投入
+        (どちらも control と同一成分で、買い目の作り方のみ差分)。
+        現在の active は control (v1_basic) と穴予想 2 案の 3 つ。
         """
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == ["v1_basic", "v9_suji"]
+        assert ids == ["v1_basic", "v9_suji", "v10_kimarite"]
 
 
 class TestRegistryV3Tenkai:

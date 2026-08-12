@@ -6,7 +6,7 @@
 - [Strength Index](#strength-index) — レース 1 行 × 6 枠の「強さポイント」(偏差値)
 - [Racer ST](#racer-st) — レース 1 行 × 6 枠の「選手別 推定ST」(秒)
 - [穴予想 v9_suji: スジ表と買い目](#穴予想-v9_suji-スジ表と買い目) — スジ表 / 決まり手注釈テーブル / 日次の買い目
-- [荒れ度メーター(決まり手セルモデル)](#荒れ度メーター決まり手セルモデル) — レースが荒れる確率
+- [荒れ度メーター(決まり手セルモデル)](#荒れ度メーター決まり手セルモデル) — レースが荒れる確率 / 穴予想 v10_kimarite の買い目
 - [Stadium Parameters](#stadium-parameters) — Index 計算で参照する場別パラメータ
 
 ---
@@ -41,13 +41,14 @@
 | `v7_aggregate` | 統合予想 | **retired** (2026-08-09) | 2026-07-23 | **course**, racer, **motor4**, exhibit, weather + **予測 ST を AI 推定 ST に差し替え** (v4/v5/v6 の 3 仮説統合) |
 | `v8_aionly` | AI予想 | **retired** (2026-08-09) | 2026-07-28 | course, racer, motor4, exhibit, weather (v7_aggregate と同一 5 成分。**買い目候補の選定のみ強さpt 基準 ±5.0pt に差し替え** — fun-site 側フラグ) |
 | `v9_suji` | スジ予想 | active | 2026-08-12 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**買い目の作り方のみ差し替え** — 下記) |
+| `v10_kimarite` | 穴予想 | active | 2026-08-13 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**買い目の作り方のみ差し替え** — 下記) |
 
 > **2026-08-10 退役**: `v4_motor` / `v5_slit` は control (`v1_basic`) と有意差が無く
 > (p=0.884 / 0.377)、レシピが近いため買い目も control とほぼ重複していた。
 > `registry.py` 冒頭コメントに検定結果。
 
 > **判定方法の違いに注意**: 既存の予想者は回収率のペア比較で退役を判定してきたが、
-> **穴予想どうし(A案 `v9_suji` vs 将来の B案)の比較は回収率では決着しない**。
+> **穴予想どうし(A案 `v9_suji` vs B案 `v10_kimarite`)の比較は回収率では決着しない**。
 > 観測された差 +4.2pt を検出するには約 34,700 レース(8.2 ヶ月)必要で、
 > 2pt なら 36 ヶ月かかる。一方 **3連単 log-loss** は n=3,527 で既に効果の
 > 5.8 倍の精度がある。したがって穴予想スロットの主判定は **log-loss**、
@@ -55,6 +56,10 @@
 > 体験指標(平均配当 / 平均点数 / 万舟 1 万円あたり)は目標値を置くが、
 > 検出力が足りないので有意差判定はしない。詳細は
 > [`docs/design/ana_prediction.md`](../design/ana_prediction.md) §13.3。
+>
+> **主判定の実測値は `data/estimate/kimarite/tables/logloss.csv`**
+> に月次で出る(`scripts/build_kimarite_logloss.py`。スキーマは下記)。**`v10_kimarite` の
+> ブレンドが `Plackett-Luce(強さpt)` を有意に上回らなくなったら退役**する。
 
 > **`v9_suji`(スジ予想、2026-08-12 投入)** は **穴予想**。control (`v1_basic`) と
 > **同一の 5 成分**(index / 強さpt は同値)で、差分は **買い目の作り方だけ**:
@@ -73,6 +78,39 @@
 > 設計・検証は [`docs/design/ana_prediction.md`](../design/ana_prediction.md)(§13 A案)、
 > テーブル構成の選定記録は
 > [`notebooks/ana_prediction/report.md`](../../notebooks/ana_prediction/report.md)。
+
+> **`v10_kimarite`(穴予想、2026-08-13 投入)** は同じく **穴予想**で、control と
+> **同一の 5 成分**。A案 `v9_suji` に対する **実験スロット**で、差分は買い目の
+> 作り方だけ:
+>
+> 1. **Stage1** — 決まり手 × 1着コース の **32 クラス**確率(多項ロジスティック回帰)
+> 2. **Stage2** — セル条件付きの 2-3 着表 `P(2着, 3着 | セル)` に 強さpt で変調
+> 3. **合成** — `P(c1,c2,c3) = Σ_{セル:1着=c1} P1[セル] · P(c2,c3 | セル)`
+> 4. **ブレンド** — `w · 決まり手モデル + (1−w) · Plackett-Luce(強さpt, β)`
+> 5. **買い目** — **1 コース頭を除いた**確率上位 5 点
+>
+> ハイパラは valid (2026-06-25〜07-17, 3,696 レース) の 3連単 log-loss で選定:
+> **γ=0.5 / β=2.4 / w=0.7**(`scripts/boatrace/kimarite_blend.py` に定数)。
+> 設計書 §4.3 にあった γ=1.0 / β=1.4 / w=0.8 は **28 クラス・実験窓の値**で、
+> 32 クラス・全履歴の本番構成では選ばれない。
+>
+> ホールドアウト実測(test 3,614 レース、A案と**同一レース**):
+>
+> | | A案 `v9_suji` | B案 `v10_kimarite` |
+> | --- | ---: | ---: |
+> | 3連単 log-loss | — (確率モデルを持たない) | **3.9196** |
+> | 回収率 | 80.6% [69, 93] | 87.1% [76, 98] |
+> | 的中率 / 平均配当 | 10.27% / 3,927 円 | 12.65% / 3,442 円 |
+> | 万舟 / 1 万円 | 0.149 | 0.111 |
+>
+> **回収率の CI は 22pt 幅あり、この差では優劣を言えない**(§13.3)。
+> 主判定の log-loss では `Plackett-Luce(強さpt, β=1.4)` の 4.0382 に対し
+> **+0.1186 nat [+0.1003, +0.1376]** で、決まり手レイヤーが確率の質を
+> 上げていることは決着している。
+>
+> **A案と違い、1 レースの 5 点に複数の 1着艇が混ざる**(A案は 1着が 1 艇に決まる)。
+> 買い目は `data/estimate/kimarite/picks/YYYY/MM/DD.csv`。
+> 設計・検証は [`docs/design/ana_prediction.md`](../design/ana_prediction.md)(§13 B案)。
 > weights は成分が同一のため v1_basic と同値になる(初月は v1_basic の weights を
 > コピーしてブートストラップ)。
 
@@ -458,6 +496,11 @@ monthly-weights ジョブが毎月 1 日に再生成する。
 どの予想者のレースにも表示できる。設計は
 [`docs/design/ana_prediction.md`](../design/ana_prediction.md)(§12 / §14)。
 
+同じモデル (Stage1) を土台に、**穴予想 B案 `v10_kimarite` の買い目**もここから作る
+(`picks/` と `tables/pair_table.csv` / `tables/logloss.csv`)。荒れ度メーターは
+買い目を出さない表示専用の指標、`v10_kimarite` は買い目を出す予想者、という
+関係になっている。
+
 ### `data/estimate/kimarite/tables/cell_coef_{daily,realtime}.csv`(静的・月次再学習)
 
 決まり手セル(決まり手 × 1着コース、**凍結 32 クラス**)の多項ロジスティック回帰の係数。
@@ -518,6 +561,52 @@ B案 `v10_kimarite` が Stage1 の出力に掛けて 3連単 120 通りにする
 > **決まり手も込み**。同じ 1着3コースでも まくり (2着1c が 22.6%) と
 > まくり差し (63.4%) で分布が全く違う。同一ホールドアウトの条件付き log-loss は
 > **2.8024 対 2.8274** で、決まり手の条件付けが **0.025 nat** 鋭い。
+
+### `data/estimate/kimarite/picks/YYYY/MM/DD.csv`(日次 + 直前)
+
+**穴予想 B案 `v10_kimarite` の買い目** — `scripts/build_kimarite_picks.py` が出力する。
+レース × 状態 で 1 行。Stage1 の確率 (`kimarite/YYYY/MM/DD.csv`) と Stage2 のペア表、
+index の 強さpt を合成して作るので、**`build_index.py` と `build_kimarite_probs.py`
+の両方より後に**走らせる。
+
+| 列 | 説明 |
+| --- | --- |
+| `レースコード` / `レース日` / `レース場コード` / `レース回` | レースの識別 |
+| `状態` | `daily`(朝バッチ・枠なり)/ `realtime`(直前・展示進入) |
+| `買い目1` 〜 `買い目5` | `3-1-4` 形式の**艇番**。確率上位から順 |
+| `決まり手1` 〜 `決まり手5` | 各出目の最頻決まり手(`suji/tables/kimarite_table.csv` 由来。**A案と共通**) |
+
+> **A案 `data/estimate/suji/` との違い**: A案は 1着が 1 艇に決まるので
+> `1着コース` / `1着艇番` 列を持つが、B案は 120 通りの確率から上位 5 点を
+> 取るため **5 点に複数の 1着艇が混ざる**。そのぶんの列は無い。
+> 逆に言うと fun-site 側は同じパーサ (`parseAnaPicks`) で両方読める。
+
+> **1 コース頭は買わない。** 穴予想なので `1着コース = 1` の出目は候補から外す
+> (設計書 §5.2)。除外しない場合の実測は 77.3% / 平均配当 1,273 円で、
+> 「点数が同じでも穴として成立しない」。
+
+### `data/estimate/kimarite/tables/logloss.csv`(月次)
+
+**B案の主判定。** `scripts/build_kimarite_logloss.py` が、確定した
+状態=realtime のレースについて 3連単 120 通りの分布を組み直し、
+`Plackett-Luce(強さpt, β=1.4)` と比べる。
+
+| 列 | 説明 |
+| --- | --- |
+| `集計月` | `2026-08` 等。最終行に `累計` が入る |
+| `n` | 対象レース数 |
+| `PL_logloss` | 対照 = 強さpt だけで作った分布。control / A案が持つ情報と等価 |
+| `ブレンド_logloss` | B案 `v10_kimarite` の分布 |
+| `改善nat` | `PL − ブレンド`。**正なら B案の勝ち** |
+| `95%CI下限` / `95%CI上限` | レース単位の差の標準誤差による正規近似 |
+
+> **判定**: `95%CI下限` が 0 を下回ったら(= 有意な改善が無くなったら)
+> `v10_kimarite` を退役する。ホールドアウトでは **+0.1186 nat
+> [+0.1003, +0.1376]**(n=3,614)だったので、この水準を維持できているかを見る。
+>
+> **なぜ回収率で判定しないか**: A案との回収率差 +4.2pt を有意にするには
+> 約 34,700 レース(8.2 ヶ月)必要。log-loss なら約 418 レース(0.1 ヶ月)で
+> 決着する(設計書 §13.3)。
 
 ### `data/estimate/kimarite/tables/calibration.csv`(月次)
 

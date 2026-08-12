@@ -440,6 +440,41 @@ python scripts/build_kimarite_pairs.py          # 既定 k=150
 python scripts/build_kimarite_pairs.py --k 300
 ```
 
+### `scripts/build_kimarite_picks.py`
+
+穴予想 B案 `v10_kimarite` の買い目。Stage1 の確率 × Stage2 のペア表を合成し、
+Plackett-Luce(強さpt)とブレンドして **1 コース頭を除いた上位 5 点**を出す。
+
+```sh
+python scripts/build_kimarite_picks.py --date 2026-08-13 --mode daily
+python scripts/build_kimarite_picks.py --date 2026-08-13 --mode realtime \
+    --update-races 202608132301,202608132302
+```
+
+**`build_index.py`(強さpt)と `build_kimarite_probs.py`(Stage1)の両方より後**に
+走らせること。どちらかが欠けていれば作り方を示して落ちる。
+合成の式と定数 (γ / β / w) は `scripts/boatrace/kimarite_blend.py`。
+
+### `scripts/build_kimarite_logloss.py`
+
+A案 vs B案 の**主判定**。確定した 状態=realtime のレースで 3連単 120 通りの
+分布を組み直し、`Plackett-Luce(強さpt, β=1.4)` と log-loss を比べる。
+
+```sh
+python scripts/build_kimarite_logloss.py                        # started_at 以降
+python scripts/build_kimarite_logloss.py --from-date 2026-09-01
+```
+
+出力は `data/estimate/kimarite/tables/logloss.csv`(月次行 + `累計` 行)。
+
+### `notebooks/ana_prediction/kimarite_backtest.py`
+
+γ / β / w の再選定用(numpy / sklearn が要る)。valid で選び、test は報告のみ。
+
+```sh
+python notebooks/ana_prediction/kimarite_backtest.py --k-grid 150
+```
+
 ## Testing
 
 ```bash

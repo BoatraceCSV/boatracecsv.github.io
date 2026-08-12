@@ -103,7 +103,7 @@ PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date +'%Y-%m-15') -1 month" +'%
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
-ACTIVE_PREDICTORS=(v1_basic v9_suji)  # 2026-08-12: 穴予想 v9_suji を投入 (control と同一成分・買い目のみ差分) / 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v9_suji v10_kimarite)  # 2026-08-13: 穴予想 B案 v10_kimarite を投入 (決まり手モデル。判定は 3連単 log-loss) / 2026-08-12: 穴予想 A案 v9_suji を投入 (control と同一成分・買い目のみ差分) / 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, ym=${TODAY_YM}, prev=${PREV_YM})"
 git clone \
@@ -125,7 +125,8 @@ sparse_paths=(
   # 穴予想 v9_suji: スジ表 / 決まり手注釈テーブル (静的、月次更新)。
   # 日次の買い目 CSV は下で当月ぶんだけ追加する (全履歴を引かないため)。
   data/estimate/suji/tables
-  # 荒れ度メーター: 決まり手セルの学習済み係数 (静的、月次更新)
+  # 荒れ度メーター / 穴予想 v10_kimarite: 決まり手セルの学習済み係数と
+  # セル条件付きの 2-3 着表 (静的、月次更新)。
   data/estimate/kimarite/tables
   "data/programs/recent_national/${TODAY_YM}"
   "data/programs/recent_local/${TODAY_YM}"
@@ -140,6 +141,7 @@ sparse_paths=(
   "data/previews/od3/${TODAY_YM}"
   "data/estimate/suji/${TODAY_YM}"
   "data/estimate/kimarite/${TODAY_YM}"
+  "data/estimate/kimarite/picks/${TODAY_YM}"
   "data/results/realtime/${TODAY_YM}"
   "data/results/payouts/${TODAY_YM}"
   "data/programs/title/${TODAY_YM}"
