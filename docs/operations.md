@@ -103,3 +103,18 @@ cone-mode が日次ファイルの全履歴まで checkout してしまうため
 `status: retired` にすると `active_predictors()` から外れ、preview-realtime /
 build_index / GCS ミラー / 集計すべての対象から自動的に落ちる。
 `infra/run*.sh` の `ACTIVE_PREDICTORS` も同期すること。
+
+## 荒れ度メーターの運用(2026-08-12〜)
+
+予想者に紐づかない独立の指標なので、`ACTIVE_PREDICTORS` とは無関係に毎回動く。
+
+| ジョブ | 処理 | 出力 |
+| --- | --- | --- |
+| monthly-weights | `build_kimarite.py`(全履歴で再学習) | `data/estimate/kimarite/tables/cell_coef_*.csv` |
+| daily-sync | `build_kimarite_probs.py --mode daily` | `data/estimate/kimarite/YYYY/MM/DD.csv` |
+| preview-realtime | `write_day(..., realtime)` を内部呼び出し | 同上(realtime を upsert) |
+
+**学習と推論を分けている理由**: 推論を sklearn 非依存にしておくと、
+毎回の直前バッチでモデルを読み込む必要がなく、係数 CSV さえあれば動く。
+係数のクラス構成が `boatrace.kimarite.CELLS` とズレていたら
+**黙って動かず落ちる**(古い係数で推論して静かに壊れるのを防ぐ)。

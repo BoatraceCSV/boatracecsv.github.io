@@ -158,6 +158,8 @@ sparse_paths=(
   # 穴予想 v9_suji: 静的テーブル (スジ表 / 決まり手注釈) と当月の買い目 CSV
   data/estimate/suji/tables
   "data/estimate/suji/${TODAY_YM}"
+  data/estimate/kimarite/tables
+  "data/estimate/kimarite/${TODAY_YM}"
 )
 for predictor in "${ACTIVE_PREDICTORS[@]}"; do
   sparse_paths+=("data/estimate/${predictor}/${TODAY_YM}")
@@ -257,6 +259,13 @@ run_step "build-racer-st" python scripts/build_racer_st.py --date "${TODAY_JST}"
 run_step "build-suji-picks" python scripts/build_suji_picks.py --date "${TODAY_JST}" --mode daily
 
 # ---------------------------------------------------------------------------
+# 荒れ度メーター (決まり手セルの確率)。学習済み係数から推論するだけなので
+# sklearn 非依存・数十ミリ秒。直前バッチが同じ CSV に realtime 行を upsert する。
+# 設計: docs/design/ana_prediction.md §14
+# ---------------------------------------------------------------------------
+run_step "build-kimarite-probs" python scripts/build_kimarite_probs.py --date "${TODAY_JST}" --mode daily
+
+# ---------------------------------------------------------------------------
 # build_index.py は git にコミットしないため、ここで明示 commit/push する。
 # 旧 GHA workflow の "Commit Daily Index" ステップ相当。
 # 失敗を握り潰す: コミットが無い場合は no-op、push 競合は次回で吸収。
@@ -270,6 +279,8 @@ commit_and_push_index() {
   git add data/estimate/racer_st/
   # 穴予想 v9_suji の買い目 (build_suji_picks.py も git にコミットしない)
   git add data/estimate/suji/
+  # 荒れ度メーター (build_kimarite_probs.py も git にコミットしない)
+  git add data/estimate/kimarite/
   if git diff --cached --quiet; then
     log "No daily index changes to commit"
     return 0

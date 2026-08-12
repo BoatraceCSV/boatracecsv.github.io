@@ -395,6 +395,28 @@ python scripts/build_suji_picks.py --date 2026-08-11 --mode realtime \
     --update-races 202608112301,202608112302
 ```
 
+### `scripts/build_kimarite.py`
+
+荒れ度メーターの Stage1(決まり手セルの多項ロジスティック回帰)を全履歴で学習し、
+係数 CSV を出す。monthly-weights ジョブが毎月 1 日に再学習する。sklearn を使う。
+
+```sh
+python scripts/build_kimarite.py                       # 全履歴で学習
+python scripts/build_kimarite.py --report              # ホールドアウト評価つき
+python scripts/build_kimarite.py --to-date 2026-06-25  # 窓を切る (検証用)
+```
+
+### `scripts/build_kimarite_probs.py`
+
+学習済み係数から日次の荒れ度・セル確率を出す。**sklearn 非依存**(係数 CSV から
+softmax を直接計算)。180 レースで 0.05 秒程度。
+
+```sh
+python scripts/build_kimarite_probs.py --date 2026-08-12 --mode daily
+python scripts/build_kimarite_probs.py --date 2026-08-12 --mode realtime \
+    --update-races 202608122301
+```
+
 ## Testing
 
 ```bash

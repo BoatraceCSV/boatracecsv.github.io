@@ -173,6 +173,8 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
         # 穴予想 v9_suji の買い目 (build_suji_picks.py 出力)。買い目そのものを
         # 配るので fun-site 側では計算しない (docs/design/ana_prediction.md §13)。
         CsvUploadSpec("suji", f"data/estimate/suji/{ymd}.csv"),
+        # 荒れ度メーター (build_kimarite_probs.py 出力)。
+        CsvUploadSpec("kimarite", f"data/estimate/kimarite/{ymd}.csv"),
     ]
     for predictor in active_predictors():
         specs.append(CsvUploadSpec(

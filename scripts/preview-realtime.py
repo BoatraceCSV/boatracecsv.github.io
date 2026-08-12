@@ -132,6 +132,14 @@ _suji_spec = importlib.util.spec_from_file_location(
 _build_suji_picks = importlib.util.module_from_spec(_suji_spec)
 _suji_spec.loader.exec_module(_build_suji_picks)
 
+# 荒れ度メーター (build_kimarite_probs.py)。学習済み係数から推論するだけ。
+_kim_probs_path = Path(__file__).parent / "build_kimarite_probs.py"
+_kim_spec = importlib.util.spec_from_file_location(
+    "build_kimarite_probs", _kim_probs_path
+)
+_build_kimarite_probs = importlib.util.module_from_spec(_kim_spec)
+_kim_spec.loader.exec_module(_build_kimarite_probs)
+
 from boatrace.predictors import active_predictors  # noqa: E402
 
 
@@ -942,6 +950,27 @@ def main() -> int:
                     "preview_realtime_suji_update_failed",
                     error=str(exc),
                 )
+
+        # 荒れ度メーター。予想者に紐づかない独立の成果物なので、
+        # active_predictors() とは無関係に毎サイクル更新する。
+        try:
+            n_kim = _build_kimarite_probs.write_day(
+                PROJECT_ROOT, day, _build_kimarite_probs.STATE_REALTIME,
+                set(updated_codes),
+            )
+            if n_kim > 0:
+                paths.append(_build_kimarite_probs.probs_csv_path(PROJECT_ROOT, day))
+            logging_module.info(
+                "preview_realtime_kimarite_updated",
+                date=date_str,
+                n_updated=n_kim,
+                race_codes=updated_codes,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logging_module.error(
+                "preview_realtime_kimarite_update_failed",
+                error=str(exc),
+            )
 
     # --- 5c & 5d shared: finished-race source list -------------------
     # The live holding list rewrites a race's ``deadline_time`` to

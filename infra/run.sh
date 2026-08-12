@@ -125,6 +125,8 @@ sparse_paths=(
   # 穴予想 v9_suji: スジ表 / 決まり手注釈テーブル (静的、月次更新)。
   # 日次の買い目 CSV は下で当月ぶんだけ追加する (全履歴を引かないため)。
   data/estimate/suji/tables
+  # 荒れ度メーター: 決まり手セルの学習済み係数 (静的、月次更新)
+  data/estimate/kimarite/tables
   "data/programs/recent_national/${TODAY_YM}"
   "data/programs/recent_local/${TODAY_YM}"
   "data/programs/motor_stats/${TODAY_YM}"
@@ -137,6 +139,7 @@ sparse_paths=(
   "data/previews/od2/${TODAY_YM}"
   "data/previews/od3/${TODAY_YM}"
   "data/estimate/suji/${TODAY_YM}"
+  "data/estimate/kimarite/${TODAY_YM}"
   "data/results/realtime/${TODAY_YM}"
   "data/results/payouts/${TODAY_YM}"
   "data/programs/title/${TODAY_YM}"

@@ -82,6 +82,7 @@ def test_build_csv_specs_includes_results():
         "stt",
         "racer_st",
         "suji",
+        "kimarite",
         "index:v1_basic",
         "index:v9_suji",
         "results",

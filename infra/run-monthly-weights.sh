@@ -203,6 +203,11 @@ python scripts/build_course_rate.py
 log "Rebuilding suji tables (v9_suji buy-list source)"
 python scripts/build_suji_table.py
 
+# 荒れ度メーターの Stage1 (決まり手セルの多項ロジスティック回帰)。
+# 全履歴で学習し、係数 CSV だけを出す (推論側は sklearn 非依存)。
+log "Retraining kimarite cell model (荒れ度メーター)"
+python scripts/build_kimarite.py
+
 log "Building monthly weights for ${TARGET_MONTH} (predictors: ${ACTIVE_PREDICTORS[*]})"
 python scripts/build_weights.py --month "${TARGET_MONTH}" --all-active
 

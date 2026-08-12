@@ -947,3 +947,11 @@ gcloud logging read \
 - `run-monthly-weights.sh` に `build_suji_table.py` を追加(`build_course_rate.py` の隣)
 
 詳細は [operations.md](./operations.md#穴予想-v9_suji-の運用2026-08-12)。
+
+## 荒れ度メーターの追加(2026-08-12)
+
+- `run.sh` / `run-daily-sync.sh` の sparse-checkout に
+  `data/estimate/kimarite/tables`(静的)と `data/estimate/kimarite/${TODAY_YM}`(日次)
+- `run-daily-sync.sh` に `build-kimarite-probs` ステップと commit 対象を追加
+- `run-monthly-weights.sh` に `build_kimarite.py`(再学習)を追加
+- `gcs_publisher.py` に `csv_type=kimarite` を追加
