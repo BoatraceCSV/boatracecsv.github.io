@@ -190,3 +190,66 @@ class TestInference:
 
     def test_no_race_cards_returns_empty(self, repo: Path) -> None:
         assert build_kimarite_probs.build_day(repo, dt.date(2026, 8, 13), "realtime") == []
+
+
+class TestCalibration:
+    """校正集計 (build_kimarite_calibration)。"""
+
+    @staticmethod
+    def _setup(repo: Path, pred_upset: str, winner: str, kimarite_name: str) -> None:
+        import build_kimarite_probs as bkp
+
+        probs_header = bkp.HEADER
+        # 正解セルの確率だけ 0.5、残りを等分して合計 1 にする
+        rest = 0.5 / (len(kimarite.CELLS) - 1)
+        probs = []
+        for cell in kimarite.CELLS:
+            probs.append("0.500000" if cell == kimarite_name else f"{rest:.6f}")
+        _write(
+            repo / "data" / "estimate" / "kimarite" / "2026" / "08" / "12.csv",
+            probs_header,
+            [["202608120101", "2026-08-12", "01", "1R", "realtime", pred_upset] + probs],
+        )
+        _write(
+            repo / "data" / "results" / "realtime" / "2026" / "08" / "12.csv",
+            ["レースコード", "レース日", "決まり手", "1着_艇番"],
+            [["202608120101", "2026-08-12", "逃　げ" if kimarite_name == "逃げ_1" else "まくり", winner]],
+        )
+
+    def test_nige_counts_as_not_upset(self, tmp_path: Path) -> None:
+        import build_kimarite_calibration as cal
+
+        self._setup(tmp_path, "0.3000", "1", "逃げ_1")
+        rows = cal.build_rows(cal.collect(tmp_path, None))
+        total = next(r for r in rows if r[0] == "合計")
+        assert total[1] == 1
+        assert float(total[3]) == 0.0  # 実測荒れ度
+
+    def test_non_nige_counts_as_upset(self, tmp_path: Path) -> None:
+        import build_kimarite_calibration as cal
+
+        self._setup(tmp_path, "0.6000", "3", "まくり_3")
+        rows = cal.build_rows(cal.collect(tmp_path, None))
+        total = next(r for r in rows if r[0] == "合計")
+        assert float(total[3]) == 1.0
+
+    def test_daily_rows_are_excluded(self, tmp_path: Path) -> None:
+        """朝の暫定予測は校正統計に混ぜない。"""
+        import build_kimarite_calibration as cal
+        import build_kimarite_probs as bkp
+
+        self._setup(tmp_path, "0.3000", "1", "逃げ_1")
+        path = tmp_path / "data" / "estimate" / "kimarite" / "2026" / "08" / "12.csv"
+        with open(path, newline="", encoding="utf-8") as fh:
+            reader = csv.reader(fh)
+            header = next(reader)
+            row = next(reader)
+        row[bkp.HEADER.index("状態")] = "daily"
+        _write(path, header, [row])
+        assert cal.build_rows(cal.collect(tmp_path, None)) == []
+
+    def test_band_label_covers_the_full_range(self) -> None:
+        import build_kimarite_calibration as cal
+
+        for v in (0.0, 0.15, 0.5, 0.99, 1.0):
+            assert cal.band_label(v)

@@ -417,6 +417,19 @@ python scripts/build_kimarite_probs.py --date 2026-08-12 --mode realtime \
     --update-races 202608122301
 ```
 
+### `scripts/build_kimarite_calibration.py`
+
+荒れ度メーターの校正 (予測帯ごとの 予測 vs 実測) と log-loss を集計する。
+monthly-weights ジョブが再学習の後に実行する。stdlib のみ。
+
+```sh
+python scripts/build_kimarite_calibration.py
+python scripts/build_kimarite_calibration.py --from-date 2026-09-01
+```
+
+出力は `data/estimate/kimarite/tables/calibration.csv`。集計対象は
+**直前予測 (状態=realtime) のみ**で、朝の暫定値は混ぜない。
+
 ## Testing
 
 ```bash

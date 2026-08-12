@@ -208,6 +208,11 @@ python scripts/build_suji_table.py
 log "Retraining kimarite cell model (荒れ度メーター)"
 python scripts/build_kimarite.py
 
+# 荒れ度メーターの校正監視 (予測帯ごとの 予測 vs 実測、および log-loss)。
+# 再学習の後に走らせて、新しいモデルが校正を保っているかを記録する。
+log "Recomputing kimarite calibration"
+python scripts/build_kimarite_calibration.py
+
 log "Building monthly weights for ${TARGET_MONTH} (predictors: ${ACTIVE_PREDICTORS[*]})"
 python scripts/build_weights.py --month "${TARGET_MONTH}" --all-active
 
