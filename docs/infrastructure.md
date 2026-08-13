@@ -92,7 +92,7 @@ Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`prev
 | `data/programs/recent_national/<YYYY/MM>/` | 全国近況5節 |
 | `data/programs/recent_local/<YYYY/MM>/` | 当地近況5節 |
 | `data/programs/motor_stats/<YYYY/MM>/` + `<前月>/` | モーター期成績(前月分は7日fallback用) |
-| `data/previews/{tkz,stt,sui,original_exhibition}/<YYYY/MM>/` | 直前バッチの追記対象 |
+| `data/previews/{tkz,stt,sui,original_exhibition,tokuten_hayami}/<YYYY/MM>/` | 直前バッチの追記対象 (`preview-realtime.py` の `PREVIEW_SOURCES` と 1:1)。cone 外のパスが 1 つでも混ざると `git add` がまとめて失敗し、その回の commit が丸ごと落ちる |
 | `data/previews/{od1,od2,od3}/<YYYY/MM>/` | 集計中オッズの追記対象。cone 外だと git add が無視され永続化されない |
 | `data/results/realtime/<YYYY/MM>/` | bc_rs1_2 由来の realtime 結果 CSV(締切後の追記対象)。cone 外だと git add が無視され永続化されない |
 | `data/results/payouts/<YYYY/MM>/` | bc_rs2 由来の払戻金 CSV(締切後の追記対象)。同じく cone 外だと git add が無視され永続化されない |
@@ -937,6 +937,44 @@ gcloud logging read \
 (`data/estimate/stadium/`, `data/programs/recent_*/`, `data/programs/motor_stats/` 等)
 が漏れている可能性。スクリプト側で新たに参照ファイルを増やしたら
 `run.sh` も同時に更新し、イメージを再ビルドする必要がある。
+
+### `stage_files_failed` (`matched paths ... outside of your sparse-checkout definition`)
+
+**症状**: サイトの直前情報がまったく更新されない。Cloud Logging に
+`event=stage_files_failed` と `The following paths and/or pathspecs matched
+paths that exist outside of your sparse-checkout definition` が出る。
+
+**原因**: `boatrace.git_operations.stage_files()` は 1 回の `git add <files...>`
+で全ファイルをまとめてステージするため、**cone 外のパスが 1 つでも混ざると
+`git add` 全体が非 0 で終了し、その回の commit がまるごと落ちる**
+(cone 内の他のファイルも一緒に失われる)。新しい CSV 種別を書き出すよう
+スクリプトを変更したのに `run.sh` の sparse-checkout を更新し忘れた時に発生。
+
+**確認**:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_job" AND resource.labels.job_name="preview-realtime" AND jsonPayload.event="stage_files_failed"' \
+  --limit=20 --freshness=2d --format='value(timestamp,jsonPayload.error)'
+```
+
+**対処**: エラーメッセージに出ているパス(例
+`data/previews/tokuten_hayami/2026/08/13.csv`)の月ディレクトリを
+`infra/run.sh` の `sparse_paths` に追加し、「## 更新手順」に従って
+イメージ再ビルド + Job 更新。
+
+**予防**: `preview-realtime.py` の `PREVIEW_SOURCES` や新しい出力先を足す
+PR では、`run.sh` の `sparse_paths` を必ず同じ PR で更新する。
+
+## 得点率早見 `tokuten_hayami` の追加(2026-08-12)
+
+- `preview-realtime.py` の `PREVIEW_SOURCES` に `tokuten_hayami` を追加
+  (`data/previews/tokuten_hayami/<YYYY/MM>/DD.csv`)
+- `gcs_publisher.py` に `csv_type=tokuten_hayami` を追加
+- **`run.sh` の sparse-checkout に `data/previews/tokuten_hayami/${TODAY_YM}` を
+  追加**(2026-08-13 に追加。初期実装で漏れており、preview-realtime の
+  `git add` が丸ごと失敗して同日の直前情報が一切 commit されなかった。
+  上記 `stage_files_failed` の項を参照)
 
 ## 穴予想 `v9_suji` の追加(2026-08-12)
 

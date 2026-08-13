@@ -82,10 +82,14 @@ REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 #   - data/programs/motor_stats/<YYYY>/<MM>/     feature input — モーター期成績 (this month)
 #   - data/programs/motor_stats/<PREV_YM>/       previous month — motor_pt has 7-day fallback
 #                                       that crosses month boundaries near month start
-#   - data/previews/{tkz,stt,sui,original_exhibition,od1,od2,od3}/<YYYY>/<MM>/
+#   - data/previews/{tkz,stt,sui,original_exhibition,tokuten_hayami,od1,od2,od3}/<YYYY>/<MM>/
 #                                       existing CSVs for today (for dedup) + write target
 #                                       (od1/od2/od3 = 集計中オッズ。cone 外だと
 #                                       git add が無視されて永続化されない)
+#                                       ※ preview-realtime.py の PREVIEW_SOURCES に
+#                                       種別を足したら必ずここも足すこと。cone 外の
+#                                       パスが 1 つでも混ざると `git add` 全体が
+#                                       失敗し、その回の commit が丸ごと落ちる。
 #   - data/results/realtime/<YYYY>/<MM>/        bc_rs1_2 由来の realtime 結果 CSV
 #                                       (existing CSV for dedup + write target).
 #                                       cone 外だと git add が無視され、
@@ -136,6 +140,7 @@ sparse_paths=(
   "data/previews/stt/${TODAY_YM}"
   "data/previews/sui/${TODAY_YM}"
   "data/previews/original_exhibition/${TODAY_YM}"
+  "data/previews/tokuten_hayami/${TODAY_YM}"
   "data/previews/od1/${TODAY_YM}"
   "data/previews/od2/${TODAY_YM}"
   "data/previews/od3/${TODAY_YM}"
