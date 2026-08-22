@@ -104,6 +104,12 @@ def test_build_csv_specs_includes_results():
         "index:v10_kimarite",
         "results",
         "payouts",
+        # 日付パーティションを持たない静的テーブル。2026-08-22 に mirror 対象へ
+        # 追加した (fun-site の枠番詳細ページが枠番pt の raw → z → 偏差値 → 寄与
+        # を再現するのに、win_rate.csv と場別 μ/σ/w の両方を必要とするため)。
+        "waku_table",
+        "weights:v1_basic",
+        "weights:v10_kimarite",
     ]
 
 
@@ -134,6 +140,47 @@ def test_build_csv_specs_preview_and_program_paths():
     assert (
         by_type["motor_stats"].repo_relative_path
         == "data/programs/motor_stats/2026/05/07.csv"
+    )
+
+
+def test_build_csv_specs_waku_table_path():
+    """コース強度テーブルは日付を含まない固定パス。"""
+    specs = _build_csv_specs(Path("/tmp"), dt.date(2026, 5, 7))
+    by_type = {s.csv_type: s for s in specs}
+
+    assert (
+        by_type["waku_table"].repo_relative_path
+        == "data/estimate/stadium/win_rate.csv"
+    )
+
+
+def test_build_csv_specs_weights_path_defaults_to_target_month(tmp_path):
+    """weights ディレクトリが無い repo では対象月のパスを spec に残す
+    (upload 側が local_file_missing でスキップする)。"""
+    specs = _build_csv_specs(tmp_path, dt.date(2026, 5, 7))
+    by_type = {s.csv_type: s for s in specs}
+
+    assert (
+        by_type["weights:v1_basic"].repo_relative_path
+        == "data/estimate/stadium/weights/v1_basic/2026-05.csv"
+    )
+
+
+def test_build_csv_specs_weights_falls_back_to_latest_past_month(tmp_path):
+    """当月ぶんが未生成なら、build_index が実際に読む直近の過去月を配る。"""
+    weights_dir = tmp_path / "data" / "estimate" / "stadium" / "weights" / "v1_basic"
+    weights_dir.mkdir(parents=True)
+    (weights_dir / "2026-03.csv").write_text("stadium\n", encoding="utf-8")
+    (weights_dir / "2026-04.csv").write_text("stadium\n", encoding="utf-8")
+    # 対象月より後のファイルは選ばれない (過去日の再ビルドで未来の重みを使わない)。
+    (weights_dir / "2026-06.csv").write_text("stadium\n", encoding="utf-8")
+
+    specs = _build_csv_specs(tmp_path, dt.date(2026, 5, 7))
+    by_type = {s.csv_type: s for s in specs}
+
+    assert (
+        by_type["weights:v1_basic"].repo_relative_path
+        == "data/estimate/stadium/weights/v1_basic/2026-04.csv"
     )
 
 

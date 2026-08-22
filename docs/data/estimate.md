@@ -28,6 +28,14 @@
 | 予想者ごとの月次重み | `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` |
 | 全予想者共通の場別パラメータ | `data/estimate/stadium/win_rate.csv`, `sui_params.csv` |
 
+> `win_rate.csv` と `weights/{predictor_id}/YYYY-MM.csv` は **GCS ミラー対象**
+> (`csv_type=waku_table` / `weights:{predictor_id}`)。fun-site の枠番詳細ページが
+> 枠番pt の内訳(raw 勝率 → z → 偏差値pt → 寄与)を再現するのに両方を読むため。
+> 日付パーティションを持たないので、mirror されるのは月 1 回 monthly-weights が
+> 内容を変えた直後のサイクルだけ(それ以外は md5 一致でスキップ)。weights は
+> **その日の index CSV を作ったのと同じファイル**が上がる(`build_index.py` と同じ
+> 「対象月以下で最新」規則 = `PredictorSpec.resolve_weights_csv_path`)。
+
 ### 現行レジストリ
 
 | ID | 表示名 | 状態 | 開始日 | 成分 |
@@ -680,11 +688,15 @@ index の 強さpt を合成して作るので、**`build_index.py` と `build_k
 
 場 × 季節 × コース別の長期勝率テーブル。`枠番pt` の生値ソース。
 
+> 月次再生成の対象ではない(`build_course_rate.py` が回すのは `course_win_rate.csv`
+> の方)。過去数年ぶんの着順実績から作られた**据え置きの静的テーブル**で、
+> 生成スクリプトはリポジトリに無い。
+
 | 列 | 説明 |
 | --- | --- |
 | `場コード` | "01"〜"24" |
 | `季節` | 春(3-5月)/ 夏(6-8月)/ 秋(9-11月)/ 冬(12-2月) |
-| `1コース勝率` 〜 `6コース勝率` | コース別の長期1着率(%) |
+| `1コース勝率` 〜 `6コース勝率` | コース別の長期**勝率**(= 平均得点。1着10〜6着1点の平均。値域はおよそ 2.5〜8.4 で、全コース平均は 5 前後)。1着率(%) ではない |
 
 ### `data/estimate/stadium/course_win_rate.csv`
 

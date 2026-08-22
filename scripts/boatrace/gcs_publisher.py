@@ -17,6 +17,11 @@ This module is invoked at the very end of ``preview-realtime.py`` to:
      csv_type は ``index:{predictor_id}`` 形式)
    * ``data/results/realtime/YYYY/MM/DD.csv`` (preview-realtime が追記)
    * ``data/results/payouts/YYYY/MM/DD.csv`` (preview-realtime が追記)
+   * ``data/estimate/stadium/win_rate.csv`` と
+     ``data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv``
+     (monthly-weights の成果物。日付パーティションを持たない静的テーブル。
+     fun-site の枠番詳細ページが枠番pt の内訳 raw → z → 偏差値 → 寄与 を
+     再現するのに読む)
 
    Each object is uploaded only when its content (md5) differs from the
    currently-stored object. This keeps GCS object generations stable and
@@ -53,6 +58,14 @@ from .predictors import active_predictors
 # csv_type = f"{INDEX_CSV_TYPE_PREFIX}{predictor_id}"
 # 例: "index:v1_basic" / "index:v2_tenkai"
 INDEX_CSV_TYPE_PREFIX = "index:"
+
+# 予想者別 weights CSV の csv_type プリフィックス。
+# csv_type = f"{WEIGHTS_CSV_TYPE_PREFIX}{predictor_id}"
+# 例: "weights:v1_basic"
+WEIGHTS_CSV_TYPE_PREFIX = "weights:"
+
+# 場×季節×コース勝率テーブル (枠番pt の生データ) の csv_type。
+WAKU_TABLE_CSV_TYPE = "waku_table"
 
 # Imports are deferred so that the module can be imported even if the GCP
 # client libraries are not yet installed (e.g. during pure-Python unit tests).
@@ -209,6 +222,38 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
         CsvUploadSpec("results", f"data/results/realtime/{ymd}.csv"),
         CsvUploadSpec("payouts", f"data/results/payouts/{ymd}.csv"),
     ])
+    specs.extend(_static_table_specs(repo, day))
+    return specs
+
+
+def _static_table_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
+    """日付パーティションを持たない静的テーブルの spec。
+
+    monthly-weights が生成し git push するだけだった 2 種を mirror 対象に
+    含める。どちらも 8KB 程度で月 1 回しか変わらないため、md5 一致でスキップ
+    される日次実行のコストはほぼゼロ。
+
+    * ``win_rate.csv``: 場×季節×コース勝率 (枠番pt の raw 値)
+    * ``weights/{predictor_id}/YYYY-MM.csv``: 場別の μ / σ / w
+      (raw → 偏差値pt → 寄与 の変換に必要)
+
+    weights は **その日の index CSV を作ったのと同じファイル** を配る
+    (``PredictorSpec.resolve_weights_csv_path`` = ``build_index`` と同一規則)。
+    当月ぶんが未生成なら直近の過去月にフォールバックするため、下流は
+    「対象月以下で最新」を自前で解決せずに済む。解決できない (weights ディレクトリ
+    が無い) 場合は当月パスを spec に残し、``upload_csvs`` 側で
+    ``local_file_missing`` としてスキップさせる。
+    """
+    specs: List[CsvUploadSpec] = [
+        CsvUploadSpec(WAKU_TABLE_CSV_TYPE, "data/estimate/stadium/win_rate.csv"),
+    ]
+    for predictor in active_predictors():
+        resolved = predictor.resolve_weights_csv_path(repo, day)
+        path = resolved or predictor.weights_csv_path(repo, day)
+        specs.append(CsvUploadSpec(
+            csv_type=f"{WEIGHTS_CSV_TYPE_PREFIX}{predictor.predictor_id}",
+            repo_relative_path=path.relative_to(repo).as_posix(),
+        ))
     return specs
 
 
