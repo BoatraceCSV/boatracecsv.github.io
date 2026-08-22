@@ -107,7 +107,10 @@ def test_build_csv_specs_includes_results():
         # 日付パーティションを持たない静的テーブル。2026-08-22 に mirror 対象へ
         # 追加した (fun-site の枠番詳細ページが枠番pt の raw → z → 偏差値 → 寄与
         # を再現するのに、win_rate.csv と場別 μ/σ/w の両方を必要とするため)。
+        # sui_params.csv も同じ理由で追加 (気象詳細ページが気象pt の
+        # 特徴量 × 係数 → z → 偏差値 → 寄与 を再現する)。
         "waku_table",
+        "sui_params",
         "weights:v1_basic",
         "weights:v10_kimarite",
     ]
@@ -151,6 +154,17 @@ def test_build_csv_specs_waku_table_path():
     assert (
         by_type["waku_table"].repo_relative_path
         == "data/estimate/stadium/win_rate.csv"
+    )
+
+
+def test_build_csv_specs_sui_params_path():
+    """気象回帰係数テーブルも日付を含まない固定パス。"""
+    specs = _build_csv_specs(Path("/tmp"), dt.date(2026, 5, 7))
+    by_type = {s.csv_type: s for s in specs}
+
+    assert (
+        by_type["sui_params"].repo_relative_path
+        == "data/estimate/stadium/sui_params.csv"
     )
 
 
