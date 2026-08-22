@@ -75,7 +75,7 @@ fun-site が Eventarc 経由で Cloud Run Job として起動 → Astro 再ビ�
 | [`../infra/Dockerfile`](../infra/Dockerfile) | Python 3.11-slim ベースの実行イメージ (preview-realtime / daily-sync / monthly-weights 共用) |
 | [`../infra/run.sh`](../infra/run.sh) | preview-realtime Job のエントリポイント (clone → sparse-checkout → python 実行) |
 | [`../infra/run-daily-sync.sh`](../infra/run-daily-sync.sh) | daily-sync Job のエントリポイント (clone → sparse-checkout → 6 スクリプト直列 → commit → GCS publish) |
-| [`../infra/run-monthly-weights.sh`](../infra/run-monthly-weights.sh) | monthly-weights Job のエントリポイント (clone → sparse-checkout 8 ヶ月分 + 全履歴 → build_course_rate.py → build_suji_table.py → build_kimarite{,_pairs,_calibration,_logloss}.py → build_weights.py → commit) |
+| [`../infra/run-monthly-weights.sh`](../infra/run-monthly-weights.sh) | monthly-weights Job のエントリポイント (clone → sparse-checkout 8 ヶ月分 + 全履歴 [race_cards は checkout 後に追加] → build_course_rate.py → build_suji_table.py → build_kimarite{,_pairs,_calibration,_logloss}.py → build_weights.py → commit) |
 | [`../infra/cloudbuild.yaml`](../infra/cloudbuild.yaml) | Cloud Build パイプライン (build → push → 3 job 更新) |
 | [`../infra/.dockerignore`](../infra/.dockerignore) | ビルドコンテキスト最小化 |
 
@@ -130,6 +130,11 @@ monthly-weights は `build_weights.py` が**直近 6 ヶ月の全日**につい�
 の月単位ディレクトリを sparse-checkout する。月数の計算は
 `run-monthly-weights.sh` の bash ループで自動生成される。
 
+同じジョブで動く**全履歴スクリプト** (build_course_rate / build_suji_table /
+build_kimarite*) はこの 8 ヶ月窓では足りないので、月に依存しないパスを
+ディレクトリごと cone に入れる。唯一 `data/programs/race_cards/` だけは
+**checkout 後の 2 段階目**で必要な月だけ追加する (理由は下記)。
+
 | 取得対象 | 用途 |
 | --- | --- |
 | `scripts/` | build_weights.py / boatrace パッケージ (index_features) |
@@ -137,6 +142,8 @@ monthly-weights は `build_weights.py` が**直近 6 ヶ月の全日**につい�
 | `data/estimate/stadium/` | win_rate.csv / sui_params.csv / course_win_rate.csv (build_weights 入力) + weights/{predictor_id}/ (出力先) |
 | `data/results/realtime/` | 全履歴 (build_course_rate.py / build_suji_table.py / build_kimarite*.py が全期間を舐める。月別 sparse とは別に静的に全期間 checkout) |
 | `data/previews/stt/` | 全履歴 (進入コース。build_suji_table / build_kimarite_pairs / build_kimarite_calibration / build_kimarite_logloss が全期間で引く。欠けると `entry_courses` が枠なり進入にフォールバックし、スジ表・決まり手セル・log-loss が黙って歪む) |
+| `data/previews/tkz/` | 全履歴 (展示タイム。build_kimarite.py が results/realtime の全日について引く特徴量) |
+| `data/previews/sui/` | 全履歴 (気象。同上) |
 | `data/estimate/suji/tables/` | **出力先** — build_suji_table.py の `{suji_table,kimarite_table}.csv` |
 | `data/estimate/kimarite/` | **出力先 + 入力** — `tables/` が build_kimarite / build_kimarite_pairs / build_kimarite_calibration / build_kimarite_logloss の出力先、`YYYY/MM/` の日次予測 CSV が calibration と log-loss の入力。両方要るので親ごと cone に入れる (全体で数 MB) |
 | `data/estimate/v10_kimarite/` | build_kimarite_logloss.py の PL ベースライン用 強さpt。同スクリプトの `PREDICTOR_ID` と同期させること |
@@ -149,6 +156,7 @@ monthly-weights は `build_weights.py` が**直近 6 ヶ月の全日**につい�
 | `data/previews/tkz/<YM>/` × 8 | 展示タイム (`exhibit` 特徴量) |
 | `data/previews/stt/<YM>/` × 8 | 進入コース (course 補正) |
 | `data/previews/original_exhibition/<YM>/` × 8 | 展示値 1〜3 (`exhibit` 特徴量) |
+| `data/programs/race_cards/<YM>/` × 全月 (**2 段階目**) | build_kimarite.py の universe。`git checkout` 後に `data/results/realtime/` の実ディレクトリから月を導出し、`git sparse-checkout add` で追加する |
 
 > ⚠️ `data/previews/*` を入れ忘れると `_load_realtime_preview_by_code` が空 dict
 > を返し、`exhibit` と `weather` 特徴量が全レースで NaN になる。すると
@@ -164,18 +172,48 @@ monthly-weights は `build_weights.py` が**直近 6 ヶ月の全日**につい�
 > 吐くスクリプトを追加したら、`run-monthly-weights.sh` の `paths` 配列と
 > 末尾の `git add` を必ずセットで更新する。
 
-> ⚠️ **既知の制限 — `build_kimarite.py` の学習母数.** このスクリプトだけは
-> `data/programs/race_cards/` と `data/previews/{tkz,sui}/` も日ごとに引くが、
-> それらは月単位ループぶん (8 ヶ月) しか cone に入っていない。race_cards が
-> 無い日はまるごと skip されるため、docstring の「全履歴で学習」に反して実際の
-> 母数は直近 8 ヶ月になる。`data/results/realtime/` は 2025/11 開始なので現状の
-> 取りこぼしは 3 ヶ月ぶんで、毎月 1 ヶ月ずつ増える。全履歴にするには
-> race_cards / tkz / sui も 2025/11 以降を丸ごと cone に入れる必要があるが、
-> race_cards だけで約 60MB (月 +6MB) 増える。Job の memory は 2Gi で、
-> Cloud Run の `/tmp` は tmpfs なので checkout サイズがそのまま memory を食う。
+> ⚠️ **`build_kimarite.py` の学習母数は cone の広さで決まる。**
+> このスクリプトだけは `race_cards` と `previews/{tkz,sui}` も日ごとに引き、
+> **race_cards が無い日は `continue` でまるごと無言スキップ**する。8 ヶ月窓
+> しか cone に無かった頃は docstring の「学習窓 = 全履歴」に反して母数が直近
+> 8 ヶ月になっていた (2026-09-01 実行相当で 43,595 → 30,160 レース = 31% 欠落。
+> しかも `data/results/realtime/` が 2025/11 開始なので欠落幅は毎月 1 ヶ月ずつ
+> 拡大する)。2026-08-22 に 3 ファミリとも全履歴を cone に入れて解消済み。
+> ジョブログの `races=NNNNN (YYYY-MM-DD 〜 YYYY-MM-DD)` の左端が
+> `data/results/realtime/` の最古日と一致しているかで再発を検知できる。
+
+#### 2 段階目 (race_cards) を分けている理由
+
+`data/previews/{stt,tkz,sui}/` は `data/results/realtime/` と同じ 2025/11 開始
+なので、ディレクトリごと cone に入れても取得量は「必要な月ぶん」と変わらない。
+一方 `data/programs/race_cards/` は 2025/05 開始で、**2025/05〜2025/10 の約
+42MB は results/realtime より前**にあたり build_kimarite からは 1 日も参照
+されない。Cloud Run の `/tmp` は tmpfs で checkout サイズがそのまま memory を
+食うため、race_cards だけは `git checkout` 後に results/realtime の実月から
+導出して `git sparse-checkout add` する。epoch を定数で持たないので、履歴が
+伸びても backfill されても追従する。
+
+| cone | tmpfs (worktree + `.git`) |
+| --- | --- |
+| 全履歴対応前 | 約 304MB |
+| **本構成 (race_cards は必要な月のみ)** | **約 321MB** (+9MB/月) |
+| race_cards を丸ごと入れた場合 | 約 374MB (うち 42MB は死荷重) |
+
+#### リソース目安 (2026-08 実測)
+
+| 項目 | 実測 | 伸び方 |
+| --- | --- | --- |
+| checkout (tmpfs 上) | 約 321MB | 全履歴ファミリぶん **+9MB/月** |
+| `build_kimarite.py` の peak RSS | 578MB (43,595 レース) | 約 9.6KB/レース = **+42MB/月** |
+| 全履歴スクリプト 5 本の実行時間 | 合計 ~7 秒 | ほぼ線形 |
+
+`--memory=2Gi` に対して現状の山は約 0.9GB。上の伸び率だと**約 2 年**で上限に
+近づくので、`build_kimarite.py` の peak RSS が 1.2GB を超えたら
+`infra/cloudbuild.yaml` の `deploy-job-monthly-weights` を 4Gi に上げる。
 
 target_month を `TARGET_MONTH=2026-05` のように上書きすると、その月を起点と
-した 8 ヶ月分が動的に cone に入る。月数を変えたい場合は
+した 8 ヶ月分が動的に cone に入る (2 段階目の race_cards は target_month に
+依らず results/realtime の全月)。月数を変えたい場合は
 `run-monthly-weights.sh` の冒頭ループ `for i in 1 2 3 4 5 6 7` を編集する。
 
 ## ワンタイム セットアップ
@@ -603,6 +641,9 @@ gh api /repos/${GITHUB_REPO}/commits?path=data/estimate/stadium/weights --jq '.[
 期待される stdout の最後付近 (`run-monthly-weights.sh` のログ):
 
 ```
+[run-monthly-weights ...] Extending sparse-checkout: race_cards × 7 months (2025/11 〜 2026/05) for build_kimarite.py
+[run-monthly-weights ...] Retraining kimarite cell model (荒れ度メーター)
+races=28000 (2025-11-01 〜 2026-04-30) classes=32
 [run-monthly-weights ...] Building monthly weights for 2026-05
 ... (build_weights.py の per-stadium fit ログ — stderr 経由)
   FeatureContext stats: race_cards=270 title=270 runs=~1350 period_starts=181
