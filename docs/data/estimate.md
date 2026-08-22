@@ -28,9 +28,11 @@
 | 予想者ごとの月次重み | `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` |
 | 全予想者共通の場別パラメータ | `data/estimate/stadium/win_rate.csv`, `sui_params.csv` |
 
-> `win_rate.csv` と `weights/{predictor_id}/YYYY-MM.csv` は **GCS ミラー対象**
-> (`csv_type=waku_table` / `weights:{predictor_id}`)。fun-site の枠番詳細ページが
-> 枠番pt の内訳(raw 勝率 → z → 偏差値pt → 寄与)を再現するのに両方を読むため。
+> `win_rate.csv` / `sui_params.csv` / `weights/{predictor_id}/YYYY-MM.csv` は
+> **GCS ミラー対象** (`csv_type=waku_table` / `sui_params` / `weights:{predictor_id}`)。
+> fun-site の枠番詳細ページが枠番pt の内訳(raw 勝率 → z → 偏差値pt → 寄与)を、
+> 気象詳細ページが気象pt の内訳(特徴量 × 係数 → raw → z → 偏差値pt → 寄与)を
+> 再現するのに読むため。
 > 日付パーティションを持たないので、mirror されるのは月 1 回 monthly-weights が
 > 内容を変えた直後のサイクルだけ(それ以外は md5 一致でスキップ)。weights は
 > **その日の index CSV を作ったのと同じファイル**が上がる(`build_index.py` と同じ

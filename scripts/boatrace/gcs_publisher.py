@@ -17,11 +17,13 @@ This module is invoked at the very end of ``preview-realtime.py`` to:
      csv_type は ``index:{predictor_id}`` 形式)
    * ``data/results/realtime/YYYY/MM/DD.csv`` (preview-realtime が追記)
    * ``data/results/payouts/YYYY/MM/DD.csv`` (preview-realtime が追記)
-   * ``data/estimate/stadium/win_rate.csv`` と
+   * ``data/estimate/stadium/win_rate.csv``、
+     ``data/estimate/stadium/sui_params.csv`` と
      ``data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv``
-     (monthly-weights の成果物。日付パーティションを持たない静的テーブル。
-     fun-site の枠番詳細ページが枠番pt の内訳 raw → z → 偏差値 → 寄与 を
-     再現するのに読む)
+     (monthly-weights / 手動更新の成果物。日付パーティションを持たない静的
+     テーブル。fun-site の枠番詳細ページが枠番pt の内訳 raw → z → 偏差値 →
+     寄与 を、気象詳細ページが気象pt の内訳 特徴量 × 係数 → z → 偏差値 →
+     寄与 を再現するのに読む)
 
    Each object is uploaded only when its content (md5) differs from the
    currently-stored object. This keeps GCS object generations stable and
@@ -66,6 +68,9 @@ WEIGHTS_CSV_TYPE_PREFIX = "weights:"
 
 # 場×季節×コース勝率テーブル (枠番pt の生データ) の csv_type。
 WAKU_TABLE_CSV_TYPE = "waku_table"
+
+# 場×特徴量×コースの気象線形回帰係数テーブル (気象pt の生データ) の csv_type。
+SUI_PARAMS_CSV_TYPE = "sui_params"
 
 # Imports are deferred so that the module can be imported even if the GCP
 # client libraries are not yet installed (e.g. during pure-Python unit tests).
@@ -229,11 +234,13 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
 def _static_table_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
     """日付パーティションを持たない静的テーブルの spec。
 
-    monthly-weights が生成し git push するだけだった 2 種を mirror 対象に
-    含める。どちらも 8KB 程度で月 1 回しか変わらないため、md5 一致でスキップ
-    される日次実行のコストはほぼゼロ。
+    git push するだけだった 3 種を mirror 対象に含める。いずれも 8-12KB 程度で
+    月 1 回しか変わらないため、md5 一致でスキップされる日次実行のコストは
+    ほぼゼロ。
 
     * ``win_rate.csv``: 場×季節×コース勝率 (枠番pt の raw 値)
+    * ``sui_params.csv``: 場×特徴量×コースの気象回帰係数 (気象pt の raw 値。
+      切片 ``base_c*`` は下流も上流も使わないが、ファイル単位で配る)
     * ``weights/{predictor_id}/YYYY-MM.csv``: 場別の μ / σ / w
       (raw → 偏差値pt → 寄与 の変換に必要)
 
@@ -246,6 +253,7 @@ def _static_table_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
     """
     specs: List[CsvUploadSpec] = [
         CsvUploadSpec(WAKU_TABLE_CSV_TYPE, "data/estimate/stadium/win_rate.csv"),
+        CsvUploadSpec(SUI_PARAMS_CSV_TYPE, "data/estimate/stadium/sui_params.csv"),
     ]
     for predictor in active_predictors():
         resolved = predictor.resolve_weights_csv_path(repo, day)
