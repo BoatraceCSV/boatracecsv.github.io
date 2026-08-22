@@ -156,6 +156,24 @@ class PredictorSpec:
         """``data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv``。"""
         return self.weights_dir(repo) / f"{target_month:%Y-%m}.csv"
 
+    def resolve_weights_csv_path(self, repo: Path, day: dt.date) -> Path | None:
+        """``day`` の月以下で**最新**の ``YYYY-MM.csv`` を返す。無ければ None。
+
+        monthly-weights が回っていない月 (= 当月ぶんがまだ無い) は直近の
+        過去月にフォールバックする。``build_index.py`` が実際に読む weights
+        ファイルを決める規則そのもので、GCS ミラー (``gcs_publisher``) も
+        「その日の index CSV を作ったのと同じファイル」を配るために使う。
+        """
+        weights_dir = self.weights_dir(repo)
+        if not weights_dir.exists():
+            return None
+        target_tag = f"{day:%Y-%m}"
+        candidates = [
+            p for p in sorted(weights_dir.glob("????-??.csv"))
+            if p.stem <= target_tag
+        ]
+        return candidates[-1] if candidates else None
+
     # ── ラベル ────────────────────────────────────────────────────
     def component_labels(self) -> dict[str, str]:
         """``component_keys`` → 日本語ラベル のマップ (registry から解決)。"""

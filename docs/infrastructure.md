@@ -51,14 +51,20 @@ monthly-weights:  build_course_rate.py + build_suji_table.py + build_kimarite.py
    │   │                                            estimate/{predictor_id},
    │   │                                            results/realtime,results/payouts}/...
    │   │     (active 予想者ごとに csv_type=index:{predictor_id} で 1 件ずつ mirror)
+   │   │     + estimate/stadium/win_rate.csv (csv_type=waku_table)
+   │   │     + estimate/stadium/weights/{predictor_id}/YYYY-MM.csv
+   │   │       (csv_type=weights:{predictor_id}。日付非依存の静的テーブルなので
+   │   │        md5 一致でスキップされ、実際に上がるのは月 1 回)
    │   └─ ★ Pub/Sub publish (boatrace.gcs_publisher.publish_realtime_completed) ← preview-realtime / daily-sync のみ
    │         topic: ${BOATRACE_PUBSUB_TOPIC} (e.g. fun-site-realtime-completed)
    │         trigger: "daily-bootstrap" (daily-sync) / "realtime" (preview-realtime)
    ▼
 fun-site が Eventarc 経由で Cloud Run Job として起動 → Astro 再ビルド → Cloud Storage 配信
-(monthly-weights は git push のみ。生成された weights CSV と静的テーブルは
- build_index.py / build_kimarite_*.py がリポジトリから読むため、fun-site への
- 直接配信経路は持たない)
+(monthly-weights 自体は git push のみ。生成された weights CSV と静的テーブルは
+ build_index.py / build_kimarite_*.py がリポジトリから読む。ただし win_rate.csv と
+ weights/{predictor_id}/ の 2 種だけは翌日以降の preview-realtime / daily-sync が
+ GCS へ相乗りで mirror する — fun-site の枠番詳細ページが枠番pt の内訳
+ raw → z → 偏差値 → 寄与 を再現するのに読むため)
 ```
 
 * GCP Project: `boatrace-487212` (Project Number: `530399381543`)

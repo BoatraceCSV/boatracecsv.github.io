@@ -78,14 +78,12 @@ DEFAULT_PREDICTOR_ID = "v1_basic"
 def find_weights_file(repo: Path, predictor: PredictorSpec, day: dt.date) -> Path | None:
     """Return the latest YYYY-MM.csv ≤ day's month under the predictor's weights
     directory. None if no file exists.
+
+    解決規則は ``PredictorSpec.resolve_weights_csv_path`` が持つ (GCS ミラーが
+    「その日の index CSV を作ったのと同じ weights ファイル」を配るのに同じ規則を
+    使うため)。ここは呼び出し側の互換のための薄いラッパ。
     """
-    weights_dir = predictor.weights_dir(repo)
-    if not weights_dir.exists():
-        return None
-    target_tag = f"{day:%Y-%m}"
-    candidates = sorted(weights_dir.glob("????-??.csv"))
-    candidates = [p for p in candidates if p.stem <= target_tag]
-    return candidates[-1] if candidates else None
+    return predictor.resolve_weights_csv_path(repo, day)
 
 
 def load_weights(path: Path, predictor: PredictorSpec) -> dict:
