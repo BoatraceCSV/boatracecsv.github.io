@@ -622,6 +622,12 @@ index の 強さpt を合成して作るので、**`build_index.py` と `build_k
 状態=realtime のレースについて 3連単 120 通りの分布を組み直し、
 `Plackett-Luce(強さpt, β=1.4)` と比べる。
 
+> このファイルの**リポジトリ初出は 2026-09-01 の monthly-weights 実行**。
+> それ以前は `infra/run-monthly-weights.sh` の sparse-checkout と `git add`
+> の両方から漏れていて、毎月生成されては黙って捨てられていた
+> (2026-08-22 修正)。手元で先に見たい場合は
+> `python scripts/build_kimarite_logloss.py`。
+
 | 列 | 説明 |
 | --- | --- |
 | `集計月` | `2026-08` 等。最終行に `累計` が入る |

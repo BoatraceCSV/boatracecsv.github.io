@@ -9,9 +9,11 @@
 #      fallback (build_weights.py invokes compute_features_for_day for every
 #      day in the 6-month training window, and motor_stats has a 7-day
 #      fallback that crosses month boundaries).
-#   2. Run scripts/build_weights.py --month "${TARGET_MONTH}".
-#   3. Commit + push data/estimate/stadium/index_weights/ (build_weights.py
-#      writes the CSV but does not self-commit).
+#   2. Run scripts/build_weights.py --month "${TARGET_MONTH}" と、静的テーブル
+#      再生成スクリプト群 (build_suji_table / build_kimarite* )。
+#   3. Commit + push data/estimate/stadium/ と
+#      data/estimate/{suji,kimarite}/tables/ (どのスクリプトも CSV を書くだけで
+#      self-commit しない)。
 #
 # The monthly-weights schedule is intentionally placed BEFORE daily-sync
 # (07:30 JST) so that the boundary day's daily index and realtime index are
@@ -145,11 +147,40 @@ git clone \
 cd repo
 
 # sparse-checkout: 静的部分 + 月単位データ × N ヶ月。
+#
+# cone mode の落とし穴 (infra/run.sh の同名ブロックと同じ): **書き込み先が
+# cone の外にあると、スクリプトがファイルを作っても `git add` に無視されて
+# 永続化されない**。しかもエラーにならないので、毎月黙って捨てられる。
+# 静的テーブルを新しく吐くスクリプトを下に足したら、その出力ディレクトリを
+# 必ずこの配列と後段の `git add` の両方に足すこと。
+#
+# 全履歴を舐めるスクリプト (build_suji_table / build_kimarite*) の入力も、
+# cone の外だと「ファイルが無い日」として黙って読み飛ばされ、学習・集計の
+# 母数がその月ぶんだけ減る。月単位ループではなくディレクトリごと入れる。
 paths=(
   scripts
   .boatrace
   data/estimate/stadium
+  # 全履歴 (月単位ループとは別に丸ごと)。build_suji_table / build_kimarite /
+  # build_kimarite_pairs / build_kimarite_calibration / build_kimarite_logloss
+  # が揃って全期間を舐める。
   data/results/realtime
+  # 進入コース。上記 5 本すべてが全履歴で引く (欠けると entry_courses が
+  # 枠なり進入にフォールバックし、スジ表・決まり手セルが黙って歪む)。
+  data/previews/stt
+  # 決まり手注釈テーブルの書き込み先 (build_suji_table)。v9_suji 退役後も
+  # build_kimarite_picks.py が kimarite_table.csv を読むので外さないこと
+  # (2026-08-22 退役。registry.py 冒頭コメント参照)。
+  data/estimate/suji/tables
+  # 荒れ度メーター / 穴予想 v10_kimarite。tables/ が build_kimarite・
+  # build_kimarite_pairs・build_kimarite_calibration・build_kimarite_logloss
+  # の書き込み先で、YYYY/MM/ の日次予測 CSV は calibration と logloss の
+  # **入力**。両方要るので tables/ だけでなく親ごと cone に入れる。
+  data/estimate/kimarite
+  # build_kimarite_logloss.py の PL ベースライン用 強さpt。同スクリプトの
+  # PREDICTOR_ID と同期させること (現状 v10_kimarite 固定。ここが欠けると
+  # logloss.csv が n=0 の空表になり、主判定が消える)。
+  data/estimate/v10_kimarite
 )
 for ym in "${months[@]}"; do
   paths+=(
@@ -160,7 +191,7 @@ for ym in "${months[@]}"; do
     "data/programs/motor_stats/${ym}"
     "data/previews/sui/${ym}"
     "data/previews/tkz/${ym}"
-    "data/previews/stt/${ym}"
+    "data/previews/stt/${ym}"   # 上で全履歴を cone に入れ済み (cone mode は親優先で no-op)
     "data/previews/original_exhibition/${ym}"
   )
 done
@@ -209,6 +240,16 @@ python scripts/build_suji_table.py
 
 # 荒れ度メーターの Stage1 (決まり手セルの多項ロジスティック回帰)。
 # 全履歴で学習し、係数 CSV だけを出す (推論側は sklearn 非依存)。
+#
+# 既知の制限: このスクリプトだけは data/programs/race_cards と
+# data/previews/{tkz,sui} も日ごとに引くが、それらは上の sparse-checkout で
+# 月単位ループぶん (8 ヶ月) しか cone に入れていない。race_cards が無い日は
+# まるごと skip されるので、実際の学習母数は「results/realtime の全履歴」
+# ではなく直近 8 ヶ月になる。results/realtime は 2025/11 開始なので現状の
+# 取りこぼしは 3 ヶ月ぶんで、毎月 1 ヶ月ずつ増える。全履歴で学習させるには
+# race_cards / tkz / sui も 2025/11 以降を丸ごと cone に入れる必要がある
+# (race_cards は 2025/11 以降だけで約 60MB / 月 +6MB。Job の memory は 2Gi、
+# Cloud Run の /tmp は tmpfs なので checkout サイズがそのまま memory を食う)。
 log "Retraining kimarite cell model (荒れ度メーター)"
 python scripts/build_kimarite.py
 
@@ -238,10 +279,12 @@ python scripts/build_weights.py --month "${TARGET_MONTH}" --all-active
 # しているため、bare push は non-fast-forward で reject されることが多い。
 # fetch + rebase で取り込んでから push し、競合があれば最大数回までリトライ。
 #
-# weights CSV (data/estimate/stadium/index_weights/) は preview-realtime が
-# 触る path (data/previews/, data/results/, data/estimate/index/) と完全に
-# 別なので、rebase は conflict なしで成立する想定。万一 conflict が出た場合
-# は abort して fail する (人手調査が必要)。
+# コミット対象 (data/estimate/stadium/ と data/estimate/{suji,kimarite}/
+# tables/) は preview-realtime が触る path と完全に別なので、rebase は
+# conflict なしで成立する想定。preview-realtime は自分が書いた日次 CSV
+# (data/previews/, data/results/, data/estimate/<predictor>/YYYY/MM/,
+# data/estimate/kimarite/{YYYY/MM,picks}/) だけを add するので、tables/ とは
+# 重ならない。万一 conflict が出た場合は abort して fail する (人手調査が必要)。
 # ---------------------------------------------------------------------------
 push_with_rebase() {
   local max_attempts=5
@@ -271,11 +314,18 @@ push_with_rebase() {
   return 1
 }
 
-git add data/estimate/stadium/weights/ data/estimate/stadium/course_win_rate.csv
+# 静的テーブルの書き込み先はすべてここに列挙する。cone の外のパスを
+# 混ぜると `git add` 全体が失敗する / cone 内でも列挙し忘れると生成物が
+# 黙って捨てられる (上の sparse-checkout ブロック参照)。
+git add \
+  data/estimate/stadium/weights/ \
+  data/estimate/stadium/course_win_rate.csv \
+  data/estimate/suji/tables/ \
+  data/estimate/kimarite/tables/
 if git diff --cached --quiet; then
-  log "No weights changes to commit for ${TARGET_MONTH}"
+  log "No weights/table changes to commit for ${TARGET_MONTH}"
 else
-  git commit -m "Update monthly index weights + course_win_rate (${TARGET_MONTH})"
+  git commit -m "Update monthly index weights + static tables (${TARGET_MONTH})"
   if ! push_with_rebase; then
     log "ABORT: failed to push weights for ${TARGET_MONTH} after retries"
     exit 1

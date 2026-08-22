@@ -37,6 +37,16 @@ GitHub Actions ワークフロー、設定ファイル、運用上のメモを�
   All changes (preview + odds + index + result + payout) go in a single commit. Idempotent and resilient to cron drift; commits one batch per invocation only when rows are actually appended.
   - **Cloud Run Jobs 構成**: `boatrace-487212/asia-northeast1` の Cloud Scheduler `preview-realtime-daytime` (`*/5 8-22 * * *`, Asia/Tokyo) が Cloud Run Job `preview-realtime` を発火します。詳細は [`infrastructure.md`](./infrastructure.md) を参照。
 - **`monthly-weights.yml`** — Runs on the 1st of each month at 06:00 JST. First rebuilds `data/estimate/stadium/course_win_rate.csv` (`course` 成分の場×レース番号×コース別テーブル、`scripts/build_course_rate.py`、全履歴から再生成。`course` を使う v6_course / v7_aggregate / v8_aionly は 2026-08-09 に退役済みで現在の消費者はいないが、再挑戦に備えて再生成は継続している), then re-learns 24-stadium × n_components weights for every active predictor from the prior 6 months of data and writes `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv`. `build_index.py` automatically picks up the latest weights ≤ the target month per predictor.
+  同じ実行で静的テーブル `data/estimate/suji/tables/*.csv` と
+  `data/estimate/kimarite/tables/*.csv` も全履歴から再生成し、weights と同じ
+  コミットに含めます。
+
+  > ⚠️ 静的テーブルの出力先は `infra/run-monthly-weights.sh` の
+  > sparse-checkout `paths` 配列と末尾の `git add` の**両方**に載っている必要が
+  > あります。cone-mode ではどちらかが欠けると生成物が**無言で捨てられます**
+  > (実際 `data/estimate/{suji,kimarite}/tables/` は導入時から両方に入っておらず、
+  > 2026-08-22 に修正するまで永続化されていませんでした)。詳細は
+  > [`infrastructure.md`](./infrastructure.md#sparse-checkout-対象-monthly-weights--run-monthly-weightssh)。
 
 ### 予想者(Predictor)の運用
 
@@ -145,6 +155,11 @@ index が無い場合は作り方を示して落ちる。
 0 を下回ったら退役する。**回収率では判定しない**(A案との差 +4.2pt を有意に
 するには 8.2 ヶ月かかる)。詳細は
 [`docs/design/ana_prediction.md`](../design/ana_prediction.md) §13.3。
+
+この CSV は monthly-weights が毎月 1 日に再生成する。**初回の生成は 2026-09-01
+の実行**(sparse-checkout / `git add` の取りこぼしを 2026-08-22 に修正したため、
+それ以前はリポジトリに存在しなかった)。手元で先に見たい場合は
+`python scripts/build_kimarite_logloss.py`。
 
 ## 荒れ度メーターの運用(2026-08-12〜)
 
