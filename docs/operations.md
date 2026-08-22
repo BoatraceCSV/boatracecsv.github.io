@@ -80,7 +80,24 @@ Official Boatrace Races Server: http://www1.mbrace.or.jp/od2/
 
 MIT License
 
-## 穴予想 `v9_suji` の運用(2026-08-12〜)
+## 穴予想 `v9_suji` の運用(2026-08-12〜2026-08-22、退役)
+
+> **2026-08-22 退役**。B案 `v10_kimarite` と穴予想スロットが重複し、回収率では
+> 両者の差を示せないため(本番 1,511 レースで共通 2.70 点 / 5 点、回収率
+> 70.7% vs 68.8%)、確率モデルを持ち主判定(3連単 log-loss)に載る B案を残した。
+> 検定と体験指標の記録は `scripts/boatrace/predictors/registry.py` 冒頭コメント。
+>
+> **止めたのは日次の買い目だけ**。月次のテーブル再生成は続いている:
+>
+> | ジョブ | 処理 | 状態 |
+> | --- | --- | --- |
+> | monthly-weights | `build_suji_table.py` | **継続**。`kimarite_table.csv` を `v10_kimarite` が読む |
+> | daily-sync | `build_suji_picks.py --mode daily` | **削除** |
+> | preview-realtime | `build_suji_picks.write_day(..., realtime)` | `active_predictors()` のゲートで**自動停止**(コードは残置) |
+> | gcs_publisher | `CsvUploadSpec("suji", ...)` | **削除** |
+>
+> `build_suji_picks.py` / `build_suji_table.py` は消さないこと —
+> `build_kimarite_picks.py` が両方から import している。
 
 穴予想の買い目は **boatracecsv 側で確定させて CSV に出す**(fun-site は表示と集計のみ)。
 そのため他の予想者と違い、index に加えて 2 系統のファイルが要る。

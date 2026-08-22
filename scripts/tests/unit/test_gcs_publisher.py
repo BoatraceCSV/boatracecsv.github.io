@@ -76,8 +76,11 @@ def test_build_csv_specs_includes_results():
     # v5_slit は 2026-08-10 に (control 比で有意差なし) 退役したため、
     # 現在の active は control (v1_basic) のみ。
     # racer_st は予想者非依存の固定 spec なので、v5_slit 退役後も出力し続ける。
-    # suji / kimarite / kimarite_picks も同じく予想者 ID を持たない固定 spec
+    # kimarite / kimarite_picks も同じく予想者 ID を持たない固定 spec
     # (買い目そのものを配るため。docs/design/ana_prediction.md §13)。
+    # suji (v9_suji の買い目) は 2026-08-22 の退役で生成が止まったため spec ごと
+    # 外した。決まり手注釈テーブル (data/estimate/suji/tables/) は
+    # v10_kimarite が使うので残っているが、GCS ミラー対象ではない。
     # 直前情報の残り (tkz / sui / original_exhibition / tokuten_hayami) と
     # daily-sync 系 (recent_national / recent_local / waku10 / motor_stats) は
     # 2026-08-12 に mirror 対象へ追加した (fun-site の直前情報・近況5節・
@@ -95,11 +98,9 @@ def test_build_csv_specs_includes_results():
         "waku10",
         "motor_stats",
         "racer_st",
-        "suji",
         "kimarite",
         "kimarite_picks",
         "index:v1_basic",
-        "index:v9_suji",
         "index:v10_kimarite",
         "results",
         "payouts",

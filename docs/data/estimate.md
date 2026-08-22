@@ -40,12 +40,32 @@
 | `v6_course` | コース予想 | **retired** (2026-08-09) | 2026-07-22 | **course**, racer, motor, exhibit, weather (waku を場×レース番号別コース強度に差し替え) |
 | `v7_aggregate` | 統合予想 | **retired** (2026-08-09) | 2026-07-23 | **course**, racer, **motor4**, exhibit, weather + **予測 ST を AI 推定 ST に差し替え** (v4/v5/v6 の 3 仮説統合) |
 | `v8_aionly` | AI予想 | **retired** (2026-08-09) | 2026-07-28 | course, racer, motor4, exhibit, weather (v7_aggregate と同一 5 成分。**買い目候補の選定のみ強さpt 基準 ±5.0pt に差し替え** — fun-site 側フラグ) |
-| `v9_suji` | スジ予想 | active | 2026-08-12 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**買い目の作り方のみ差し替え** — 下記) |
+| `v9_suji` | スジ予想 | **retired** (2026-08-22) | 2026-08-12 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**買い目の作り方のみ差し替え** — 下記) |
 | `v10_kimarite` | 穴予想 | active | 2026-08-13 | waku, racer, motor, exhibit, weather (v1_basic と同一 5 成分。**買い目の作り方のみ差し替え** — 下記) |
 
 > **2026-08-10 退役**: `v4_motor` / `v5_slit` は control (`v1_basic`) と有意差が無く
 > (p=0.884 / 0.377)、レシピが近いため買い目も control とほぼ重複していた。
 > `registry.py` 冒頭コメントに検定結果。
+
+> **2026-08-22 退役**: `v9_suji`(スジ予想、A案)は B案 `v10_kimarite` と穴予想
+> スロットが重複するため退役した。**成績の劣化が理由ではない** — A案は確率モデルを
+> 持たず主判定の 3連単 log-loss に載らないうえ、回収率では差の検出に 8.2 ヶ月かかる
+> (§13.3)。本番 1,511 レース(2026-08-13〜08-22、両案同一レース)の実測:
+>
+> | | A案 `v9_suji` | B案 `v10_kimarite` |
+> | --- | ---: | ---: |
+> | 的中率 | 8.95% | 11.33% |
+> | 回収率 | 70.7% | 68.8% |
+> | 平均配当 | **3,949 円** | 3,035 円 |
+> | 万舟 / 1 万円 | **0.133** | 0.066 |
+>
+> 買い目の重なりは平均 2.70 点 / 5 点(完全一致 1.3%)で、**買い目そのものは半分しか
+> 重ならないのに回収率では区別できない**。確率モデルを持ち主判定に載る B案を残した。
+> **体験指標(平均配当・万舟率)では A案が上回っている**点は記録として残す。
+>
+> **`data/estimate/suji/tables/kimarite_table.csv`(決まり手注釈)は
+> `v10_kimarite` が読むので生成を続ける**。停止したのは日次の買い目
+> (`data/estimate/suji/YYYY/MM/DD.csv`)と、その GCS ミラーのみ。
 
 > **判定方法の違いに注意**: 既存の予想者は回収率のペア比較で退役を判定してきたが、
 > **穴予想どうし(A案 `v9_suji` vs B案 `v10_kimarite`)の比較は回収率では決着しない**。
@@ -61,7 +81,7 @@
 > に月次で出る(`scripts/build_kimarite_logloss.py`。スキーマは下記)。**`v10_kimarite` の
 > ブレンドが `Plackett-Luce(強さpt)` を有意に上回らなくなったら退役**する。
 
-> **`v9_suji`(スジ予想、2026-08-12 投入)** は **穴予想**。control (`v1_basic`) と
+> **`v9_suji`(スジ予想、2026-08-12 投入 / 2026-08-22 退役)** は **穴予想**。control (`v1_basic`) と
 > **同一の 5 成分**(index / 強さpt は同値)で、差分は **買い目の作り方だけ**:
 >
 > * **1着** = **1 コース以外**で 強さpt が最大の艇
@@ -427,8 +447,17 @@ GCS ミラーには `csv_type=racer_st` でアップロードされます(`gcs_p
 
 ## 穴予想 v9_suji: スジ表と買い目
 
-`v9_suji`(スジ予想)が使うファイル群。設計は
+`v9_suji`(スジ予想)が使っていたファイル群。設計は
 [`docs/design/ana_prediction.md`](../design/ana_prediction.md)(§13 A案 / §14 決まり手の表示方式)。
+
+> **2026-08-22 に `v9_suji` は退役した**(上記の予想者一覧を参照)。この節のファイルの
+> 現状は次のとおり:
+>
+> | ファイル | 状態 |
+> | --- | --- |
+> | `tables/kimarite_table.csv`(決まり手注釈) | **月次再生成を継続**。`v10_kimarite` の `build_kimarite_picks.py` が読む |
+> | `tables/suji_table.csv`(スジ表) | 月次再生成を継続。現在どの active 予想者も使わないが、再挑戦の余地を残す(`course_win_rate.csv` と同じ扱い) |
+> | `YYYY/MM/DD.csv`(買い目) | **生成停止**。過去分は保持。GCS ミラーの spec も外した |
 
 ### `data/estimate/suji/tables/suji_table.csv`(静的・月次再生成)
 
@@ -473,9 +502,11 @@ monthly-weights ジョブが毎月 1 日に再生成する。
 > 事前情報ではなく **2着・3着の並びそのもの**(1コースが残っていればまくり差し、
 > 外が続いていればまくり)。設計書 §14 を参照。
 
-### `data/estimate/suji/YYYY/MM/DD.csv`(日次 + 直前)
+### `data/estimate/suji/YYYY/MM/DD.csv`(日次 + 直前、2026-08-22 で生成停止)
 
-**買い目** — `scripts/build_suji_picks.py` が出力する。レース × 状態 で 1 行。
+**買い目** — `scripts/build_suji_picks.py` が出力していた。レース × 状態 で 1 行。
+`v9_suji` の退役に伴い 2026-08-22 で更新が止まっている(2026-08-10〜08-22 分は保持)。
+スクリプト自体は残す(`build_kimarite_picks.py` がヘルパーを import しているため)。
 
 | 列 | 説明 |
 | --- | --- |

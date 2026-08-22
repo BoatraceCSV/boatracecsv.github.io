@@ -23,10 +23,10 @@
 | 派生 | Strength Index | `data/estimate/{predictor_id}/YYYY/MM/DD.csv` | [estimate.md#strength-index](./estimate.md#strength-index) |
 | 派生 | Stadium Parameters | `data/estimate/stadium/*.csv`, `data/estimate/stadium/weights/{predictor_id}/*.csv` | [estimate.md#stadium-parameters](./estimate.md#stadium-parameters) |
 | 派生 | Motor Ability Score | `data/estimate/motor_ability_score.csv` | [motor_ability_score.md](./motor_ability_score.md) |
-| 派生 | スジ表 / 決まり手注釈 (穴予想 v9_suji) | `data/estimate/suji/tables/{suji_table,kimarite_table}.csv` | [estimate.md#穴予想-v9_suji-スジ表と買い目](./estimate.md#穴予想-v9_suji-スジ表と買い目) |
+| 派生 | スジ表 / 決まり手注釈 (決まり手注釈は v10_kimarite が使用) | `data/estimate/suji/tables/{suji_table,kimarite_table}.csv` | [estimate.md#穴予想-v9_suji-スジ表と買い目](./estimate.md#穴予想-v9_suji-スジ表と買い目) |
 | 派生 | 荒れ度メーター 係数 | `data/estimate/kimarite/tables/cell_coef_*.csv` | [estimate.md#荒れ度メーター決まり手セルモデル](./estimate.md#荒れ度メーター決まり手セルモデル) |
 | 派生 | 荒れ度メーター 日次 | `data/estimate/kimarite/YYYY/MM/DD.csv` | [estimate.md#荒れ度メーター決まり手セルモデル](./estimate.md#荒れ度メーター決まり手セルモデル) |
-| 派生 | 穴予想の買い目 (v9_suji) | `data/estimate/suji/YYYY/MM/DD.csv` | [estimate.md#穴予想-v9_suji-スジ表と買い目](./estimate.md#穴予想-v9_suji-スジ表と買い目) |
+| 派生 | 穴予想の買い目 (v9_suji、2026-08-22 退役で生成停止) | `data/estimate/suji/YYYY/MM/DD.csv` | [estimate.md#穴予想-v9_suji-スジ表と買い目](./estimate.md#穴予想-v9_suji-スジ表と買い目) |
 | 派生 | 決まり手セル条件付き 2-3着表 (Stage2) | `data/estimate/kimarite/tables/pair_table.csv` | [estimate.md#荒れ度メーター決まり手セルモデル](./estimate.md#荒れ度メーター決まり手セルモデル) |
 | 派生 | 穴予想の買い目 (v10_kimarite) | `data/estimate/kimarite/picks/YYYY/MM/DD.csv` | [estimate.md#荒れ度メーター決まり手セルモデル](./estimate.md#荒れ度メーター決まり手セルモデル) |
 | 派生 | 穴予想 A/B の 3連単 log-loss | `data/estimate/kimarite/tables/logloss.csv` | [estimate.md#荒れ度メーター決まり手セルモデル](./estimate.md#荒れ度メーター決まり手セルモデル) |

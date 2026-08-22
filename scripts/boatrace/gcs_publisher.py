@@ -194,9 +194,6 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
         # 選手別 推定ST (build_racer_st.py 出力)。fun-site のスリット予想 /
         # 1マーク予想が全国平均ST の代わりに読む (docs/design/st_estimation.md)。
         CsvUploadSpec("racer_st", f"data/estimate/racer_st/{ymd}.csv"),
-        # 穴予想 v9_suji の買い目 (build_suji_picks.py 出力)。買い目そのものを
-        # 配るので fun-site 側では計算しない (docs/design/ana_prediction.md §13)。
-        CsvUploadSpec("suji", f"data/estimate/suji/{ymd}.csv"),
         # 荒れ度メーター (build_kimarite_probs.py 出力)。
         CsvUploadSpec("kimarite", f"data/estimate/kimarite/{ymd}.csv"),
         # 穴予想 v10_kimarite の買い目 (build_kimarite_picks.py 出力)。suji と

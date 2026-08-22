@@ -246,6 +246,35 @@ class PredictorSpec:
 # 計算ロジック (index_features.py の motor4 / build_racer_st.py の racer_st) は
 # 保持する。再挑戦する場合は退役した ID は再利用せず新しい ID を立てる。
 #
+# 2026-08-22 退役: v9_suji (スジ予想、A案) は B案 v10_kimarite と穴予想スロットが
+# 重複するため status を "retired" にした。**成績の劣化が理由ではない**。A案は確率
+# モデルを持たないので主判定の 3連単 log-loss に載らず、回収率では差の検出に
+# 8.2 ヶ月かかると分かっている (docs/design/ana_prediction.md §13.3)。
+#
+# 本番の realtime 買い目 (2026-08-13〜08-22、A案 B案で同一の 1,511 レース):
+#
+#   予想者            的中率   回収率   平均配当   万舟   万舟/1万円
+#   v9_suji      (A案)  8.95%   70.7%   3,949 円    10     0.133
+#   v10_kimarite (B案) 11.33%   68.8%   3,035 円     5     0.066
+#
+# 買い目の重なりは平均 2.70 点 / 5 点 (完全一致 1.3%、1着艇の集合一致 11.5%) で
+# 設計時のバックテスト (2.62 点) と同水準。**買い目そのものは半分しか重ならないが、
+# 回収率では区別できない** (差 +4.2pt の検出に 34,700 レース必要)。穴予想の
+# スロットを 2 つ並べても差が示せないため、確率モデルを持ち主判定 (log-loss) に
+# 載る B案を残し、A案を退役させる。
+#
+# **注意: 体験指標では A案が上回っている** (平均配当 1.30 倍・万舟/1万円 2.0 倍)。
+# 「穴らしさ」を優先するなら判断が逆になりうる。再挑戦する場合も、退役した ID は
+# 再利用せず新しい ID を立てる。
+#
+# **v9_suji の計算資産は v10_kimarite が使っているので消さないこと**:
+#   - build_kimarite_picks.py が決まり手注釈テーブル
+#     (data/estimate/suji/tables/kimarite_table.csv、build_suji_table.py 生成) を読む
+#   - build_kimarite_picks.py が build_suji_picks.py の load_index_rows /
+#     load_kimarite_table / load_stt_courses / strengths_by_boat を import している
+# 停止するのは日次の買い目生成 (build_suji_picks.py) だけ。スジ表の月次再生成
+# (run-monthly-weights.sh) と sparse-checkout の data/estimate/suji/tables は残す。
+#
 # started_at は累計回収率の起点として fun-site 側で参照される。
 PREDICTORS: tuple[PredictorSpec, ...] = (
     PredictorSpec(
@@ -379,7 +408,11 @@ PREDICTORS: tuple[PredictorSpec, ...] = (
         predictor_id="v9_suji",
         display_name="スジ予想",
         slot=9,
-        status=STATUS_ACTIVE,
+        # 2026-08-22 退役。B案 v10_kimarite と穴予想スロットが重複し、回収率では
+        # 両者の差を示せない (本番 1,511 レースで共通 2.70 点 / 5 点、回収率
+        # 70.7% vs 68.8%)。確率モデルを持ち主判定の log-loss に載る B案を残した。
+        # 詳細は上のレジストリ冒頭コメント。
+        status=STATUS_RETIRED,
         # 投入日 (累計回収率の起点)。デプロイ日の翌日に合わせる。
         started_at=dt.date(2026, 8, 12),
         # 穴予想 (A案)。control (v1_basic) と **同一の 5 成分** で index / 強さpt は

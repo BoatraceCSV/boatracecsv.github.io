@@ -1016,3 +1016,23 @@ PR では、`run.sh` の `sparse_paths` を必ず同じ PR で更新する。
   ```
 
 詳細は [operations.md](./operations.md#穴予想-v10_kimarite-の運用2026-08-13)。
+
+## 穴予想 `v9_suji` の退役(2026-08-22)
+
+B案 `v10_kimarite` と穴予想スロットが重複するため退役。**成績の劣化が理由ではない**
+(詳細は `scripts/boatrace/predictors/registry.py` 冒頭コメント)。
+
+- `infra/run.sh` / `run-daily-sync.sh` / `run-monthly-weights.sh` の
+  `ACTIVE_PREDICTORS` を `(v1_basic v10_kimarite)` に変更
+- `run.sh` / `run-daily-sync.sh` の sparse-checkout から
+  **`data/estimate/suji/${TODAY_YM}`(日次)だけ**を削除。
+  **`data/estimate/suji/tables`(静的)は残す** — `build_kimarite_picks.py` が
+  `kimarite_table.csv`(決まり手注釈)を読むため、外すと B案の買い目が落ちる
+- `run-daily-sync.sh` から `build-suji-picks` ステップと
+  commit 対象の `data/estimate/suji/` を削除
+- `run-monthly-weights.sh` の `build_suji_table.py` は**残す**(上記の理由)
+- `gcs_publisher.py` から `csv_type=suji` の spec を削除
+- `preview-realtime.py` の realtime 買い目ブロックは `active_predictors()` の
+  ゲートで自動的に無効化されるため、コードは残置
+
+詳細は [operations.md](./operations.md#穴予想-v9_suji-の運用2026-08-122026-08-22退役)。

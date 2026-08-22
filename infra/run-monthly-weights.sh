@@ -79,7 +79,7 @@ fi
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
-ACTIVE_PREDICTORS=(v1_basic v9_suji v10_kimarite)  # 2026-08-13: 穴予想 B案 v10_kimarite を投入 (決まり手モデル。判定は 3連単 log-loss) / 2026-08-12: 穴予想 A案 v9_suji を投入 (control と同一成分・買い目のみ差分) / 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
+ACTIVE_PREDICTORS=(v1_basic v10_kimarite)  # 2026-08-22: v9_suji を退役 (B案 v10_kimarite と穴予想スロットが重複。回収率では差を示せず、主判定 log-loss に載る B案を残した) / 2026-08-13: 穴予想 B案 v10_kimarite を投入 (決まり手モデル。判定は 3連単 log-loss) / 2026-08-12: 穴予想 A案 v9_suji を投入 (control と同一成分・買い目のみ差分) / 2026-08-10: v4_motor/v5_slit を退役 (control 比で有意差なし + 買い目が control とほぼ重複) / 2026-08-09: v6_course/v7_aggregate/v8_aionly を退役 (control 比で有意に低回収率) / 2026-07-19: v2_tenkai/v3_tenkai を退役 (registry active_predictors() と同期)
 
 # ---------------------------------------------------------------------------
 # sparse-checkout 対象月の計算
@@ -198,9 +198,13 @@ mkdir -p logs
 log "Rebuilding course_win_rate.csv (course component raw source; no active predictor consumes it as of 2026-08-09)"
 python scripts/build_course_rate.py
 
-# 穴予想 v9_suji のスジ表 / 決まり手注釈テーブル (全履歴・収縮なし)。
+# スジ表 / 決まり手注釈テーブル (全履歴・収縮なし)。
+# v9_suji は 2026-08-22 に退役したが、**このブロックは消さないこと**:
+# 決まり手注釈テーブル (kimarite_table.csv) を B案 v10_kimarite の
+# build_kimarite_picks.py が読む。スジ表 (suji_table.csv) は現在どの active
+# 予想者も使わないが、course_win_rate.csv と同じく再挑戦の余地を残して再生成する。
 # 構成の根拠は notebooks/ana_prediction/report.md。
-log "Rebuilding suji tables (v9_suji buy-list source)"
+log "Rebuilding suji tables (kimarite_table.csv is read by v10_kimarite)"
 python scripts/build_suji_table.py
 
 # 荒れ度メーターの Stage1 (決まり手セルの多項ロジスティック回帰)。

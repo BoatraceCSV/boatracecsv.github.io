@@ -368,9 +368,13 @@ python scripts/build_sui_params.py \
 
 ### `scripts/build_suji_table.py`
 
-穴予想 `v9_suji` が使う静的テーブル 2 枚(スジ表 / 決まり手注釈)を
-`results/realtime` × `previews/stt` の全履歴から生成する。monthly-weights ジョブが
-毎月 1 日に再生成する。stdlib のみで動く(venv 不要)。
+静的テーブル 2 枚(スジ表 / 決まり手注釈)を `results/realtime` × `previews/stt` の
+全履歴から生成する。monthly-weights ジョブが毎月 1 日に再生成する。
+stdlib のみで動く(venv 不要)。
+
+> 元は穴予想 `v9_suji`(2026-08-22 退役)用だが、**決まり手注釈テーブル
+> (`kimarite_table.csv`)は `v10_kimarite` の `build_kimarite_picks.py` が読む**ので
+> 再生成は続いている。スジ表(`suji_table.csv`)は現在どの active 予想者も使わない。
 
 ```sh
 python scripts/build_suji_table.py                    # 本番構成 (全履歴・収縮なし)
@@ -385,6 +389,12 @@ python scripts/build_suji_table.py --from-date 2026-05-01 --to-date 2026-06-25
 
 穴予想 `v9_suji` の買い目 CSV(`data/estimate/suji/YYYY/MM/DD.csv`)を生成する。
 `build_index.py` の後に走らせる(強さpt を読むため)。
+
+> **`v9_suji` は 2026-08-22 に退役したので、このスクリプトは定期実行されていない**
+> (daily-sync のステップは削除、preview-realtime 側は `active_predictors()` の
+> ゲートで自動停止)。**モジュールは消さないこと** — `build_kimarite_picks.py` が
+> `load_index_rows` / `load_kimarite_table` / `load_stt_courses` /
+> `strengths_by_boat` を import している。手動実行は下記のとおり可能。
 
 ```sh
 # 朝バッチ: 当日の全レースを 状態=daily で出力

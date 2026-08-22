@@ -151,12 +151,14 @@ class TestRegistryV2Tenkai:
         退役。control と有意差がなく (p=0.884 / 0.377)、レシピが近いため買い目も
         control とほぼ重複していた (registry.py 冒頭コメントに検定結果)。
         2026-08-12 に穴予想 A案 v9_suji を、2026-08-13 に B案 v10_kimarite を投入
-        (どちらも control と同一成分で、買い目の作り方のみ差分)。
-        現在の active は control (v1_basic) と穴予想 2 案の 3 つ。
+        (どちらも control と同一成分で、買い目の作り方のみ差分)。A案 v9_suji は
+        2026-08-22 に退役。B案と穴予想スロットが重複し、回収率では両者の差を
+        示せないため、確率モデルを持ち主判定 (3連単 log-loss) に載る B案を残した。
+        現在の active は control (v1_basic) と穴予想 B案 (v10_kimarite) の 2 つ。
         """
         actives = active_predictors()
         ids = [p.predictor_id for p in actives]
-        assert ids == ["v1_basic", "v9_suji", "v10_kimarite"]
+        assert ids == ["v1_basic", "v10_kimarite"]
 
 
 class TestRegistryV3Tenkai:

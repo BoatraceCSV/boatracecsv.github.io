@@ -128,8 +128,11 @@ _spec.loader.exec_module(_build_index)
 update_index_for_races = _build_index.update_index_for_races
 index_csv_path = _build_index.index_csv_path
 
-# 穴予想 v9_suji の買い目 (build_suji_picks.py)。index と同じく直前バッチで
-# 状態=realtime 行を upsert する。設計: docs/design/ana_prediction.md §13
+# build_suji_picks.py。v9_suji は 2026-08-22 に退役したので下の realtime 更新
+# ブロックは active_predictors() のゲートで無効化されるが、B案
+# build_kimarite_picks.py がこのモジュールのヘルパー (load_index_rows /
+# load_kimarite_table / load_stt_courses / strengths_by_boat) を import して
+# いるため、モジュール自体は残す。設計: docs/design/ana_prediction.md §13
 _build_suji_picks_path = Path(__file__).parent / "build_suji_picks.py"
 _suji_spec = importlib.util.spec_from_file_location(
     "build_suji_picks", _build_suji_picks_path
@@ -1006,6 +1009,8 @@ def main() -> int:
 
         # 穴予想 v9_suji の買い目。index (強さpt) を更新した直後に組み直す。
         # 失敗しても他の成果物を巻き添えにしない (index と同じ防御方針)。
+        # v9_suji は 2026-08-22 に退役したので、このブロックは現在走らない
+        # (再投入するなら registry の status を戻すだけでよい)。
         if any(p.predictor_id == _build_suji_picks.PREDICTOR_ID
                for p in active_predictors()):
             try:
