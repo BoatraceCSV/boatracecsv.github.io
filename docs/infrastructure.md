@@ -14,7 +14,7 @@ GCP の Cloud Scheduler から Cloud Run Jobs を直接叩く構成にしてい�
 | --- | --- | --- | --- |
 | `preview-realtime` | JST 08:00–22:55 / 5 分毎 | `.github/workflows/preview-realtime.yml` (`schedule:` 削除済み、`workflow_dispatch` のみフォールバック) | 直前バッチ + index 更新 + 結果取り込み |
 | `daily-sync` | JST 07:30 / 1 日 1 回 | `.github/workflows/daily-sync.yml` (移行完了後に削除) | K-file 結果 + 当日 race_cards / recent_form / motor_stats / title 取得 + daily index 生成 |
-| `monthly-weights` | JST 06:00 / 毎月 1 日 | `.github/workflows/monthly-weights.yml` (移行完了後に削除) | active な全予想者について、直近 6 ヶ月の特徴量から場ごとの n_components 要素重みを再計算し `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を更新 (daily-sync 直前に走らせ、境界日の daily/realtime index を同一 weights で計算) |
+| `monthly-weights` | JST 06:00 / 毎月 1 日 | `.github/workflows/monthly-weights.yml` (移行完了後に削除) | active な全予想者について、直近 6 ヶ月の特徴量から場ごとの n_components 要素重みを再計算し `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を更新 (daily-sync 直前に走らせ、境界日の daily/realtime index を同一 weights で計算)。あわせて静的テーブル `data/estimate/{suji,kimarite}/tables/*.csv` (スジ表・決まり手セル係数・Stage2 ペア表・校正・log-loss) も再生成して commit する |
 
 ## アーキテクチャ
 
@@ -37,7 +37,10 @@ git clone --depth 1 --filter=blob:none + sparse-checkout  (PAT in Secret Manager
 preview-realtime: python scripts/preview-realtime.py
 daily-sync:       6 scripts (result, race-card, recent-form, motor-stats,
                   race-title, build_index) + commit + GCS publish
-monthly-weights:  python scripts/build_course_rate.py + build_weights.py --month YYYY-MM + commit
+monthly-weights:  build_course_rate.py + build_suji_table.py + build_kimarite.py
+                  + build_kimarite_pairs.py + build_kimarite_calibration.py
+                  + build_kimarite_logloss.py + build_weights.py --month YYYY-MM
+                  + commit (weights + 静的テーブル)
    │   ├─ git commit && git push origin main   (boatrace.git_operations / bash)
    │   ├─ ★ GCS mirror upload (boatrace.gcs_publisher.upload_csvs)        ← preview-realtime / daily-sync のみ
    │   │     gs://${BOATRACE_GCS_CSV_BUCKET}/data/{programs/title,programs/race_cards,
@@ -53,8 +56,9 @@ monthly-weights:  python scripts/build_course_rate.py + build_weights.py --month
    │         trigger: "daily-bootstrap" (daily-sync) / "realtime" (preview-realtime)
    ▼
 fun-site が Eventarc 経由で Cloud Run Job として起動 → Astro 再ビルド → Cloud Storage 配信
-(monthly-weights は git push のみ。生成された weights CSV は build_index.py が
- リポジトリから読むため、fun-site への直接配信経路は持たない)
+(monthly-weights は git push のみ。生成された weights CSV と静的テーブルは
+ build_index.py / build_kimarite_*.py がリポジトリから読むため、fun-site への
+ 直接配信経路は持たない)
 ```
 
 * GCP Project: `boatrace-487212` (Project Number: `530399381543`)
@@ -71,7 +75,7 @@ fun-site が Eventarc 経由で Cloud Run Job として起動 → Astro 再ビ�
 | [`../infra/Dockerfile`](../infra/Dockerfile) | Python 3.11-slim ベースの実行イメージ (preview-realtime / daily-sync / monthly-weights 共用) |
 | [`../infra/run.sh`](../infra/run.sh) | preview-realtime Job のエントリポイント (clone → sparse-checkout → python 実行) |
 | [`../infra/run-daily-sync.sh`](../infra/run-daily-sync.sh) | daily-sync Job のエントリポイント (clone → sparse-checkout → 6 スクリプト直列 → commit → GCS publish) |
-| [`../infra/run-monthly-weights.sh`](../infra/run-monthly-weights.sh) | monthly-weights Job のエントリポイント (clone → sparse-checkout 8 ヶ月分 → build_course_rate.py → build_weights.py → commit) |
+| [`../infra/run-monthly-weights.sh`](../infra/run-monthly-weights.sh) | monthly-weights Job のエントリポイント (clone → sparse-checkout 8 ヶ月分 + 全履歴 → build_course_rate.py → build_suji_table.py → build_kimarite{,_pairs,_calibration,_logloss}.py → build_weights.py → commit) |
 | [`../infra/cloudbuild.yaml`](../infra/cloudbuild.yaml) | Cloud Build パイプライン (build → push → 3 job 更新) |
 | [`../infra/.dockerignore`](../infra/.dockerignore) | ビルドコンテキスト最小化 |
 
@@ -131,7 +135,11 @@ monthly-weights は `build_weights.py` が**直近 6 ヶ月の全日**につい�
 | `scripts/` | build_weights.py / boatrace パッケージ (index_features) |
 | `.boatrace/` | 実行時設定 (load_config) |
 | `data/estimate/stadium/` | win_rate.csv / sui_params.csv / course_win_rate.csv (build_weights 入力) + weights/{predictor_id}/ (出力先) |
-| `data/results/realtime/` | 全履歴 (build_course_rate.py が course_win_rate.csv を再生成する入力。月別 sparse とは別に静的に全期間 checkout) |
+| `data/results/realtime/` | 全履歴 (build_course_rate.py / build_suji_table.py / build_kimarite*.py が全期間を舐める。月別 sparse とは別に静的に全期間 checkout) |
+| `data/previews/stt/` | 全履歴 (進入コース。build_suji_table / build_kimarite_pairs / build_kimarite_calibration / build_kimarite_logloss が全期間で引く。欠けると `entry_courses` が枠なり進入にフォールバックし、スジ表・決まり手セル・log-loss が黙って歪む) |
+| `data/estimate/suji/tables/` | **出力先** — build_suji_table.py の `{suji_table,kimarite_table}.csv` |
+| `data/estimate/kimarite/` | **出力先 + 入力** — `tables/` が build_kimarite / build_kimarite_pairs / build_kimarite_calibration / build_kimarite_logloss の出力先、`YYYY/MM/` の日次予測 CSV が calibration と log-loss の入力。両方要るので親ごと cone に入れる (全体で数 MB) |
+| `data/estimate/v10_kimarite/` | build_kimarite_logloss.py の PL ベースライン用 強さpt。同スクリプトの `PREDICTOR_ID` と同期させること |
 | `data/results/realtime/<YM>/` × 8 | 着順 (target = 7 - 着順) |
 | `data/programs/race_cards/<YM>/` × 8 | レース宇宙 (universe) |
 | `data/programs/recent_national/<YM>/` × 8 | recent 特徴量 (`racer` 列) |
@@ -147,6 +155,24 @@ monthly-weights は `build_weights.py` が**直近 6 ヶ月の全日**につい�
 > `fit_one` の `dropna(subset=["waku","racer","exhibit","weather","着順"])` で
 > 全行が落ちて n=0 FALLBACK が 24 場分発生する症状になるため、4 ファミリすべて
 > 必須。
+
+> ⚠️ **書き込み先を cone と `git add` の両方に足すこと。** cone-mode では
+> cone 外のパスに書いたファイルは `git add` に無視され、**エラーにならずに**
+> 毎月捨てられる。実際 `data/estimate/{suji,kimarite}/tables/` は導入時から
+> どちらにも入っておらず、再生成された静的テーブルが永続化されていなかった
+> (`logloss.csv` に至ってはリポジトリに 1 度も存在しなかった)。静的テーブルを
+> 吐くスクリプトを追加したら、`run-monthly-weights.sh` の `paths` 配列と
+> 末尾の `git add` を必ずセットで更新する。
+
+> ⚠️ **既知の制限 — `build_kimarite.py` の学習母数.** このスクリプトだけは
+> `data/programs/race_cards/` と `data/previews/{tkz,sui}/` も日ごとに引くが、
+> それらは月単位ループぶん (8 ヶ月) しか cone に入っていない。race_cards が
+> 無い日はまるごと skip されるため、docstring の「全履歴で学習」に反して実際の
+> 母数は直近 8 ヶ月になる。`data/results/realtime/` は 2025/11 開始なので現状の
+> 取りこぼしは 3 ヶ月ぶんで、毎月 1 ヶ月ずつ増える。全履歴にするには
+> race_cards / tkz / sui も 2025/11 以降を丸ごと cone に入れる必要があるが、
+> race_cards だけで約 60MB (月 +6MB) 増える。Job の memory は 2Gi で、
+> Cloud Run の `/tmp` は tmpfs なので checkout サイズがそのまま memory を食う。
 
 target_month を `TARGET_MONTH=2026-05` のように上書きすると、その月を起点と
 した 8 ヶ月分が動的に cone に入る。月数を変えたい場合は
