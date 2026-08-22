@@ -175,6 +175,17 @@ index が無い場合は作り方を示して落ちる。
 | daily-sync | `build_kimarite_picks.py --mode daily`(**v10_kimarite の買い目**) | `data/estimate/kimarite/picks/YYYY/MM/DD.csv` |
 | preview-realtime | `write_day(..., realtime)` を内部呼び出し(probs → picks の順) | 同上(realtime を upsert) |
 
+**「全履歴で再学習」は cone の広さ次第**: `build_kimarite.py` は
+`data/results/realtime/` の全日をループするが、その日の `race_cards` が
+cone に無いと**無言でスキップ**する。2026-08-22 まで monthly-weights の
+sparse-checkout は `race_cards` / `previews/{tkz,sui}` を 8 ヶ月ぶんしか
+持っていなかったため、実際の学習母数は直近 8 ヶ月だった(43,595 → 30,160
+レース = 31% 欠落。しかも毎月 1 ヶ月ずつ拡大)。現在は 3 ファミリとも全履歴を
+cone に入れてある。ジョブログの
+`races=NNNNN (YYYY-MM-DD 〜 YYYY-MM-DD)` の左端が
+`data/results/realtime/` の最古日と一致しているかで再発を検知できる。詳細は
+[`infrastructure.md`](./infrastructure.md#sparse-checkout-対象-monthly-weights--run-monthly-weightssh)。
+
 **学習と推論を分けている理由**: 推論を sklearn 非依存にしておくと、
 毎回の直前バッチでモデルを読み込む必要がなく、係数 CSV さえあれば動く。
 係数のクラス構成が `boatrace.kimarite.CELLS` とズレていたら

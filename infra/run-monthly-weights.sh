@@ -8,7 +8,9 @@
 #      (= target_month + 6 prior months) + 1 extra month for motor_stats
 #      fallback (build_weights.py invokes compute_features_for_day for every
 #      day in the 6-month training window, and motor_stats has a 7-day
-#      fallback that crosses month boundaries).
+#      fallback that crosses month boundaries). 全履歴を舐めるスクリプト用に、
+#      checkout 後 data/programs/race_cards を results/realtime の全月ぶん
+#      追加する (下の「race_cards の全履歴 cone」)。
 #   2. Run scripts/build_weights.py --month "${TARGET_MONTH}" と、静的テーブル
 #      再生成スクリプト群 (build_suji_table / build_kimarite* )。
 #   3. Commit + push data/estimate/stadium/ と
@@ -168,6 +170,12 @@ paths=(
   # 進入コース。上記 5 本すべてが全履歴で引く (欠けると entry_courses が
   # 枠なり進入にフォールバックし、スジ表・決まり手セルが黙って歪む)。
   data/previews/stt
+  # 展示タイム / 気象。build_kimarite.py が results/realtime の全日について
+  # 引く特徴量なので、こちらも月単位ループではなく全履歴。previews は 3 ファミリ
+  # とも results/realtime と同じ 2025/11 開始なので、丸ごと入れても月列挙と
+  # 取得量は変わらない (tkz ~7MB / sui ~4MB)。
+  data/previews/tkz
+  data/previews/sui
   # 決まり手注釈テーブルの書き込み先 (build_suji_table)。v9_suji 退役後も
   # build_kimarite_picks.py が kimarite_table.csv を読むので外さないこと
   # (2026-08-22 退役。registry.py 冒頭コメント参照)。
@@ -189,9 +197,9 @@ for ym in "${months[@]}"; do
     "data/programs/recent_national/${ym}"
     "data/programs/recent_local/${ym}"
     "data/programs/motor_stats/${ym}"
-    "data/previews/sui/${ym}"
-    "data/previews/tkz/${ym}"
-    "data/previews/stt/${ym}"   # 上で全履歴を cone に入れ済み (cone mode は親優先で no-op)
+    "data/previews/sui/${ym}"   # 上で全履歴を cone に入れ済み (cone mode は親優先で no-op)
+    "data/previews/tkz/${ym}"   # 同上
+    "data/previews/stt/${ym}"   # 同上
     "data/previews/original_exhibition/${ym}"
   )
 done
@@ -200,6 +208,42 @@ git sparse-checkout init --cone
 git sparse-checkout set "${paths[@]}"
 
 git checkout "${GIT_BRANCH}"
+
+# ---------------------------------------------------------------------------
+# race_cards の全履歴 cone (2 段階目)
+#
+# build_kimarite.py は results/realtime の**全日**をループし、各日の
+# data/programs/race_cards/<YM>/<DD>.csv を universe として読む。**無い日は
+# `continue` で無言スキップ**するので、8 ヶ月ぶんしか cone に無いと
+# docstring の「学習窓 = 全履歴」に反して学習母数が黙って縮む (しかも縮み幅は
+# 毎月 1 ヶ月ずつ広がる)。
+#
+# previews と違い race_cards だけ丸ごと入れないのは、2025/05〜2025/10 の
+# 約 42MB が results/realtime の開始 (2025/11) より前で、build_kimarite からは
+# 1 日も参照されない死荷重になるため。Cloud Run の /tmp は tmpfs で checkout
+# サイズがそのまま memory (2Gi) を食うので、要る月だけ足す。
+#
+# 月リストは results/realtime の実ディレクトリから導出する (1 段階目で全期間
+# checkout 済み)。build_kimarite.py のループ元と同じソースなので、履歴が伸びても
+# backfill されても追従する。epoch を定数で持たないのはこのため。
+# ---------------------------------------------------------------------------
+history_months=()
+while IFS= read -r ym; do
+  history_months+=("${ym}")
+done < <(cd data/results/realtime && ls -d [0-9][0-9][0-9][0-9]/[0-9][0-9] 2>/dev/null | sort)
+
+if (( ${#history_months[@]} == 0 )); then
+  log "ABORT: no months under data/results/realtime (cone misconfigured?)"
+  exit 1
+fi
+
+history_paths=()
+for ym in "${history_months[@]}"; do
+  history_paths+=("data/programs/race_cards/${ym}")
+done
+
+log "Extending sparse-checkout: race_cards × ${#history_months[@]} months (${history_months[0]} 〜 ${history_months[$((${#history_months[@]} - 1))]}) for build_kimarite.py"
+git sparse-checkout add "${history_paths[@]}"
 
 # committer / credential 設定。
 git config --local user.name "${GIT_USER_NAME}"
@@ -241,15 +285,12 @@ python scripts/build_suji_table.py
 # 荒れ度メーターの Stage1 (決まり手セルの多項ロジスティック回帰)。
 # 全履歴で学習し、係数 CSV だけを出す (推論側は sklearn 非依存)。
 #
-# 既知の制限: このスクリプトだけは data/programs/race_cards と
-# data/previews/{tkz,sui} も日ごとに引くが、それらは上の sparse-checkout で
-# 月単位ループぶん (8 ヶ月) しか cone に入れていない。race_cards が無い日は
-# まるごと skip されるので、実際の学習母数は「results/realtime の全履歴」
-# ではなく直近 8 ヶ月になる。results/realtime は 2025/11 開始なので現状の
-# 取りこぼしは 3 ヶ月ぶんで、毎月 1 ヶ月ずつ増える。全履歴で学習させるには
-# race_cards / tkz / sui も 2025/11 以降を丸ごと cone に入れる必要がある
-# (race_cards は 2025/11 以降だけで約 60MB / 月 +6MB。Job の memory は 2Gi、
-# Cloud Run の /tmp は tmpfs なので checkout サイズがそのまま memory を食う)。
+# このスクリプトだけは race_cards / previews/{tkz,sui} も日ごとに引く。3 つとも
+# 全履歴を cone に入れてあるので (previews は paths 配列、race_cards は checkout
+# 後の 2 段階目)、学習母数は results/realtime の全履歴と一致する。stdout の
+#   races=NNNNN (YYYY-MM-DD 〜 YYYY-MM-DD)
+# の左端が results/realtime の最古日と一致しているかで検証できる。ズレていたら
+# cone が欠けている (エラーにはならない)。
 log "Retraining kimarite cell model (荒れ度メーター)"
 python scripts/build_kimarite.py
 
