@@ -97,6 +97,12 @@ def test_build_csv_specs_includes_results():
         "recent_local",
         "waku10",
         "motor_stats",
+        # モーターpt 素点の内訳。2026-08-23 に mirror 対象へ追加した
+        # (fun-site のモーターpt詳細ページが素点の 生得点 → z 残差 → 減衰重み →
+        # 収縮 を再現するのに、全 24 場横断のベースラインまで必要なため)。
+        "motor_pt_runs",
+        "motor_pt_motors",
+        "motor_pt_baseline",
         "racer_st",
         "kimarite",
         "kimarite_picks",

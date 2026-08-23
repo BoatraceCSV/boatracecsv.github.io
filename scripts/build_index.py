@@ -175,6 +175,19 @@ def atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
 # これらは中立値で固定する。
 DAILY_NEUTRAL_COMPONENTS: frozenset[str] = frozenset({"exhibit", "weather", "tenkai"})
 
+# realtime 行で「朝バッチが計算した daily 行の値をそのまま使う」成分。
+#
+# モーターpt の素点は当場の直近 6 節 = 過去 90 日ぶんの race_cards と title を
+# 舐めて出す (index_features.MOTOR_HISTORY_LOOKBACK_DAYS)。ところが
+# preview-realtime の Cloud Run Job は 5 分毎に走るためクローンを絞っており、
+# race_cards は当月ぶんしか checkout していない。そのまま再計算すると採用節数が
+# 月初で 0〜1 節まで落ち、daily 行と realtime 行でモーターpt が食い違う。
+#
+# モーターpt は当日中に変化しない (履歴は当日を含む節を除外する) 量なので、
+# realtime 行では daily 行の値を再利用する。daily 行が無い / セルが空のときは
+# 従来どおり再計算にフォールバックする。
+DAILY_REUSED_COMPONENTS: frozenset[str] = frozenset({"motor", "motor4"})
+
 
 def _build_one_race_row(
     code: str,
@@ -185,11 +198,16 @@ def _build_one_race_row(
     predictor: PredictorSpec,
     *,
     skip_preview: bool,
+    reuse_pt: dict[tuple[int, str], float] | None = None,
 ) -> dict:
     """Construct one CSV row from the long-format feature DataFrame.
 
     skip_preview=True forces ``DAILY_NEUTRAL_COMPONENTS`` (展示pt / 気象pt) to
     50.0 (mean) — used by the daily mode.
+
+    reuse_pt maps ``(枠番, component_key)`` to an already-computed 偏差値pt and
+    short-circuits that cell's raw → z → pt conversion. ``update_index_for_races``
+    passes the daily row's ``DAILY_REUSED_COMPONENTS`` values through it.
 
     Loops over ``predictor.component_keys`` so the column set adapts to the
     predictor's feature recipe.
@@ -224,9 +242,13 @@ def _build_one_race_row(
         total = 0.0
         for k in predictor.component_keys:
             label = component_label(k)
+            reused = reuse_pt.get((waku, k)) if reuse_pt else None
             # Daily mode: force preview-derived components to mean (50)
             if skip_preview and k in DAILY_NEUTRAL_COMPONENTS:
                 hensachi_pt = 50.0
+            elif reused is not None:
+                # 朝バッチが計算済みの値をそのまま使う (DAILY_REUSED_COMPONENTS)
+                hensachi_pt = reused
             else:
                 # Raw feature column must be present in ``boats`` (long-format
                 # output of compute_features_for_day). New components are
@@ -243,6 +265,33 @@ def _build_one_race_row(
             total += contrib
         out[f"{waku}枠_強さpt"] = round(total, 2)
 
+    return out
+
+
+def _daily_reuse_pts(
+    daily_row: pd.Series | None, predictor: PredictorSpec,
+) -> dict[tuple[int, str], float]:
+    """daily 行から ``DAILY_REUSED_COMPONENTS`` の偏差値pt を取り出す。
+
+    daily 行が無い / セルが空 / 数値でない場合はそのセルを含めない
+    (呼び出し側は通常どおり再計算する)。
+    """
+    keys = [k for k in predictor.component_keys if k in DAILY_REUSED_COMPONENTS]
+    if daily_row is None or not keys:
+        return {}
+    out: dict[tuple[int, str], float] = {}
+    for waku in range(1, 7):
+        for k in keys:
+            col = f"{waku}枠_{component_label(k)}"
+            if col not in daily_row:
+                continue
+            try:
+                v = float(daily_row[col])
+            except (TypeError, ValueError):
+                continue
+            if pd.isna(v):
+                continue
+            out[(waku, k)] = v
     return out
 
 
@@ -331,6 +380,9 @@ def update_index_for_races(
       (展示・気象 含む) and constructs a fresh ``状態=realtime`` row.
     - Adds the realtime row alongside any existing ``状態=daily`` row for
       the same race (the daily row is **never overwritten or removed**).
+    - ``DAILY_REUSED_COMPONENTS`` (モーターpt) は再計算せず daily 行の値を
+      そのまま引き継ぐ。preview-realtime の checkout には素点の 90 日
+      ルックバックぶんの race_cards が無いため (定数の説明を参照)。
     - If a ``状態=realtime`` row already exists for the race (e.g. a 2nd
       preview-realtime cycle), it is replaced with the freshly computed
       values (in-place upsert; row count stays the same).
@@ -375,6 +427,13 @@ def update_index_for_races(
     if long_df.empty:
         return 0
 
+    # 朝バッチが計算した daily 行。モーターpt はここから再利用する
+    # (DAILY_REUSED_COMPONENTS の説明を参照)。
+    daily_by_code: dict[str, pd.Series] = {
+        str(r["レースコード"]): r
+        for _, r in existing[existing["状態"] == STATE_DAILY].iterrows()
+    }
+
     new_realtime: dict[str, dict] = {}
     for code, grp in long_df.sort_values(["レースコード", "枠番"]).groupby(
         "レースコード", sort=False
@@ -383,6 +442,7 @@ def update_index_for_races(
             code=code, meta_row=grp.iloc[0], boats=grp,
             weights=weights, state=STATE_REALTIME, predictor=predictor,
             skip_preview=False,
+            reuse_pt=_daily_reuse_pts(daily_by_code.get(str(code)), predictor),
         )
 
     if not new_realtime:

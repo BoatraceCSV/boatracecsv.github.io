@@ -330,6 +330,14 @@ motor_ability_pt = n_eff / (n_eff + k) × mean_resid   if ENABLE_SHRINKAGE
 `MOTOR_HISTORY_SESSIONS=5` で、`motor_ability_pt = Σraw / N`(単純平均)に縮退して
 v1 と一致。これを §8.1 ユニットテストで保証する。
 
+> **実装は `motor_ability_breakdown()` に集約済み** — 下流(fun-site)に素点の
+> 計算過程を配るため、この式は 1 走ぶんの明細(生得点 / セル μ,σ / 残差 z /
+> 減衰重み)を返す `motor_ability_breakdown()` として実装し、
+> `motor_ability_pt()` はその `raw_pt` を返すラッパになっている。累算順序が
+> 同一なので両者は厳密一致する。明細の書き出しは
+> `scripts/build_motor_pt_breakdown.py`、スキーマは
+> [`docs/data/motor_pt.md`](../data/motor_pt.md)。
+
 ### 5.2 関数実装スケッチ
 
 ```python

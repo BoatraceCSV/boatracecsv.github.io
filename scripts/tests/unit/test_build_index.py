@@ -19,9 +19,11 @@ import pytest
 
 import build_index  # type: ignore[import-not-found]
 from build_index import (
+    DAILY_REUSED_COMPONENTS,
     STATE_DAILY,
     STATE_REALTIME,
     _build_one_race_row,
+    _daily_reuse_pts,
     atomic_write_csv,
     index_columns,
     index_csv_path,
@@ -285,3 +287,136 @@ def test_output_is_sorted_by_race_code_then_state(tmp_path, patched_features):
         (b, STATE_DAILY),
         (b, STATE_REALTIME),
     ]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# モーターpt の daily → realtime 再利用 (DAILY_REUSED_COMPONENTS)
+#
+# preview-realtime の checkout には素点の 90 日ルックバックぶんの race_cards が
+# 無いため、realtime 行では朝バッチが計算した daily 行の値をそのまま使う。
+# ─────────────────────────────────────────────────────────────────────
+STADIUM_NAME_15 = "丸亀"   # レースコード ...15.. の場名 (weights の引き当てキー)
+
+_UNIFORM_PARAMS = {
+    "mu":    {k: 50.0 for k in V1.component_keys},
+    "sigma": {k: 10.0 for k in V1.component_keys},
+    "w":     {k: 0.2 for k in V1.component_keys},
+}
+
+
+@pytest.fixture
+def patched_features_with_weights(monkeypatch):
+    """``patched_features`` の weights 付き版。
+
+    weights が無いと ``_build_one_race_row`` が全 pt を NaN にしてしまい、
+    再利用の有無を観測できないため。raw=50 / μ=50 / σ=10 なので、再計算した
+    場合の偏差値pt は必ず 50.0 になる。
+    """
+
+    def install(race_codes: list[str]) -> None:
+        monkeypatch.setattr(
+            build_index,
+            "compute_features_for_day",
+            lambda repo, day: _make_long_df(race_codes).assign(
+                # raw=50 → 再計算した場合の pt は 50.0
+                waku=50.0, racer=50.0, motor=50.0, exhibit=50.0, weather=50.0,
+            ),
+        )
+        monkeypatch.setattr(
+            build_index, "find_weights_file",
+            lambda repo, predictor, day: Path("dummy-weights.csv"),
+        )
+        monkeypatch.setattr(
+            build_index, "load_weights",
+            lambda path, predictor: {STADIUM_NAME_15: _UNIFORM_PARAMS},
+        )
+
+    return install
+
+
+def _daily_csv_with_pts(repo: Path, code: str, motor_pt: float) -> Path:
+    """daily 行のモーターptだけ ``motor_pt``、他成分を 50.0 で埋めた CSV。"""
+    cols = index_columns(V1)
+    row = {c: "" for c in cols}
+    row["レースコード"] = code
+    row["レース日"] = DAY.strftime("%Y-%m-%d")
+    row["レース場コード"] = code[8:10]
+    row["レース回"] = str(int(code[10:12]))
+    row["状態"] = STATE_DAILY
+    for waku in range(1, 7):
+        for k in V1.component_keys:
+            label = build_index.component_label(k)
+            v = motor_pt if k == "motor" else 50.0
+            row[f"{waku}枠_{label}"] = v
+            row[f"{waku}枠_寄与_{label}"] = round(0.2 * v, 2)
+        row[f"{waku}枠_強さpt"] = ""
+    csv_path = index_csv_path(repo, DAY, V1)
+    atomic_write_csv(pd.DataFrame([row], columns=cols), csv_path)
+    return csv_path
+
+
+def test_motor_is_the_only_reused_component():
+    """再利用対象は素点が 90 日ルックバックを要する成分だけ。"""
+    assert DAILY_REUSED_COMPONENTS == frozenset({"motor", "motor4"})
+
+
+def test_realtime_reuses_daily_motor_pt(tmp_path, patched_features_with_weights):
+    """realtime 行のモーターptが daily 行の値を引き継ぎ、他成分は再計算される。"""
+    code = "202605101508"
+    csv_path = _daily_csv_with_pts(tmp_path, code, motor_pt=63.5)
+    patched_features_with_weights([code])
+
+    assert update_index_for_races(tmp_path, DAY, [code], V1) == 1
+
+    df = _read_csv(csv_path)
+    rt = df[df["状態"] == STATE_REALTIME].iloc[0]
+    for waku in range(1, 7):
+        # モーターpt は daily の値がそのまま (再計算なら raw=50 → 50.0 になる)
+        assert float(rt[f"{waku}枠_モーターpt"]) == 63.5
+        # 寄与も再利用値から引き直される
+        assert float(rt[f"{waku}枠_寄与_モーターpt"]) == pytest.approx(0.2 * 63.5)
+        # 他成分は raw から再計算 (μ=50, σ=10, raw=50 → 50.0)
+        assert float(rt[f"{waku}枠_展示pt"]) == 50.0
+
+
+def test_realtime_recomputes_motor_pt_without_daily_row(
+    tmp_path, patched_features_with_weights,
+):
+    """daily 行が無いとき (朝バッチ失敗など) は従来どおり再計算する。"""
+    code = "202605101508"
+    cols = index_columns(V1)
+    csv_path = index_csv_path(tmp_path, DAY, V1)
+    atomic_write_csv(pd.DataFrame(columns=cols), csv_path)
+    patched_features_with_weights([code])
+
+    assert update_index_for_races(tmp_path, DAY, [code], V1) == 1
+    rt = _read_csv(csv_path).iloc[0]
+    assert float(rt["1枠_モーターpt"]) == 50.0   # raw=50 からの再計算値
+
+
+def test_realtime_recomputes_motor_pt_when_daily_cell_is_blank(
+    tmp_path, patched_features_with_weights,
+):
+    """daily 行のセルが空 (欠損) のときも再計算にフォールバックする。"""
+    code = "202605101508"
+    csv_path = _daily_csv_with_pts(tmp_path, code, motor_pt=63.5)
+    df = _read_csv(csv_path)
+    df.loc[df["状態"] == STATE_DAILY, "1枠_モーターpt"] = ""
+    atomic_write_csv(df, csv_path)
+    patched_features_with_weights([code])
+
+    update_index_for_races(tmp_path, DAY, [code], V1)
+    rt = _read_csv(csv_path)
+    rt = rt[rt["状態"] == STATE_REALTIME].iloc[0]
+    assert float(rt["1枠_モーターpt"]) == 50.0    # 空セル → 再計算
+    assert float(rt["2枠_モーターpt"]) == 63.5    # 他の枠は再利用のまま
+
+
+def test_daily_reuse_pts_returns_empty_without_daily_row():
+    assert _daily_reuse_pts(None, V1) == {}
+
+
+def test_daily_reuse_pts_skips_non_numeric_cells():
+    row = pd.Series({f"{w}枠_モーターpt": "" for w in range(1, 7)})
+    row["1枠_モーターpt"] = "61.0"
+    assert _daily_reuse_pts(row, V1) == {(1, "motor"): 61.0}

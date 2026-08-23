@@ -23,6 +23,9 @@
 | 派生 | Strength Index | `data/estimate/{predictor_id}/YYYY/MM/DD.csv` | [estimate.md#strength-index](./estimate.md#strength-index) |
 | 派生 | Stadium Parameters | `data/estimate/stadium/*.csv`, `data/estimate/stadium/weights/{predictor_id}/*.csv` | [estimate.md#stadium-parameters](./estimate.md#stadium-parameters) |
 | 派生 | Motor Ability Score | `data/estimate/motor_ability_score.csv` | [motor_ability_score.md](./motor_ability_score.md) |
+| 派生 | モーターpt 素点の内訳 (1走1行) | `data/estimate/motor_pt/runs/YYYY/MM/DD.csv` | [motor_pt.md](./motor_pt.md) |
+| 派生 | モーターpt 素点の内訳 (1モーター1行) | `data/estimate/motor_pt/motors/YYYY/MM/DD.csv` | [motor_pt.md](./motor_pt.md) |
+| 派生 | モーターpt コース補正ベースライン | `data/estimate/motor_pt/baseline/YYYY/MM/DD.csv` | [motor_pt.md](./motor_pt.md) |
 | 派生 | スジ表 / 決まり手注釈 (決まり手注釈は v10_kimarite が使用) | `data/estimate/suji/tables/{suji_table,kimarite_table}.csv` | [estimate.md#穴予想-v9_suji-スジ表と買い目](./estimate.md#穴予想-v9_suji-スジ表と買い目) |
 | 派生 | 荒れ度メーター 係数 | `data/estimate/kimarite/tables/cell_coef_*.csv` | [estimate.md#荒れ度メーター決まり手セルモデル](./estimate.md#荒れ度メーター決まり手セルモデル) |
 | 派生 | 荒れ度メーター 日次 | `data/estimate/kimarite/YYYY/MM/DD.csv` | [estimate.md#荒れ度メーター決まり手セルモデル](./estimate.md#荒れ度メーター決まり手セルモデル) |
@@ -59,6 +62,9 @@ Realtime Odds         → 締切5分前の集計中オッズ(od1: 3連複/拡連
      ↓
 Strength Index        → 派生:特徴量を場別重みで線形結合した強さポイント
                          (active 予想者ごとに data/estimate/{predictor_id}/ に出力)
+     ↑
+Motor Pt Breakdown    → 派生:上記 モーターpt の素点の計算過程(1走1行の明細 +
+                         モーター単位の集計 + 全場横断のコース補正ベースライン)
      ↓
 Realtime Results      → 締切+3〜30分の準リアルタイム結果(bc_rs1_2 由来)
      ↓
@@ -81,6 +87,7 @@ Stadium Parameters    → win_rate.csv / sui_params.csv / weights/{predictor_id}
 8. **得点率早見** から → 締切5分前の得点率・節内順位と、このレースで各着順を取った場合の得点率
 9. **Realtime Odds** から → 締切5分前の集計中オッズ(全舟券種。確定オッズではない点に注意)
 10. **Strength Index** から → 6 枠分の強さポイント(偏差値)と要素別寄与の内訳
+    (うち モーターpt の素点の内訳は **Motor Pt Breakdown** を `(場コード, モーター番号)` で引く)
 11. **Realtime Results** から → 締切後5〜30分の準リアルタイム結果(着順・決まり手・ST・気象)
 12. **Realtime Payouts** から → 同じく締切後5〜30分の払戻金(単勝 / 複勝 / 2連単 / 2連複 / 拡連複 / 3連単 / 3連複)
 

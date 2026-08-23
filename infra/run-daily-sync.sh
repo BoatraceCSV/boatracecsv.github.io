@@ -5,7 +5,7 @@
 # Replaces .github/workflows/daily-sync.yml. Runs daily at JST 07:30 via
 # Cloud Scheduler. Performs:
 #   1. Fresh partial+sparse clone of main (paths needed by all 6 scripts).
-#   2. Sequentially runs the 6 daily Python scripts. Failures in any
+#   2. Sequentially runs the daily Python scripts. Failures in any
 #      individual script are logged but do not abort the run (mirrors the
 #      `if: always() / continue-on-error: true` semantics of the original
 #      GitHub Actions workflow).
@@ -38,8 +38,8 @@
 #   BOATRACE_PUBSUB_TOPIC    Pub/Sub topic for fun-site (no-op when unset)
 #
 # Exit codes:
-#   0  all 6 scripts succeeded (and publisher succeeded)
-#   1  at least one script (or the publisher) failed; remaining steps still ran
+#   0  all steps succeeded (and publisher succeeded)
+#   1  at least one step (or the publisher) failed; remaining steps still ran
 #
 # Idempotency: each Python script dedupes against the existing CSV row /
 # file MD5, so re-execution after a transient failure is safe. The GCS
@@ -83,6 +83,17 @@ else
 fi
 TODAY_YM=$(TZ=Asia/Tokyo date -d "${TODAY_JST}" +'%Y/%m')
 PREV_YM=$(TZ=Asia/Tokyo date -d "$(TZ=Asia/Tokyo date -d "${TODAY_JST}" +'%Y-%m-15') -1 month" +'%Y/%m')
+# モーターpt の素点は各場の直近 6 節 = 過去 90 日ぶんの race_cards / title を舐める
+# (index_features.MOTOR_HISTORY_LOOKBACK_DAYS)。その 90 日が触る月を列挙して
+# sparse-checkout に渡す。短い月が続くと 4 ヶ月前まで届くので
+# (例: 5/1 の 90 日前は 1/31)、固定の月数ではなく実際の窓から求める。
+MOTOR_LOOKBACK_DAYS=90
+motor_lookback_months=()
+_m=$(TZ=Asia/Tokyo date -d "${TODAY_JST} -${MOTOR_LOOKBACK_DAYS} days" +'%Y-%m-01')
+while [[ "$(TZ=Asia/Tokyo date -d "${_m}" +'%Y/%m')" < "${TODAY_YM}" ]]; do
+  motor_lookback_months+=("$(TZ=Asia/Tokyo date -d "${_m}" +'%Y/%m')")
+  _m=$(TZ=Asia/Tokyo date -d "${_m} +1 month" +'%Y-%m-01')
+done
 
 # Active な予想者の ID リスト。scripts/boatrace/predictors/registry.py の
 # ``active_predictors()`` と必ず同期させる (新規予想者追加時は両方更新)。
@@ -100,7 +111,7 @@ cd "${WORKDIR}"
 REMOTE_WITH_TOKEN="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
 REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 
-log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, ym=${TODAY_YM}, prev=${PREV_YM})"
+log "Cloning ${REMOTE_PUBLIC} (branch=${GIT_BRANCH}, partial+sparse, ym=${TODAY_YM}, prev=${PREV_YM}, motor-lookback=${motor_lookback_months[*]})"
 git clone \
   --depth 1 \
   --filter=blob:none \
@@ -113,7 +124,7 @@ git clone \
 
 cd repo
 
-# sparse-checkout: daily-sync の 5 スクリプトが読み書きする全パス。
+# sparse-checkout: daily-sync の各スクリプトが読み書きする全パス。
 #
 #   - scripts/                                python sources
 #   - .boatrace/                              runtime config (load_config)
@@ -134,6 +145,11 @@ cd repo
 #   - data/programs/race_cards/<PREV_YM>/     build_racer_st.py の増分取り込みで
 #                                              前日 (月初は前月末) の艇番→登録番号
 #                                              紐付けに使用
+#   - data/programs/{race_cards,title}/       モーターpt の素点が舐める 90 日
+#     <motor_lookback_months>/                ルックバック (直近 6 節の検出と、
+#                                              各節最終日の節間成績 + グレード)。
+#                                              これが欠けると採用節数が落ちて
+#                                              モーターpt が平均 50 側に潰れる
 #   - data/results/realtime/<YM>,<PREV_YM>/   build_racer_st.py の増分取り込み対象
 #                                              (前日結果)
 #   - data/estimate/racer_st/                 build_racer_st.py の state.csv + 出力
@@ -161,10 +177,19 @@ sparse_paths=(
   data/estimate/kimarite/tables
   "data/estimate/kimarite/${TODAY_YM}"
   "data/estimate/kimarite/picks/${TODAY_YM}"
+  # モーターpt 素点の内訳 (build_motor_pt_breakdown.py 出力)
+  "data/estimate/motor_pt/runs/${TODAY_YM}"
+  "data/estimate/motor_pt/motors/${TODAY_YM}"
+  "data/estimate/motor_pt/baseline/${TODAY_YM}"
 )
 for predictor in "${ACTIVE_PREDICTORS[@]}"; do
   sparse_paths+=("data/estimate/${predictor}/${TODAY_YM}")
 done
+# モーターpt の 90 日ルックバックぶん (当月は上で TODAY_YM を取得済み)
+for ym in "${motor_lookback_months[@]}"; do
+  sparse_paths+=("data/programs/race_cards/${ym}" "data/programs/title/${ym}")
+done
+
 git sparse-checkout init --cone
 git sparse-checkout set "${sparse_paths[@]}"
 
@@ -239,6 +264,22 @@ run_step "motor-stats" python scripts/motor-stats.py --date "${TODAY_JST}" --for
 run_step "build-index" python scripts/build_index.py --date "${TODAY_JST}" --mode daily --all-active
 
 # ---------------------------------------------------------------------------
+# 5.1. モーターpt 素点の内訳 CSV
+#    build_index.py が ``N枠_モーターpt`` を出すときに内部で組み立てている
+#    素点の計算過程 (生得点 → コース補正 z → 時間減衰 → ベイズ収縮) を明細として
+#    書き出す。fun-site のモーターpt詳細ページが読む。
+#
+#    素点は全 24 場を横断したコース補正ベースラインに依存するため下流では
+#    再現できない。選手pt に対する recent_national/recent_local と同じ
+#    「内訳を配る」CSV にあたる。設計: docs/data/motor_pt.md
+#
+#    build_index と同じ 90 日ルックバックを使うので、上の sparse_paths に
+#    ``motor_lookback_months`` ぶんの race_cards / title が入っている必要がある。
+# ---------------------------------------------------------------------------
+run_step "build-motor-pt-breakdown" \
+  python scripts/build_motor_pt_breakdown.py --date "${TODAY_JST}" --force
+
+# ---------------------------------------------------------------------------
 # 5.5. 選手別 推定ST (racer_st) の日次生成
 #    state.csv を前日結果まで増分更新し、当日レースの推定ST CSV を出力する。
 #    fun-site の 1マーク予想が読む (docs/design/st_estimation.md)。
@@ -280,6 +321,8 @@ commit_and_push_index() {
   git add data/estimate/racer_st/
   # 荒れ度メーター + 穴予想 v10_kimarite の買い目 (どちらも git にコミットしない)
   git add data/estimate/kimarite/
+  # モーターpt 素点の内訳 (build_motor_pt_breakdown.py も git にコミットしない)
+  git add data/estimate/motor_pt/
   if git diff --cached --quiet; then
     log "No daily index changes to commit"
     return 0
@@ -293,6 +336,7 @@ run_step "commit-index" commit_and_push_index
 # GCS ミラー / Pub/Sub publish (Open Question 1: 有効化)
 # preview-realtime.py が呼ぶのと同じ publisher 経路を 1 回叩く。
 # - upload_csvs: title/race_cards/recent_national/recent_local/waku10/motor_stats
+#   /motor_pt(runs,motors,baseline)
 #   /previews(stt,tkz,sui,original_exhibition,tokuten_hayami)/index/results を
 #   MD5 dedup でアップロード
 # - assemble_updated_races: 更新があった race code を集約 (title/race_cards
