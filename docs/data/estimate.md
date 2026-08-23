@@ -31,8 +31,11 @@
 > `win_rate.csv` / `sui_params.csv` / `weights/{predictor_id}/YYYY-MM.csv` は
 > **GCS ミラー対象** (`csv_type=waku_table` / `sui_params` / `weights:{predictor_id}`)。
 > fun-site の枠番詳細ページが枠番pt の内訳(raw 勝率 → z → 偏差値pt → 寄与)を、
-> 気象詳細ページが気象pt の内訳(特徴量 × 係数 → raw → z → 偏差値pt → 寄与)を
-> 再現するのに読むため。
+> 気象詳細ページが気象pt の内訳(特徴量 × 係数 → raw → z → 偏差値pt → 寄与)を、
+> 展示詳細ページが展示pt の内訳(レース内偏差値 → raw → z → 偏差値pt → 寄与。
+> [算出手順](#展示pt-の算出手順fun-site-再現用))を再現するのに読むため。
+> 展示pt は静的テーブルを引かないので、必要なのは weights CSV の
+> `mu_exhibit` / `sigma_exhibit` / `w_exhibit` の 3 列だけ。
 > 日付パーティションを持たないので、mirror されるのは月 1 回 monthly-weights が
 > 内容を変えた直後のサイクルだけ(それ以外は md5 一致でスキップ)。weights は
 > **その日の index CSV を作ったのと同じファイル**が上がる(`build_index.py` と同じ
@@ -339,7 +342,7 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 - `N枠_コースpt`: 偏差値スケールの 場×レース番号別コース強度(`v6_course` / `v7_aggregate` / `v8_aionly` が持つ。枠番pt の代替。3 者とも 2026-08-09 に退役したため、現在この列を出力する active 予想者はない)。`data/estimate/stadium/course_win_rate.csv` の収縮済み1着率を実進入コース(daily は枠番)で引いて場別標準化
 - `N枠_選手pt`: 偏差値スケールの 選手能力指数。`data/programs/recent_national/` + `data/programs/recent_local/` の着順列をグレード別に得点化(算出基準点合計÷出走回数)し場別標準化。式は br-racers.jp の能力指数算出式に準拠
 - `N枠_モーターpt`: 偏差値スケールの モーター強度。**モーター能力指数 v2**(直近 6 節の出走実績を「級別×グレード分類×コース」のセル統計で **z 残差**化し、半減期 60 日の **時間減衰**を加重して、サンプル不足モーターを平均(z 残差 0)へ **ベイズ収縮** (k=10) させた値)を場別標準化。`モーター期起算日`(`data/programs/motor_stats/`)で履歴をリセットし、期切替後の新モーターは収縮で平均寄りに引き戻される。スコアテーブルは [`data/estimate/motor_ability_score.csv`](./motor_ability_score.md) 参照。設計詳細は [`docs/design/motor_ability_index_v2.md`](../design/motor_ability_index_v2.md)(v1 設計は [`docs/design/motor_ability_index.md`](../design/motor_ability_index.md))。**`v4_motor` / `v7_aggregate` の CSV も同じ列名**だが、スコア表 v4・ペナルティ -50・直近 5 節で計算した `motor4` 成分の値になる(上記「v4_motor の特徴量」参照)
-- `N枠_展示pt`: 偏差値スケールの 展示パフォーマンス。展示タイム + オリジナル展示の3項目をレース内偏差値化して平均、その後場別標準化
+- `N枠_展示pt`: 偏差値スケールの 展示パフォーマンス。展示タイム + オリジナル展示の3項目をレース内偏差値化して**等重み平均**、その後場別標準化(手順は[展示pt の算出手順](#展示pt-の算出手順fun-site-再現用))
 - `N枠_気象pt`: 偏差値スケールの 気象有利度。`data/estimate/stadium/sui_params.csv` で当日気象から各コースの有利pt変動を計算し場別標準化(コース固定有利は枠番ptに集約済み)
 - `N枠_寄与_{要素}pt`: その要素の重み × 偏差値pt(= 強さptへの寄与の内訳)
 - `N枠_強さpt`: 5 つの寄与の合計。Σ重み = 1 のため平均 50 ± 10 のスケールに収まる
@@ -352,6 +355,63 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 - 重みファイル(`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv`)が見つからない月のデータは、すべて NaN を出力
 
 > **用途**: 単発レースの予想に直接使えるランキング指標。`強さpt` 順で買い目を組み立てたり、寄与列でなぜ強い/弱いかを分解できる。重みは 6 ヶ月ローリングで学習されるため、季節変動を反映。
+
+### 展示pt の算出手順(fun-site 再現用)
+
+展示pt は **その日の直前情報だけで閉じている**成分で、モーターptのような長期履歴の
+集計を必要としない。入力 CSV(GCS ミラー済み)と weights CSV の 3 列があれば、
+下流(fun-site の展示詳細ページ)で `N枠_展示pt` / `N枠_寄与_展示pt` を
+**小数第 2 位まで完全に再現できる**。実装は
+[`index_features.py` の `hensachi()` / `compute_features_for_day()`](../../scripts/boatrace/index_features.py) と
+[`build_index.py` の `_build_one_race_row()`](../../scripts/build_index.py)。
+
+**入力**(いずれも `data/previews/`、GCS ミラー済み)
+
+| 系列 | ソース | 列 |
+| --- | --- | --- |
+| 展示タイム | `previews/tkz/YYYY/MM/DD.csv` | `艇N_展示タイム` |
+| オリジナル展示 1〜3 | `previews/original_exhibition/YYYY/MM/DD.csv` | `艇N_値1` / `艇N_値2` / `艇N_値3`(項目名は `計測項目1〜3`) |
+
+**手順**
+
+1. **レース内偏差値**(系列ごとに 6 艇まとめて)
+
+   ```
+   z_k(艇) = 50 + 10 × (mean − v) / std        (std は母標準偏差 ddof=0)
+   ```
+
+   **符号が逆向き**であることに注意 — 4 系列とも「小さいほど速い」タイムなので、
+   平均より小さい値が高い偏差値になる。有効値が **2 艇未満**の系列は全艇 NaN、
+   `std == 0` の系列は全艇 50 とする。
+
+2. **等重み平均 → raw**。項目別の重みは**存在しない**。
+
+   ```
+   raw = round(mean(NaN でない z_k), 2)        (k = 展示タイム, 値1, 値2, 値3)
+   ```
+
+3. **場別標準化 → 展示pt**(`μ` / `σ` は weights CSV のその場の行)
+
+   ```
+   展示pt = round(50 + 10 × (raw − mu_exhibit) / sigma_exhibit, 2)     (σ ≤ 0 なら 50)
+   寄与    = round(w_exhibit × 展示pt, 2)
+   ```
+
+**場・状態による例外**
+
+- `状態=daily`(朝バッチ)は展示前なので、実データの有無にかかわらず
+  展示pt = 50 / 寄与 = 50 × `w_exhibit` に固定される(`DAILY_NEUTRAL_COMPONENTS`)
+- 4 系列すべてが NaN(展示タイムも欠測)の艇は 50 補完(`COMPONENT_MISSING_FALLBACK`)
+- **江戸川 (03)** はオリジナル展示の配信が無く、展示タイムの 1 系列のみ
+- **住之江 (12) / 尼崎 (13) / 徳山 (18)** は `計測数=2`(`値3` が空)なので 3 系列
+- **桐生 (01)** は `計測項目1` が「一周」ではなく「半周ラップ」。項目名が違うだけで
+  扱いは同じ
+- 参照する weights ファイルは **その日の index CSV を作ったのと同じもの**
+  (`PredictorSpec.resolve_weights_csv_path` = 対象月以下で最新)
+
+> **スタート展示 ST (`previews/stt`) は展示pt の入力ではない**。`stt` から読むのは
+> 進入コースだけで、枠番pt / コースpt / 気象pt / 展開優位pt がそれを使う。
+> 展示 ST 自体はどの成分にも入っていない。
 
 ---
 
