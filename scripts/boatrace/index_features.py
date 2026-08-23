@@ -359,6 +359,11 @@ class MotorRun:
       - ``lane``: この走でのコース番号 1〜6。コース補正に使用。
         race_cards の ``_進入`` 列優先、欠損なら ``_枠`` フォールバック。
         未知時は ``0``(コース補正のスキップ用センチネル)。
+
+    素点内訳エクスポート(``build_motor_pt_breakdown.py``)で追加されたフィールド:
+      - ``day_index`` / ``run_index``: 由来スロット ``D{day_index}走{run_index}``。
+        集計には使わず、内訳 CSV に「節の何日目の何走目か」を出すためだけに持つ。
+        未知時は ``0``。
     """
     session_end: dt.date   # 当該走を含む節の最終開催日
     stadium: str           # "01"〜"24"
@@ -369,6 +374,9 @@ class MotorRun:
     # v2 追加(デフォルト値ありで後方互換維持)
     race_date: dt.date | None = None    # None → session_end でフォールバック
     lane: int = 0                        # 0 → コース補正対象外(セル統計を引かない)
+    # 内訳エクスポート用(集計には未使用。デフォルト 0 で後方互換維持)
+    day_index: int = 0                   # 節の日次 1〜7。0 → 不明
+    run_index: int = 0                   # その日の何走目か 1〜2。0 → 不明
 
     def __post_init__(self) -> None:
         # race_date 未指定なら session_end で埋める(frozen dataclass の代入トリック)
@@ -699,6 +707,7 @@ def extract_runs_for_session(
                     motor_num=motor_num, grade_bucket=eff_bucket,
                     racer_class=racer_class, finish=token,
                     race_date=race_date, lane=lane,
+                    day_index=d, run_index=s,
                 ))
     return runs
 
@@ -840,6 +849,125 @@ def cell_stats(
 # 全フラグ OFF + MOTOR_HISTORY_SESSIONS=5 で v1 と算術等価
 # 詳細設計: docs/design/motor_ability_index_v2.md
 # ─────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class MotorRunContribution:
+    """素点に寄与した 1 走ぶんの明細(``motor_ability_breakdown`` の出力要素)。
+
+    ``residual`` = ``(raw_score - cell_mu) / cell_sigma``、
+    ``weight`` = ``exp(-DECAY_LAMBDA × 経過日数)``。
+    フィーチャーフラグが OFF のときは補正なしを表す値が入る
+    (``cell_mu=0.0`` / ``cell_sigma=1.0`` / ``weight=1.0``)。
+    """
+    run: MotorRun
+    session_index: int    # 0 = 直近節。history の並び(新→旧)に対応
+    raw_score: float      # スコア表の生得点(転落沈エ は negative_score)
+    cell_mu: float        # コース補正セルの μ
+    cell_sigma: float     # 同 σ
+    residual: float       # z 残差
+    weight: float         # 時間減衰の重み
+
+
+@dataclass(frozen=True)
+class MotorPtBreakdown:
+    """``motor_ability_pt()`` の計算過程。``raw_pt`` が素点そのもの。
+
+    採点対象の走が 1 本も無いモーターは ``contributions`` が空で
+    ``raw_pt`` が NaN になる(下流の z 化で 50 に補完される)。
+    """
+    stadium: str
+    motor_num: int
+    contributions: list[MotorRunContribution]
+    sum_w: float          # Σw
+    sum_wr: float         # Σ(w × residual)
+    sum_w2: float         # Σw²
+    n_eff: float          # (Σw)² / Σw²。有効サンプル数
+    mean_residual: float  # Σ(w×residual) / Σw。収縮前の加重平均
+    raw_pt: float         # 収縮後の素点(= モーターpt の入力)
+
+
+def motor_ability_breakdown(
+    history: dict[tuple[str, int], list[list[MotorRun]]],
+    score_table: dict[tuple[str, str], list[int]],
+    stadium_code2: str, motor_num: int,
+    *,
+    lane_baseline: dict[tuple[str, str, int], tuple[float, float]] | None = None,
+    class_grade_avg: dict[tuple[str, str], tuple[float, float]] | None = None,
+    target_day: dt.date | None = None,
+    negative_score: int = MOTOR_NEGATIVE_SCORE,
+    max_sessions: int | None = None,
+) -> MotorPtBreakdown:
+    """``motor_ability_pt()`` の計算過程を明細つきで返す。
+
+    引数は ``motor_ability_pt()`` と同一。``motor_ability_pt()`` は本関数の
+    ``raw_pt`` を返す薄いラッパなので、**素点と内訳が食い違うことはない**
+    (内訳 CSV `data/estimate/motor_pt/` の生成元。累算順序も同一に保つこと)。
+    """
+    empty = MotorPtBreakdown(
+        stadium=stadium_code2, motor_num=motor_num, contributions=[],
+        sum_w=0.0, sum_wr=0.0, sum_w2=0.0, n_eff=0.0,
+        mean_residual=float("nan"), raw_pt=float("nan"),
+    )
+    sessions = history.get((stadium_code2, motor_num))
+    if not sessions:
+        return empty
+    if max_sessions is not None:
+        sessions = sessions[:max_sessions]   # 新→旧順なので先頭 = 直近
+
+    use_lane = ENABLE_LANE_CORRECTION and lane_baseline is not None and class_grade_avg is not None
+    use_decay = ENABLE_DECAY and target_day is not None
+
+    contributions: list[MotorRunContribution] = []
+    sum_w = 0.0
+    sum_wr = 0.0
+    sum_w2 = 0.0
+    for session_index, sess in enumerate(sessions):
+        for run in sess:
+            sc = score_motor_run(score_table, run, negative_score)
+            if sc is None:
+                continue
+            raw = float(sc[0])
+            cls = run.racer_class
+            bucket = run.grade_bucket if cls in ("A1", "A2") else "全"
+
+            if use_lane:
+                mu, sigma = cell_stats(lane_baseline, class_grade_avg,
+                                       cls, bucket, run.lane)
+                residual = (raw - mu) / sigma
+            else:
+                mu, sigma = 0.0, 1.0
+                residual = raw
+
+            if use_decay:
+                days_ago = max(0, (target_day - run.race_date).days)
+                w = math.exp(-DECAY_LAMBDA * days_ago)
+            else:
+                w = 1.0
+
+            sum_w += w
+            sum_wr += w * residual
+            sum_w2 += w * w
+            contributions.append(MotorRunContribution(
+                run=run, session_index=session_index, raw_score=raw,
+                cell_mu=mu, cell_sigma=sigma, residual=residual, weight=w,
+            ))
+
+    if sum_w == 0.0:
+        return empty  # 下流の z 化で 50 補完
+    mean_resid = sum_wr / sum_w
+    n_eff = (sum_w * sum_w) / sum_w2
+    if not ENABLE_SHRINKAGE:
+        raw_pt = mean_resid
+    else:
+        # prior 平均 0 へ縮める: posterior = n_eff / (n_eff + k) × mean_resid
+        raw_pt = n_eff / (n_eff + SHRINKAGE_PRIOR_K) * mean_resid
+    return MotorPtBreakdown(
+        stadium=stadium_code2, motor_num=motor_num,
+        contributions=contributions,
+        sum_w=sum_w, sum_wr=sum_wr, sum_w2=sum_w2,
+        n_eff=n_eff, mean_residual=mean_resid, raw_pt=raw_pt,
+    )
+
+
 def motor_ability_pt(
     history: dict[tuple[str, int], list[list[MotorRun]]],
     score_table: dict[tuple[str, str], list[int]],
@@ -865,53 +993,16 @@ def motor_ability_pt(
 
     フィーチャーフラグ全 OFF のとき、これらは未使用なので None で OK。
     その状態は単純平均 ``Σraw/N`` に縮退し、v1 と算術等価になる。
+
+    実体は ``motor_ability_breakdown()``。素点と内訳 CSV が食い違わないよう、
+    計算は 1 箇所に集約してある。
     """
-    sessions = history.get((stadium_code2, motor_num))
-    if not sessions:
-        return float("nan")
-    if max_sessions is not None:
-        sessions = sessions[:max_sessions]   # 新→旧順なので先頭 = 直近
-
-    use_lane = ENABLE_LANE_CORRECTION and lane_baseline is not None and class_grade_avg is not None
-    use_decay = ENABLE_DECAY and target_day is not None
-
-    sum_w = 0.0
-    sum_wr = 0.0
-    sum_w2 = 0.0
-    for sess in sessions:
-        for run in sess:
-            sc = score_motor_run(score_table, run, negative_score)
-            if sc is None:
-                continue
-            raw = float(sc[0])
-            cls = run.racer_class
-            bucket = run.grade_bucket if cls in ("A1", "A2") else "全"
-
-            if use_lane:
-                mu, sigma = cell_stats(lane_baseline, class_grade_avg,
-                                       cls, bucket, run.lane)
-                residual = (raw - mu) / sigma
-            else:
-                residual = raw
-
-            if use_decay:
-                days_ago = max(0, (target_day - run.race_date).days)
-                w = math.exp(-DECAY_LAMBDA * days_ago)
-            else:
-                w = 1.0
-
-            sum_w += w
-            sum_wr += w * residual
-            sum_w2 += w * w
-
-    if sum_w == 0.0:
-        return float("nan")  # 下流の z 化で 50 補完
-    mean_resid = sum_wr / sum_w
-    if not ENABLE_SHRINKAGE:
-        return mean_resid
-    n_eff = (sum_w * sum_w) / sum_w2
-    # prior 平均 0 へ縮める: posterior = n_eff / (n_eff + k) × mean_resid
-    return n_eff / (n_eff + SHRINKAGE_PRIOR_K) * mean_resid
+    return motor_ability_breakdown(
+        history, score_table, stadium_code2, motor_num,
+        lane_baseline=lane_baseline, class_grade_avg=class_grade_avg,
+        target_day=target_day, negative_score=negative_score,
+        max_sessions=max_sessions,
+    ).raw_pt
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -27,9 +27,19 @@ GitHub Actions ワークフロー、設定ファイル、運用上のメモを�
 
 ## Workflows
 
-- **`daily-sync.yml`** — Runs every day at 07:30 JST (= 22:30 UTC)。実測で 1 ラン ~22 分かかるため、Cloud Run Jobs の `preview-realtime` (JST 08:00 起動) が当日 title CSV を参照する前に完了するよう 30 分の余裕を取って 07:30 起動としています。Processes Results, Programs, Race Cards (including 枠番別過去10走 `bc_j_waku10` and the 月間開催日程 `bc_mon_2` refresh), Recent Form, Motor Stats, and **Race Title** for the previous/current day. Then runs **Build Daily Index Batch** (`build_index.py --mode daily --all-active`) to populate today's `data/estimate/{predictor_id}/YYYY/MM/DD.csv` for every active predictor with 枠番・選手・モーター + 暫定強さpt(状態 = `daily`、展示・気象は 50 で補完)。Each step uses `if: always()` (and `continue-on-error: true` for third-party-source steps) so a single source outage does not break the rest of the pipeline.
+- **`daily-sync.yml`** — Runs every day at 07:30 JST (= 22:30 UTC)。実測で 1 ラン ~22 分かかるため、Cloud Run Jobs の `preview-realtime` (JST 08:00 起動) が当日 title CSV を参照する前に完了するよう 30 分の余裕を取って 07:30 起動としています。Processes Results, Programs, Race Cards (including 枠番別過去10走 `bc_j_waku10` and the 月間開催日程 `bc_mon_2` refresh), Recent Form, Motor Stats, and **Race Title** for the previous/current day. Then runs **Build Daily Index Batch** (`build_index.py --mode daily --all-active`) to populate today's `data/estimate/{predictor_id}/YYYY/MM/DD.csv` for every active predictor with 枠番・選手・モーター + 暫定強さpt(状態 = `daily`、展示・気象は 50 で補完)。続けて **Build Motor Pt Breakdown** (`build_motor_pt_breakdown.py --force`) が同じ入力から モーターpt の素点の内訳を `data/estimate/motor_pt/{runs,motors,baseline}/YYYY/MM/DD.csv` に書き出します([`data/motor_pt.md`](./data/motor_pt.md))。Each step uses `if: always()` (and `continue-on-error: true` for third-party-source steps) so a single source outage does not break the rest of the pipeline.
+
+  > ⚠️ **モーターptの素点は 90 日ぶんの `race_cards` / `title` を要求します。**
+  > `MOTOR_HISTORY_LOOKBACK_DAYS = 90` で各場の直近 6 節を検出するため、
+  > `infra/run-daily-sync.sh` の sparse-checkout は、その 90 日窓が触る月を
+  > `motor_lookback_months` として列挙し `data/programs/{race_cards,title}/` を
+  > 含めています(短い月が続くと 4 ヶ月前まで届くので固定の月数にはしない。
+  > 例: 5/1 の 90 日前は 1/31)。ここが欠けると採用節数が落ち、モーターptが平均 50 側に潰れます
+  > (月初は 0 節 = 全モーターptが 50 になる)。`build_motor_pt_breakdown.py` の
+  > 出力先 `data/estimate/motor_pt/` も sparse-checkout `paths` と末尾の
+  > `git add` の**両方**に載っている必要があります。
 - **`preview-realtime.yml`** — `workflow_dispatch` manual fallback only. The production schedule (JST 08:00-22:59, every 5 minutes) has been migrated to **Cloud Scheduler + Cloud Run Jobs** because GitHub Actions cron was being throttled. Four passes per invocation:
-  1. **Preview pass** — scrapes per-source preview data (`tkz` / `stt` / `sui` / `original_exhibition`) for races whose deadline falls in `[now+1min, now+10min]` and updates `data/estimate/{predictor_id}/YYYY/MM/DD.csv` for every active predictor (展示・気象 を実値で再計算 → 状態 = `realtime`).
+  1. **Preview pass** — scrapes per-source preview data (`tkz` / `stt` / `sui` / `original_exhibition`) for races whose deadline falls in `[now+1min, now+10min]` and updates `data/estimate/{predictor_id}/YYYY/MM/DD.csv` for every active predictor (展示・気象 を実値で再計算 → 状態 = `realtime`)。**モーターpt (`motor` / `motor4`) だけは再計算せず `daily` 行の値を引き継ぎます** (`build_index.DAILY_REUSED_COMPONENTS`)。素点が要求する 90 日ぶんの `race_cards` は 5 分毎に走るこのジョブの checkout には無く、かつ素点は当日中に変化しないためです。`daily` 行が無い場合のみ従来どおり再計算にフォールバックします。
   2. **Odds pass** — scrapes the aggregating odds `bc_smt_od{1,2,3}` for the same eligibility window and appends one row per source to `data/previews/{od1,od2,od3}/YYYY/MM/DD.csv`(締切約5分前のスナップショット。確定オッズではない)。The three sources are fetched and deduped independently, so a partial success is completed on the next cycle.
   3. **Result pass** — scrapes `bc_rs1_2` for races whose deadline already passed by 3 分以上 and whose row is still missing from `data/results/realtime/YYYY/MM/DD.csv`(**catch-up mode**: 終日再試行。SG 進行遅延・悪天候中断で予定締切から大幅に遅れたレースも公開後に回収する。1 回の実行で締切の古い順に `--result-catchup-limit` 件まで。`--result-window-max` 明示時は従来の固定窓)and appends one row.
   4. **Payout pass** — scrapes `bc_rs2` (払戻金) for the same eligibility window, independent of the result pass, and appends one row to `data/results/payouts/YYYY/MM/DD.csv`.

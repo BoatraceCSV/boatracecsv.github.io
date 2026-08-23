@@ -49,6 +49,7 @@ monthly-weights:  build_course_rate.py + build_suji_table.py + build_kimarite.py
    │   │                                            previews/{stt,tkz,sui,
    │   │                                                      original_exhibition,tokuten_hayami},
    │   │                                            estimate/{predictor_id},
+   │   │                                            estimate/motor_pt/{runs,motors,baseline},
    │   │                                            results/realtime,results/payouts}/...
    │   │     (active 予想者ごとに csv_type=index:{predictor_id} で 1 件ずつ mirror)
    │   │     + estimate/stadium/win_rate.csv (csv_type=waku_table)
@@ -117,7 +118,7 @@ daily-sync は preview-realtime とは別系統の入出力を扱うため、`ru
 
 | 取得対象 | 用途 |
 | --- | --- |
-| `scripts/` | race-card.py / recent-form.py / motor-stats.py / race-title.py / build_index.py / boatrace パッケージ |
+| `scripts/` | race-card.py / recent-form.py / motor-stats.py / race-title.py / build_index.py / build_motor_pt_breakdown.py / boatrace パッケージ |
 | `.boatrace/` | 実行時設定 (load_config) |
 | `data/estimate/stadium/` | win_rate.csv, sui_params.csv, weights/{predictor_id}/*.csv (build_index 入力) |
 | `data/estimate/<predictor_id>/<YYYY/MM>/` | build_index --mode daily --all-active の出力先 (各 active 予想者を `ACTIVE_PREDICTORS` 配列でループ。commit 対象) |
@@ -129,6 +130,14 @@ daily-sync は preview-realtime とは別系統の入出力を扱うため、`ru
 | `data/programs/motor_stats/<YYYY/MM>/` + `<前月>/` | motor-stats.py の出力先 (前月分は build_index の 7 日 fallback 用) |
 | `data/programs/motor_history/<YYYY/MM>/` + `<前月>/` | motor-stats.py の出力先 (bc_mrireki モーター履歴。パス日付=前節終了日のため前月分も対象) |
 | `data/programs/title/<YYYY/MM>/` | race-title.py の出力先 (GCS ミラー対象) |
+| `data/programs/race_cards/` + `title/` の 90 日窓ぶんの月 | **モーターptの 90 日ルックバック** (`MOTOR_HISTORY_LOOKBACK_DAYS`)。各場の直近 6 節の検出と、各節最終日の節間成績 + グレード読み出しに使う。欠けると採用節数が落ちてモーターptが平均 50 側に潰れる (月初は 0 節 = 全モーターptが 50)。`motor_lookback_months` として 90 日窓が触る月を実際に列挙する (短い月が続くと 4 ヶ月前まで届くため固定の月数にはしない。例: 5/1 の 90 日前は 1/31) |
+| `data/estimate/motor_pt/{runs,motors,baseline}/<YYYY/MM>/` | build_motor_pt_breakdown.py の出力先 (モーターpt 素点の内訳。commit + GCS ミラー対象) |
+
+> preview-realtime 側はこの 90 日ぶんを **取らない**。5 分毎に走るジョブで
+> 毎回 20MB 近い race_cards を引くのは割に合わないため、index CSV の
+> `realtime` 行は朝バッチが計算したモーターptを再利用する
+> (`build_index.DAILY_REUSED_COMPONENTS`)。素点は当日中に変化しないので
+> 引き継いでも値は変わらない。詳細は [`operations.md`](./operations.md)。
 
 ### sparse-checkout 対象 (monthly-weights / `run-monthly-weights.sh`)
 

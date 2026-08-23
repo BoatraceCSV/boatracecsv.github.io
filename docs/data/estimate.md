@@ -312,8 +312,9 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 ### 生成パイプライン
 
 1. **日次バッチ** (`scripts/build_index.py --mode daily --all-active`、JST 07:30): 当日のレース全件について、preview 非依存の成分(枠番・選手・モーター能力指数。v4_motor では motor の代わりにチューニング版 motor4、v6_course では waku の代わりにコースpt(枠番フォールバックで計算)、v7_aggregate では waku→course かつ motor→motor4 の両方、v2_tenkai では motor2rate)を計算し、preview 由来の成分(展示・気象・展開優位)は 50 (平均) で補完(`DAILY_NEUTRAL_COMPONENTS`)。状態 = `daily`、暫定の強さpt が入る。
-2. **直前バッチ** (`scripts/preview-realtime.py` から内部呼び出し): 各レースの締切 5 分前に preview を取得した直後、対応する index 行の全成分を再計算(展示・気象が実値になるほか、枠番pt / コースpt / 気象pt はスタート展示の**実進入コース**基準に切り替わる)。状態 = `realtime`、強さpt が確定値に更新される。**active な全予想者ぶん**を 1 サイクルで更新。
-3. **月次重み学習** (`scripts/build_weights.py --month YYYY-MM --all-active`、毎月 1 日 06:00 JST): 直近 6 ヶ月のデータから 24 場 × `n_components` 要素の重みを学習し、`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を生成。同ジョブは学習前に `scripts/build_course_rate.py` で [`course_win_rate.csv`](#dataestimatestadiumcourse_win_ratecsv) を全履歴から再生成する。
+2. **素点内訳の書き出し** (`scripts/build_motor_pt_breakdown.py`、日次バッチの直後): 1 の過程で組み立てた モーターpt の素点の明細を [`data/estimate/motor_pt/`](./motor_pt.md) に出力。予想値には影響しない派生出力。
+3. **直前バッチ** (`scripts/preview-realtime.py` から内部呼び出し): 各レースの締切 5 分前に preview を取得した直後、対応する index 行の成分を再計算(展示・気象が実値になるほか、枠番pt / コースpt / 気象pt はスタート展示の**実進入コース**基準に切り替わる)。状態 = `realtime`、強さpt が確定値に更新される。**active な全予想者ぶん**を 1 サイクルで更新。ただし **モーターpt (`motor` / `motor4`) は再計算せず、`daily` 行の値をそのまま引き継ぐ**(`build_index.DAILY_REUSED_COMPONENTS`)。素点は直近 6 節 = 過去 90 日ぶんの `race_cards` を舐めるが、5 分毎に走る直前バッチの checkout はそれを持たないため。素点は当日中に変化しない(履歴は当日を含む節を除外する)ので、引き継いでも値は変わらない。
+4. **月次重み学習** (`scripts/build_weights.py --month YYYY-MM --all-active`、毎月 1 日 06:00 JST): 直近 6 ヶ月のデータから 24 場 × `n_components` 要素の重みを学習し、`data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を生成。同ジョブは学習前に `scripts/build_course_rate.py` で [`course_win_rate.csv`](#dataestimatestadiumcourse_win_ratecsv) を全履歴から再生成する。
 
 ### サンプルデータ(1行目、抜粋)
 
@@ -338,7 +339,7 @@ raw 値は `data/estimate/stadium/win_rate.csv` の場×季節×コース別勝�
 - `N枠_枠番pt`: 偏差値スケールの 枠番強度。`data/estimate/stadium/win_rate.csv` の場×季節×コース勝率を場別 (μ, σ) で標準化(v1_basic / v4_motor / v5_slit。v6_course / v7_aggregate はこの列の代わりに `N枠_コースpt` を持つ)
 - `N枠_コースpt`: 偏差値スケールの 場×レース番号別コース強度(`v6_course` / `v7_aggregate` / `v8_aionly` が持つ。枠番pt の代替。3 者とも 2026-08-09 に退役したため、現在この列を出力する active 予想者はない)。`data/estimate/stadium/course_win_rate.csv` の収縮済み1着率を実進入コース(daily は枠番)で引いて場別標準化
 - `N枠_選手pt`: 偏差値スケールの 選手能力指数。`data/programs/recent_national/` + `data/programs/recent_local/` の着順列をグレード別に得点化(算出基準点合計÷出走回数)し場別標準化。式は br-racers.jp の能力指数算出式に準拠
-- `N枠_モーターpt`: 偏差値スケールの モーター強度。**モーター能力指数 v2**(直近 6 節の出走実績を「級別×グレード分類×コース」のセル統計で **z 残差**化し、半減期 60 日の **時間減衰**を加重して、サンプル不足モーターを平均(z 残差 0)へ **ベイズ収縮** (k=10) させた値)を場別標準化。`モーター期起算日`(`data/programs/motor_stats/`)で履歴をリセットし、期切替後の新モーターは収縮で平均寄りに引き戻される。スコアテーブルは [`data/estimate/motor_ability_score.csv`](./motor_ability_score.md) 参照。設計詳細は [`docs/design/motor_ability_index_v2.md`](../design/motor_ability_index_v2.md)(v1 設計は [`docs/design/motor_ability_index.md`](../design/motor_ability_index.md))。**`v4_motor` / `v7_aggregate` の CSV も同じ列名**だが、スコア表 v4・ペナルティ -50・直近 5 節で計算した `motor4` 成分の値になる(上記「v4_motor の特徴量」参照)
+- `N枠_モーターpt`: 偏差値スケールの モーター強度。**モーター能力指数 v2**(直近 6 節の出走実績を「級別×グレード分類×コース」のセル統計で **z 残差**化し、半減期 60 日の **時間減衰**を加重して、サンプル不足モーターを平均(z 残差 0)へ **ベイズ収縮** (k=10) させた値)を場別標準化。`モーター期起算日`(`data/programs/motor_stats/`)で履歴をリセットし、期切替後の新モーターは収縮で平均寄りに引き戻される。スコアテーブルは [`data/estimate/motor_ability_score.csv`](./motor_ability_score.md) 参照。設計詳細は [`docs/design/motor_ability_index_v2.md`](../design/motor_ability_index_v2.md)(v1 設計は [`docs/design/motor_ability_index.md`](../design/motor_ability_index.md))。標準化前の **素点** とその計算過程は [`data/estimate/motor_pt/`](./motor_pt.md) に日次で書き出している(素点は全 24 場横断のベースラインに依存するため下流では再現できない)。**`v4_motor` / `v7_aggregate` の CSV も同じ列名**だが、スコア表 v4・ペナルティ -50・直近 5 節で計算した `motor4` 成分の値になる(上記「v4_motor の特徴量」参照)
 - `N枠_展示pt`: 偏差値スケールの 展示パフォーマンス。展示タイム + オリジナル展示の3項目をレース内偏差値化して平均、その後場別標準化
 - `N枠_気象pt`: 偏差値スケールの 気象有利度。`data/estimate/stadium/sui_params.csv` で当日気象から各コースの有利pt変動を計算し場別標準化(コース固定有利は枠番ptに集約済み)
 - `N枠_寄与_{要素}pt`: その要素の重み × 偏差値pt(= 強さptへの寄与の内訳)

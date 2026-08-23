@@ -15,6 +15,10 @@ This module is invoked at the very end of ``preview-realtime.py`` to:
      (preview-realtime が追記)
    * ``data/estimate/{predictor_id}/YYYY/MM/DD.csv`` (各 active 予想者 1 件ずつ。
      csv_type は ``index:{predictor_id}`` 形式)
+   * ``data/estimate/motor_pt/{runs,motors,baseline}/YYYY/MM/DD.csv``
+     (build_motor_pt_breakdown.py の成果物。fun-site のモーターpt詳細ページが
+     素点の内訳 生得点 → z 残差 → 減衰重み → 収縮 を再現するのに読む。
+     素点は全 24 場横断のベースラインに依存するので下流では再現できない)
    * ``data/results/realtime/YYYY/MM/DD.csv`` (preview-realtime が追記)
    * ``data/results/payouts/YYYY/MM/DD.csv`` (preview-realtime が追記)
    * ``data/estimate/stadium/win_rate.csv``、
@@ -209,6 +213,14 @@ def _build_csv_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
         CsvUploadSpec("recent_local", f"data/programs/recent_local/{ymd}.csv"),
         CsvUploadSpec("waku10", f"data/programs/waku10/{ymd}.csv"),
         CsvUploadSpec("motor_stats", f"data/programs/motor_stats/{ymd}.csv"),
+        # モーターpt 素点の内訳 (build_motor_pt_breakdown.py 出力)。fun-site の
+        # モーターpt詳細ページが読む。runs は 1 日 2 万行 / 約 1.8MB と大きいが、
+        # md5 dedup で 1 日 1 回しか上がらない (日次バッチの成果物のため)。
+        CsvUploadSpec("motor_pt_runs", f"data/estimate/motor_pt/runs/{ymd}.csv"),
+        CsvUploadSpec("motor_pt_motors", f"data/estimate/motor_pt/motors/{ymd}.csv"),
+        CsvUploadSpec(
+            "motor_pt_baseline", f"data/estimate/motor_pt/baseline/{ymd}.csv",
+        ),
         # 選手別 推定ST (build_racer_st.py 出力)。fun-site のスリット予想 /
         # 1マーク予想が全国平均ST の代わりに読む (docs/design/st_estimation.md)。
         CsvUploadSpec("racer_st", f"data/estimate/racer_st/{ymd}.csv"),

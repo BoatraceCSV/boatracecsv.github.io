@@ -41,6 +41,7 @@ python scripts/recent-form.py --date "$(date +%Y-%m-%d)" --force       # bc_zens
 python scripts/motor-stats.py --date "$(date +%Y-%m-%d)" --force       # bc_mst / bc_mdc (motor_stats) + bc_mrireki (motor_history)
 python scripts/race-title.py --date "$(date +%Y-%m-%d)" --force        # getHoldingList2 (title)
 python scripts/build_index.py --date "$(date +%Y-%m-%d)" --mode daily --all-active  # 全 active 予想者の強さ index
+python scripts/build_motor_pt_breakdown.py --date "$(date +%Y-%m-%d)" --force       # モーターpt 素点の内訳 (data/estimate/motor_pt/)
 ```
 
 ---
@@ -55,6 +56,7 @@ scripts/
 ├── race-card.py                 # Race-card detail + waku10 + monthly schedule scraper (data/programs/)
 ├── recent-form.py               # Recent national/local form scraper
 ├── build_index.py               # Strength Index builder (--mode daily/realtime, --update-races, --predictor / --all-active)
+├── build_motor_pt_breakdown.py  # モーターpt 素点の内訳 CSV (data/estimate/motor_pt/{runs,motors,baseline}/)
 ├── build_weights.py             # Monthly weight learner (per-stadium per-predictor weights, --predictor / --all-active)
 ├── build_course_rate.py         # 場×レース番号×コース別1着率テーブル (course_win_rate.csv, v6_course 用, stdlib のみ)
 ├── build_sui_params.py          # 24-stadium weather coefficient learner
@@ -67,6 +69,7 @@ scripts/
 │   ├── storage.py               # File I/O operations
 │   ├── git_operations.py        # Git commit/push operations
 │   ├── index_features.py        # Shared feature computation (build_index/build_weights)
+│   ├── motor_pt_breakdown.py    # モーターpt 素点の内訳フレーム組み立て
 │   ├── predictors/              # Predictor (予想者) レジストリ
 │   │   ├── __init__.py
 │   │   └── registry.py          # PredictorSpec + active_predictors() — 新規予想者の追加点
@@ -112,6 +115,10 @@ data/                            # Published data (created at runtime)
 │   └── payouts/YYYY/MM/DD.csv              # bc_rs2 由来の締切後払戻金スナップショット(終日キャッチアップ)
 └── estimate/
     ├── index/YYYY/MM/DD.csv                # 派生: 強さポイント (5要素偏差値+寄与+合計)
+    ├── motor_pt/
+    │   ├── runs/YYYY/MM/DD.csv             # 派生: モーターpt 素点の内訳 (1走1行)
+    │   ├── motors/YYYY/MM/DD.csv           # 派生: 同 集計 (1モーター1行)
+    │   └── baseline/YYYY/MM/DD.csv         # 派生: コース補正セルの μ/σ/サンプル数
     └── stadium/
         ├── win_rate.csv                    # 場×季節×コース勝率
         ├── sui_params.csv                  # 24場気象線形回帰パラメータ
@@ -318,6 +325,38 @@ for d in $(seq -w 1 31); do
   python scripts/build_index.py --date 2026-05-${d} --mode realtime --all-active
 done
 ```
+
+### Build Motor Pt Breakdown(モーターpt 素点の内訳)
+
+```bash
+# 日次バッチ (build_index.py --mode daily の直後に走らせる)
+python scripts/build_motor_pt_breakdown.py --date 2026-08-22 --force
+
+# 既存の出力があればスキップ (--force 無し)
+python scripts/build_motor_pt_breakdown.py --date 2026-08-22
+
+# 行数だけ確認して書き込まない
+python scripts/build_motor_pt_breakdown.py --date 2026-08-22 --dry-run
+```
+
+`build_index.py` が `N枠_モーターpt` を出すときに内部で組み立てている **素点**
+(生得点 → コース補正 z 残差 → 時間減衰 → ベイズ収縮)の計算過程を、
+`data/estimate/motor_pt/{runs,motors,baseline}/YYYY/MM/DD.csv` に明細として書き出す。
+スキーマは [`docs/data/motor_pt.md`](./data/motor_pt.md)。
+
+素点は**全 24 場を横断したコース補正ベースライン**に依存するため、当日ぶんの CSV しか
+持たない下流(fun-site)では再現できない。選手pt に対する `recent_national` /
+`recent_local` と同じ「内訳を配る」CSV にあたる。
+
+計算は `boatrace.index_features.motor_ability_breakdown()` に集約してあり、
+`motor_ability_pt()` はその `raw_pt` を返すラッパなので、index CSV のモーターptと
+内訳が食い違うことはない。
+
+> **90 日ぶんの `race_cards` / `title` が要る。** 素点は各場の直近 6 節を
+> `MOTOR_HISTORY_LOOKBACK_DAYS = 90` 日遡って検出する。月初でも 90 日を覆うには
+> 当月 + 過去 3 ヶ月ぶんが checkout されている必要がある(sparse-checkout での
+> 運用は [`operations.md`](./operations.md) 参照)。欠けると採用節数が落ち、
+> `build_index.py` のモーターptもろとも平均 50 側に潰れる。
 
 ### Build Monthly Weights(場別重み)
 
