@@ -498,6 +498,9 @@ gcloud scheduler jobs create http daily-sync \
   --oauth-service-account-email="$INVOKER_EMAIL" \
   --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
   --attempt-deadline=60s \
+  --max-retry-attempts=3 \
+  --min-backoff=30s \
+  --max-backoff=300s \
   --description="Daily boatrace data sync — JST 07:30"
 
 # 動作確認まで pause しておく
@@ -620,6 +623,9 @@ gcloud scheduler jobs create http monthly-weights \
   --oauth-service-account-email="$INVOKER_EMAIL" \
   --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
   --attempt-deadline=60s \
+  --max-retry-attempts=3 \
+  --min-backoff=30s \
+  --max-backoff=300s \
   --description="Monthly index weights — JST 06:00 on the 1st of each month (before daily-sync at 07:30)"
 
 # 動作確認まで pause しておく
@@ -989,6 +995,9 @@ Job 側は `:latest` 参照なので再デプロイ不要。
    ```
    移行完了前は GitHub Actions 側 `.github/workflows/daily-sync.yml` の
    Run 履歴を確認(PR #3 マージ後は GHA workflow は存在しない)。
+   当日の実行履歴そのものが 1 件も無い場合は Job ではなく Scheduler の発火が
+   失敗している可能性がある →
+   [daily-sync が当日まるごと実行されていない](#daily-sync-が当日まるごと実行されていない-scheduler-の-5xx--リトライなし)。
 2. **`run.sh` の sparse-checkout に該当 `predictor_id` のパスが無い**
    `infra/run.sh` の `ACTIVE_PREDICTORS` 配列で展開される
    `data/estimate/${predictor}/${TODAY_YM}` が古いイメージで checkout
@@ -996,6 +1005,65 @@ Job 側は `:latest` 参照なので再デプロイ不要。
    レジストリに新規予想者を追加したのに `ACTIVE_PREDICTORS` を更新
    し忘れたケースが典型。「## 更新手順」に従ってイメージを再ビルド +
    Job を更新。
+
+### daily-sync が当日まるごと実行されていない (Scheduler の 5xx + リトライなし)
+
+`daily-sync` の Cloud Run Job 実行履歴に当日ぶんが 1 件も無い場合、Job ではなく
+**Cloud Scheduler の発火が失敗している**可能性がある。Scheduler は
+`jobs:run` API に POST するだけなので、Cloud Run Admin API が一時的に 5xx を
+返すと発火自体が落ちる。`retryConfig.retryCount` が未設定 (= 0) だと
+リトライされず、**次の発火は翌日 07:30** になり当日ぶんが丸ごと欠落する。
+
+```bash
+# Scheduler 側の発火結果 (Job のログではない点に注意)
+gcloud logging read \
+  'resource.type="cloud_scheduler_job" AND resource.labels.job_id="daily-sync"' \
+  --limit=10 --freshness=3d --format=json
+
+# リトライ設定の確認 (retryCount が無ければリトライ 0 回)
+gcloud scheduler jobs describe daily-sync --location="$REGION" \
+  --format='value(retryConfig,status,lastAttemptTime)'
+```
+
+失敗時は `AttemptFinished` に
+`debugInfo: "URL_UNREACHABLE-UNREACHABLE_5xx. Original HTTP response code number = 503"`、
+`status: UNAVAILABLE` (code 14) が残る。
+
+**下流への波及**(2026-08-29 の実例。JST 07:30 の発火が 503 で不発):
+
+| 症状 | 理由 |
+| --- | --- |
+| `data/programs/{title,race_cards}/YYYY/MM/DD.csv` が repo にも GCS ミラーにも無い | daily-sync が走っていない |
+| `title_csv_missing` → `result_realtime_candidates: 0` / `payout_realtime_candidates: 0` | 締切時刻が引けず結果・払戻の対象レースが 0 件 |
+| `preview_realtime_index_skipped reason=index_csv_missing` | 当日 index CSV が無い |
+| 毎サイクル `pubsub_publish_skipped reason=no_updated_races` | `assemble_updated_races` が `race_cards` を索引に使うため updatedRaces が空になる |
+| **fun-site (boatrace-fun.net) の更新が止まる** | Pub/Sub が飛ばず `fun-site-batch` が 1 度も起動しない |
+
+preview-realtime 自体は成功し続け preview 系 CSV の commit も進むため、
+**git の履歴だけ見ると正常に見える**。コミットメッセージが
+`[preview ...]` だけで `result` / `payout` を含まない日が続いていたら疑う。
+
+復旧は daily-sync を手動実行するだけでよい。title/race_cards が揃えば次の
+preview-realtime サイクルが `trigger=daily-bootstrap` で publish し、
+fun-site が全ページ再ビルドする。結果・払戻も catch-up モードで当日ぶんを回収する。
+
+```bash
+gcloud run jobs execute daily-sync --region="$REGION" --wait   # 実測 ~22 分
+```
+
+再発防止として Scheduler にリトライを設定する (「## daily-sync の追加セットアップ」
+の作成コマンドにも反映済み。既存ジョブは update で後付けする):
+
+```bash
+gcloud scheduler jobs update http daily-sync --location="$REGION" \
+  --max-retry-attempts=3 --min-backoff=30s --max-backoff=300s
+gcloud scheduler jobs update http monthly-weights --location="$REGION" \
+  --max-retry-attempts=3 --min-backoff=30s --max-backoff=300s
+```
+
+> `preview-realtime-daytime` にはリトライを付けていない。2 分毎に発火するので
+> 1 回の 503 は次サイクルが自然に吸収し、リトライを足すと実行が重なる方が
+> 害が大きいため。
 
 ### daily-sync の特定ステップだけが失敗している
 
