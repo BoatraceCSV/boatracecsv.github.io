@@ -12,7 +12,7 @@ GCP の Cloud Scheduler から Cloud Run Jobs を直接叩く構成にしてい�
 
 | Job 名 | スケジュール | 旧 GHA workflow | 概要 |
 | --- | --- | --- | --- |
-| `preview-realtime` | JST 08:00–22:55 / 5 分毎 | `.github/workflows/preview-realtime.yml` (`schedule:` 削除済み、`workflow_dispatch` のみフォールバック) | 直前バッチ + index 更新 + 結果取り込み |
+| `preview-realtime` | JST 08:00–22:58 / 2 分毎 | `.github/workflows/preview-realtime.yml` (`schedule:` 削除済み、`workflow_dispatch` のみフォールバック) | 直前バッチ + index 更新 + 結果取り込み |
 | `daily-sync` | JST 07:30 / 1 日 1 回 | `.github/workflows/daily-sync.yml` (移行完了後に削除) | K-file 結果 + 当日 race_cards / recent_form / motor_stats / title 取得 + daily index 生成 |
 | `monthly-weights` | JST 06:00 / 毎月 1 日 | `.github/workflows/monthly-weights.yml` (移行完了後に削除) | active な全予想者について、直近 6 ヶ月の特徴量から場ごとの n_components 要素重みを再計算し `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を更新 (daily-sync 直前に走らせ、境界日の daily/realtime index を同一 weights で計算)。あわせて静的テーブル `data/estimate/{suji,kimarite}/tables/*.csv` (スジ表・決まり手セル係数・Stage2 ペア表・校正・log-loss) も再生成して commit する |
 
@@ -20,7 +20,7 @@ GCP の Cloud Scheduler から Cloud Run Jobs を直接叩く構成にしてい�
 
 ```
 Cloud Scheduler (Asia/Tokyo)
-   │  preview-realtime-daytime: */5 8-22 * * *   → preview-realtime Job
+   │  preview-realtime-daytime: */2 8-22 * * *   → preview-realtime Job
    │  daily-sync:               30 7 * * *       → daily-sync Job
    │  monthly-weights:          0 6 1 * *        → monthly-weights Job
    │  HTTP POST + OIDC token (preview-realtime-invoker SA)
@@ -133,7 +133,7 @@ daily-sync は preview-realtime とは別系統の入出力を扱うため、`ru
 | `data/programs/race_cards/` + `title/` の 90 日窓ぶんの月 | **モーターptの 90 日ルックバック** (`MOTOR_HISTORY_LOOKBACK_DAYS`)。各場の直近 6 節の検出と、各節最終日の節間成績 + グレード読み出しに使う。欠けると採用節数が落ちてモーターptが平均 50 側に潰れる (月初は 0 節 = 全モーターptが 50)。`motor_lookback_months` として 90 日窓が触る月を実際に列挙する (短い月が続くと 4 ヶ月前まで届くため固定の月数にはしない。例: 5/1 の 90 日前は 1/31) |
 | `data/estimate/motor_pt/{runs,motors,baseline}/<YYYY/MM>/` | build_motor_pt_breakdown.py の出力先 (モーターpt 素点の内訳。commit + GCS ミラー対象) |
 
-> preview-realtime 側はこの 90 日ぶんを **取らない**。5 分毎に走るジョブで
+> preview-realtime 側はこの 90 日ぶんを **取らない**。2 分毎に走るジョブで
 > 毎回 20MB 近い race_cards を引くのは割に合わないため、index CSV の
 > `realtime` 行は朝バッチが計算したモーターptを再利用する
 > (`build_index.DAILY_REUSED_COMPONENTS`)。素点は当日中に変化しないので
@@ -404,9 +404,9 @@ gcloud run jobs add-iam-policy-binding "$JOB_NAME" \
   --role=roles/run.invoker
 ```
 
-### 8. Cloud Scheduler 登録 (JST 08:00〜22:59 を 5 分毎)
+### 8. Cloud Scheduler 登録 (JST 08:00〜22:59 を 2 分毎)
 
-`preview-realtime-daytime` 1 本を JST 08:00 起点・5 分毎で登録します
+`preview-realtime-daytime` 1 本を JST 08:00 起点・2 分毎で登録します
 (過去には JST 08:30 系列を別 Scheduler `preview-realtime-morning` として
 切っていましたが、開催日朝の `getHoldingList2` で扱える時刻が前倒し
 された関係で 08:00 起点に統合し、`preview-realtime-morning` は削除済み)。
@@ -418,7 +418,7 @@ INVOKER_EMAIL="${INVOKER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 # JST 08:00, 08:05, ..., 22:55
 gcloud scheduler jobs create http preview-realtime-daytime \
   --location="$REGION" \
-  --schedule="*/5 8-22 * * *" \
+  --schedule="*/2 8-22 * * *" \
   --time-zone="Asia/Tokyo" \
   --uri="$JOB_URI" \
   --http-method=POST \
@@ -498,6 +498,9 @@ gcloud scheduler jobs create http daily-sync \
   --oauth-service-account-email="$INVOKER_EMAIL" \
   --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
   --attempt-deadline=60s \
+  --max-retry-attempts=3 \
+  --min-backoff=30s \
+  --max-backoff=300s \
   --description="Daily boatrace data sync — JST 07:30"
 
 # 動作確認まで pause しておく
@@ -620,6 +623,9 @@ gcloud scheduler jobs create http monthly-weights \
   --oauth-service-account-email="$INVOKER_EMAIL" \
   --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
   --attempt-deadline=60s \
+  --max-retry-attempts=3 \
+  --min-backoff=30s \
+  --max-backoff=300s \
   --description="Monthly index weights — JST 06:00 on the 1st of each month (before daily-sync at 07:30)"
 
 # 動作確認まで pause しておく
@@ -834,14 +840,14 @@ gcloud builds triggers create github \
   3 Job 全てが同じ Secret を参照しているため 1 回の更新で済む。
 * **想定外の重複実行**: 3 Job とも `parallelism=1 tasks=1 max-retries=0` で動く
   ため同一 Scheduler 内の重複は無い。Scheduler は 3 本:
-  `preview-realtime-daytime` (`*/5 8-22 * * *`) /
+  `preview-realtime-daytime` (`*/2 8-22 * * *`) /
   `daily-sync` (`30 7 * * *`) /
   `monthly-weights` (`0 6 1 * *`)。
   Python 側もレースコードで冪等化されており、CSV 上書きは MD5 dedup される。
 * **3 Job の時間帯重なり**: 毎月 1 日のタイムライン:
   - JST 06:00: `monthly-weights` 起動 (実測 10〜15 分、FeatureContext 導入後)
   - JST 07:30: `daily-sync` 起動 (実測 ~22 分)
-  - JST 08:00–22:55: `preview-realtime` 5 分毎
+  - JST 08:00–22:58: `preview-realtime` 2 分毎
   3 Job は書き込む path がそれぞれ独立しており **ファイル単位の merge conflict は
   起きない**が、git の non-fast-forward (= 相手が先に push して remote が進んだ)
   reject は普通に起きる。とくに `preview-realtime` 稼働時間帯 (JST 08:00–22:59)
@@ -953,7 +959,7 @@ Job 側は `:latest` 参照なので再デプロイ不要。
 [run-monthly-weights ...] FAILED (exit=1) at line 231
 ```
 
-`preview-realtime` (5 分毎) と push レースを 5 回連続で負けた状態。通常は
+`preview-realtime` (2 分毎) と push レースを 5 回連続で負けた状態。通常は
 2〜3 回のリトライで通る。連続失敗する場合の原因候補:
 
 1. **`preview-realtime` が極端に頻繁に push している** (5 分間に複数 commit)
@@ -989,6 +995,9 @@ Job 側は `:latest` 参照なので再デプロイ不要。
    ```
    移行完了前は GitHub Actions 側 `.github/workflows/daily-sync.yml` の
    Run 履歴を確認(PR #3 マージ後は GHA workflow は存在しない)。
+   当日の実行履歴そのものが 1 件も無い場合は Job ではなく Scheduler の発火が
+   失敗している可能性がある →
+   [daily-sync が当日まるごと実行されていない](#daily-sync-が当日まるごと実行されていない-scheduler-の-5xx--リトライなし)。
 2. **`run.sh` の sparse-checkout に該当 `predictor_id` のパスが無い**
    `infra/run.sh` の `ACTIVE_PREDICTORS` 配列で展開される
    `data/estimate/${predictor}/${TODAY_YM}` が古いイメージで checkout
@@ -996,6 +1005,65 @@ Job 側は `:latest` 参照なので再デプロイ不要。
    レジストリに新規予想者を追加したのに `ACTIVE_PREDICTORS` を更新
    し忘れたケースが典型。「## 更新手順」に従ってイメージを再ビルド +
    Job を更新。
+
+### daily-sync が当日まるごと実行されていない (Scheduler の 5xx + リトライなし)
+
+`daily-sync` の Cloud Run Job 実行履歴に当日ぶんが 1 件も無い場合、Job ではなく
+**Cloud Scheduler の発火が失敗している**可能性がある。Scheduler は
+`jobs:run` API に POST するだけなので、Cloud Run Admin API が一時的に 5xx を
+返すと発火自体が落ちる。`retryConfig.retryCount` が未設定 (= 0) だと
+リトライされず、**次の発火は翌日 07:30** になり当日ぶんが丸ごと欠落する。
+
+```bash
+# Scheduler 側の発火結果 (Job のログではない点に注意)
+gcloud logging read \
+  'resource.type="cloud_scheduler_job" AND resource.labels.job_id="daily-sync"' \
+  --limit=10 --freshness=3d --format=json
+
+# リトライ設定の確認 (retryCount が無ければリトライ 0 回)
+gcloud scheduler jobs describe daily-sync --location="$REGION" \
+  --format='value(retryConfig,status,lastAttemptTime)'
+```
+
+失敗時は `AttemptFinished` に
+`debugInfo: "URL_UNREACHABLE-UNREACHABLE_5xx. Original HTTP response code number = 503"`、
+`status: UNAVAILABLE` (code 14) が残る。
+
+**下流への波及**(2026-08-29 の実例。JST 07:30 の発火が 503 で不発):
+
+| 症状 | 理由 |
+| --- | --- |
+| `data/programs/{title,race_cards}/YYYY/MM/DD.csv` が repo にも GCS ミラーにも無い | daily-sync が走っていない |
+| `title_csv_missing` → `result_realtime_candidates: 0` / `payout_realtime_candidates: 0` | 締切時刻が引けず結果・払戻の対象レースが 0 件 |
+| `preview_realtime_index_skipped reason=index_csv_missing` | 当日 index CSV が無い |
+| 毎サイクル `pubsub_publish_skipped reason=no_updated_races` | `assemble_updated_races` が `race_cards` を索引に使うため updatedRaces が空になる |
+| **fun-site (boatrace-fun.net) の更新が止まる** | Pub/Sub が飛ばず `fun-site-batch` が 1 度も起動しない |
+
+preview-realtime 自体は成功し続け preview 系 CSV の commit も進むため、
+**git の履歴だけ見ると正常に見える**。コミットメッセージが
+`[preview ...]` だけで `result` / `payout` を含まない日が続いていたら疑う。
+
+復旧は daily-sync を手動実行するだけでよい。title/race_cards が揃えば次の
+preview-realtime サイクルが `trigger=daily-bootstrap` で publish し、
+fun-site が全ページ再ビルドする。結果・払戻も catch-up モードで当日ぶんを回収する。
+
+```bash
+gcloud run jobs execute daily-sync --region="$REGION" --wait   # 実測 ~22 分
+```
+
+再発防止として Scheduler にリトライを設定する (「## daily-sync の追加セットアップ」
+の作成コマンドにも反映済み。既存ジョブは update で後付けする):
+
+```bash
+gcloud scheduler jobs update http daily-sync --location="$REGION" \
+  --max-retry-attempts=3 --min-backoff=30s --max-backoff=300s
+gcloud scheduler jobs update http monthly-weights --location="$REGION" \
+  --max-retry-attempts=3 --min-backoff=30s --max-backoff=300s
+```
+
+> `preview-realtime-daytime` にはリトライを付けていない。2 分毎に発火するので
+> 1 回の 503 は次サイクルが自然に吸収し、リトライを足すと実行が重なる方が
+> 害が大きいため。
 
 ### daily-sync の特定ステップだけが失敗している
 

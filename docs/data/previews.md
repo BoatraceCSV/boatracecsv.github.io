@@ -3,7 +3,7 @@
 締切5分前のスナップショットをデータソース単位で別ファイルに追記したものです(得点率早見は展示データではありませんが、節の進行に伴って値が変わるため同じ「締切直前スナップショット」として扱います)。
 データソースを分割することで当日の値の時間変化を保持でき(特に水面気象)、後段の特徴量計算 (`scripts/boatrace/index_features.py`) もこの per-source CSV を直接参照します。
 
-`scripts/preview-realtime.py` が Cloud Run Jobs (`boatrace-487212/asia-northeast1`) で **JST 08:00〜22:59 の 5 分毎** に動作し、各レースの締切5分前のスナップショットを取得します。
+`scripts/preview-realtime.py` が Cloud Run Jobs (`boatrace-487212/asia-northeast1`) で **JST 08:00〜22:59 の 2 分毎** に動作し、各レースの締切5分前のスナップショットを取得します。
 
 ## ファイルパス
 
