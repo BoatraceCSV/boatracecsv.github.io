@@ -179,7 +179,7 @@ DAILY_NEUTRAL_COMPONENTS: frozenset[str] = frozenset({"exhibit", "weather", "ten
 #
 # モーターpt の素点は当場の直近 6 節 = 過去 90 日ぶんの race_cards と title を
 # 舐めて出す (index_features.MOTOR_HISTORY_LOOKBACK_DAYS)。ところが
-# preview-realtime の Cloud Run Job は 5 分毎に走るためクローンを絞っており、
+# preview-realtime の Cloud Run Job は 2 分毎に走るためクローンを絞っており、
 # race_cards は当月ぶんしか checkout していない。そのまま再計算すると採用節数が
 # 月初で 0〜1 節まで落ち、daily 行と realtime 行でモーターpt が食い違う。
 #

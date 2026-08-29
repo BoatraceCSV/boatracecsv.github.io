@@ -310,10 +310,26 @@ run_step "build-kimarite-picks" python scripts/build_kimarite_picks.py --date "$
 # ---------------------------------------------------------------------------
 # build_index.py は git にコミットしないため、ここで明示 commit/push する。
 # 旧 GHA workflow の "Commit Daily Index" ステップ相当。
-# 失敗を握り潰す: コミットが無い場合は no-op、push 競合は次回で吸収。
 # 各 active 予想者の出力ディレクトリを add 対象に列挙する。
+#
+# ⚠️ bare push は使わない。preview-realtime が JST 08:00〜22:59 に 2 分毎
+# main へ push しているため、clone から commit-index に到達するまでの
+# 数分の間にほぼ確実に remote が進み、non-fast-forward で reject される
+# (2026-08-29 の手動リカバリ実行で実際に発生:
+#  ` ! [rejected]  main -> main (fetch first)`)。
+#
+# ここで push を落とすと **当日の index CSV が main に載らない**。
+# preview-realtime は clone した main から index CSV を読むので
+# `preview_realtime_index_skipped reason=index_csv_missing` となり、
+# 直前買い目 (状態=realtime) がその日 1 日ぶん生成されなくなる。
+# 一方 gcs-publish ステップはローカルの生成物を GCS へ上げるため
+# **当日買い目 (状態=daily) だけは fun-site に出る**。この片肺状態は
+# 外形から気づきにくい。「次回で吸収」も効かない — 次の daily-sync は
+# 翌朝 07:30 で、その頃には当日ぶんの意味が無い。
+#
+# よって monthly-weights と同じ fetch + rebase + リトライで押し込む。
 # ---------------------------------------------------------------------------
-commit_and_push_index() {
+stage_index_artifacts() {
   for predictor in "${ACTIVE_PREDICTORS[@]}"; do
     git add "data/estimate/${predictor}/"
   done
@@ -323,12 +339,54 @@ commit_and_push_index() {
   git add data/estimate/kimarite/
   # モーターpt 素点の内訳 (build_motor_pt_breakdown.py も git にコミットしない)
   git add data/estimate/motor_pt/
+}
+
+# fetch + rebase してから push し、その間に remote がさらに進んでいたら
+# リトライする (run-monthly-weights.sh の push_with_rebase と同じ形)。
+#
+# rebase conflict は自動解決しない。conflict が起きるのは preview-realtime が
+# 同じ index CSV に 状態=realtime 行を upsert 済みのとき、すなわち当日の
+# daily-sync が既に一度成功している場合に限られる (通常運用の朝 07:30 では
+# index CSV 自体が remote に無いので conflict しえない)。ここで
+# `build_index.py --mode daily` を rerun して解決すると CSV を全面上書きし、
+# preview-realtime が積んだ realtime 行を捨ててしまうため、abort して
+# 人手に委ねる。
+push_index_with_rebase() {
+  local max_attempts=5
+  local attempt=1
+  while (( attempt <= max_attempts )); do
+    log "Index push attempt ${attempt}/${max_attempts}"
+    if ! git fetch origin "${GIT_BRANCH}"; then
+      log "fetch failed on attempt ${attempt}; retrying after backoff"
+      attempt=$((attempt + 1))
+      sleep $((attempt * 2))
+      continue
+    fi
+    if ! git rebase "origin/${GIT_BRANCH}"; then
+      log "Rebase conflict on index CSVs — aborting (preview-realtime may have upserted realtime rows into the same file)"
+      git rebase --abort || true
+      return 1
+    fi
+    if git push origin "${GIT_BRANCH}"; then
+      log "Index push succeeded on attempt ${attempt}"
+      return 0
+    fi
+    log "Push rejected; remote moved during rebase. Retrying after backoff"
+    attempt=$((attempt + 1))
+    sleep $((attempt * 2))
+  done
+  log "Index push failed after ${max_attempts} attempts"
+  return 1
+}
+
+commit_and_push_index() {
+  stage_index_artifacts
   if git diff --cached --quiet; then
     log "No daily index changes to commit"
     return 0
   fi
   git commit -m "Update daily index batch (${TODAY_JST})"
-  git push origin "${GIT_BRANCH}"
+  push_index_with_rebase
 }
 run_step "commit-index" commit_and_push_index
 

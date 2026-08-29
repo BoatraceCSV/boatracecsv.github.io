@@ -316,7 +316,7 @@ python scripts/build_weights.py --month "${TARGET_MONTH}" --all-active
 # commit + push する。旧 GHA workflow の "Commit Weights" ステップ相当。
 # 差分が無ければ no-op (再実行時の冪等性)。
 #
-# preview-realtime ジョブが JST 08:00〜22:59 の間 5 分ごとに main へ push
+# preview-realtime ジョブが JST 08:00〜22:59 の間 2 分ごとに main へ push
 # しているため、bare push は non-fast-forward で reject されることが多い。
 # fetch + rebase で取り込んでから push し、競合があれば最大数回までリトライ。
 #

@@ -3,7 +3,7 @@
 
 Run every 5 minutes by Cloud Scheduler (`preview-realtime-daytime`) →
 Cloud Run Job (`preview-realtime`) in project ``boatrace-487212`` /
-``asia-northeast1`` between JST 08:00 and 22:59 (cron ``*/5 8-22 * * *``,
+``asia-northeast1`` between JST 08:00 and 22:59 (cron ``*/2 8-22 * * *``,
 Asia/Tokyo). The ``.github/workflows/preview-realtime.yml`` workflow is
 retained as a ``workflow_dispatch`` manual fallback only — its scheduled
 cron has been removed because GitHub Actions throttled it down to ~hourly.

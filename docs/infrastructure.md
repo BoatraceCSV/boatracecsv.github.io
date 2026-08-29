@@ -855,9 +855,13 @@ gcloud builds triggers create github \
   - `run-monthly-weights.sh`: fetch + rebase + push を最大 5 回リトライ。
     rebase は path 重複なしで成立する想定。詳細は本ファイル末尾の
     トラブルシュート「monthly-weights の git push が rejected で失敗する」参照。
-  - `run-daily-sync.sh`: `commit-index` ステップは現状 bare push のまま `run_step`
-    で握り潰す設計。push 失敗時は当日の index が main に反映されないが、
-    翌朝の daily-sync が同じ index を再生成して上書きする。
+  - `run-daily-sync.sh`: `commit-index` ステップも fetch + rebase + push を
+    最大 5 回リトライ (`push_index_with_rebase`)。以前は bare push を `run_step`
+    で握り潰しており「翌朝の daily-sync が上書きするから良い」と考えていたが、
+    **翌朝では当日の直前買い目が丸ごと失われる**(preview-realtime は main の
+    index CSV が無いと realtime 行を upsert できない)。2026-08-29 の手動
+    リカバリ実行で実際に踏んだ。詳細はトラブルシュート
+    「daily-sync の `commit-index` が rejected で失敗する / 直前買い目だけ出ない」参照。
   - Python 側 (`boatrace.git_operations.push`) は fetch + rebase + push 内蔵。
     preview-realtime はこれを使うため自前リトライは不要。
 * **タイムアウト**: preview-realtime は 1 実行 5 分 / daily-sync は 60 分
@@ -947,6 +951,51 @@ Runner SA の Secret アクセス権 (§4 末尾の `add-iam-policy-binding`) �
 PAT が失効 / 権限不足。GitHub で fine-grained PAT を再発行し
 `gcloud secrets versions add github-token --data-file=-` で更新。
 Job 側は `:latest` 参照なので再デプロイ不要。
+
+### daily-sync の `commit-index` が rejected で失敗する / 直前買い目だけ出ない
+
+```
+[run-daily-sync ...] STEP START: commit-index
+ ! [rejected]        main -> main (fetch first)
+error: failed to push some refs to 'https://github.com/BoatraceCSV/boatracecsv.github.io.git'
+[run-daily-sync ...] STEP FAILED (rc=1): commit-index — continuing
+```
+
+`commit-index` の push が non-fast-forward で reject された状態。
+`preview-realtime` が JST 08:00〜22:59 に 2 分毎 main へ push しているため、
+**この時間帯に daily-sync を手動実行するとほぼ必ず起きる**
+(clone から commit-index に到達するまで 2 分以上かかるため)。
+2026-08-29 の手動リカバリ実行で実際に発生した。
+
+現在は `push_index_with_rebase()` が fetch + rebase して最大 5 回リトライ
+するので通常は通る。以下は**リトライ導入前の挙動と、それでも失敗した場合の
+症状**:
+
+| 層 | 状態 |
+| --- | --- |
+| main (git) | 当日 index CSV が**無い** (`data/estimate/{predictor}/YYYY/MM/DD.csv`) |
+| GCS ミラー | 当日 index CSV が**ある** (gcs-publish はローカル生成物を上げるので push 失敗と無関係に成功する) |
+| fun-site の当日買い目 (状態=daily) | **出る** (GCS を読むため) |
+| fun-site の直前買い目 (状態=realtime) | **出ない** |
+
+直前買い目が出ないのは、preview-realtime が clone した main から index CSV を
+読むため。`preview_realtime_index_skipped reason=index_csv_missing` が
+2 分毎に出続ける。**当日買い目だけ正常に見えるので気づきにくい**。
+
+「次回の daily-sync で吸収」は効かない。次は翌朝 07:30 で、その頃には当日ぶんの
+index に意味が無いため、**その日 1 日ぶんの直前買い目が失われる**。
+
+復旧は daily-sync の再実行 (`gcloud run jobs execute daily-sync --region="$REGION" --wait`)。
+index CSV が main に載れば、次サイクル以降の preview-realtime が
+状態=realtime 行の upsert を再開する。ただし**締切を過ぎたレースには
+遡って realtime 行は付かない**(直前情報の取得窓が締切基準のため)。
+
+リトライしても抜けない場合は rebase conflict を疑う
+(`Rebase conflict on index CSVs — aborting` ログ)。これは同じ index CSV に
+preview-realtime が 状態=realtime 行を upsert 済みのとき、つまり当日の
+daily-sync が既に一度成功している場合にだけ起きる。`build_index.py --mode daily`
+の rerun は CSV を全面上書きして realtime 行を捨てるので自動解決していない。
+人手で「その日の index を作り直してよいか」を判断すること。
 
 ### monthly-weights の git push が rejected で失敗する
 
