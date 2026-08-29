@@ -102,5 +102,5 @@ Stadium Parameters    → win_rate.csv / sui_params.csv / weights/{predictor_id}
 - `https://boatracecsv.github.io/data/previews/tkz/2026/05/03.csv`
 - `https://boatracecsv.github.io/data/results/realtime/2026/05/03.csv`
 
-更新は 1 日 1 回 (一部のリアルタイム系は 5 分毎)。最新の情報が必要な場合、
+更新は 1 日 1 回 (一部のリアルタイム系は 2 分毎)。最新の情報が必要な場合、
 [Boatrace OpenAPI](https://github.com/BoatraceOpenAPI) などの別のソースをご利用ください。
