@@ -158,22 +158,36 @@ def blend(
     return {t: w * kim[t] + (1.0 - w) * pl[t] for t in TRIPLES}
 
 
-def top_picks(
+def top_picks_with_probs(
     probs: dict[tuple[int, int, int], float],
     top_k: int = TOP_K,
     exclude_first_course: int | None = EXCLUDE_FIRST_COURSE,
-) -> list[tuple[int, int, int]]:
-    """確率の上位 ``top_k`` 点。``exclude_first_course`` を 1着 に持つ出目は除く。
+) -> list[tuple[tuple[int, int, int], float]]:
+    """確率の上位 ``top_k`` 点を ``(出目, 確率)`` で返す。
 
-    穴予想なので既定では **1コース頭を買わない**(設計書 §5.2)。
-    同確率の並びは出目の昇順で決定的にする(再実行の冪等性のため)。
+    ``exclude_first_course`` を 1着 に持つ出目は除く。穴予想なので既定では
+    **1コース頭を買わない**(設計書 §5.2)。同確率の並びは出目の昇順で
+    決定的にする(再実行の冪等性のため)。
+
+    確率は ``blend()`` の 120 通り(合計 1)のうちの値で、除外後に正規化は
+    **しない**。「この出目が来る確率」としてそのまま fun-site の穴予想詳細
+    ページに出す(``build_kimarite_picks.py`` の ``確率N`` 列)。
     """
     items = [
         (t, p) for t, p in probs.items()
         if exclude_first_course is None or t[0] != exclude_first_course
     ]
     items.sort(key=lambda kv: (-kv[1], kv[0]))
-    return [t for t, _ in items[:top_k]]
+    return items[:top_k]
+
+
+def top_picks(
+    probs: dict[tuple[int, int, int], float],
+    top_k: int = TOP_K,
+    exclude_first_course: int | None = EXCLUDE_FIRST_COURSE,
+) -> list[tuple[int, int, int]]:
+    """``top_picks_with_probs`` の出目だけ(log-loss 集計など確率が要らない側)。"""
+    return [t for t, _ in top_picks_with_probs(probs, top_k, exclude_first_course)]
 
 
 def z_scores(strength_by_boat: list[float], boat_at: list[int]) -> list[float]:

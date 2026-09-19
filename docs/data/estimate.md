@@ -556,6 +556,8 @@ monthly-weights ジョブが毎月 1 日に再生成する。
 
 ### `data/estimate/suji/tables/kimarite_table.csv`(静的・月次再生成)
 
+> **GCS ミラー対象**(`csv_type=kimarite_table`、2026-09-19 追加。fun-site の穴予想詳細ページが読む)。
+
 **決まり手注釈テーブル** — 出目(1-2-3 着のコース並び)ごとの決まり手分布と最頻値。
 買い目 1 点ごとの注釈(「3コースの まくり差し」)に使う。同じく 120 行。
 
@@ -644,6 +646,10 @@ monthly-weights ジョブが毎月 1 日に再生成する。
 
 ### `data/estimate/kimarite/tables/pair_table.csv`(静的・月次再生成)
 
+> **GCS ミラー対象**(`csv_type=kimarite_pair_table`、2026-09-19 追加)。
+> `suji/tables/kimarite_table.csv`(`csv_type=kimarite_table`)と合わせて、
+> fun-site の穴予想詳細ページが Stage2 の中身と出目ごとの決まり手分布を出すために読む。
+
 **Stage2** — 決まり手セル条件付きの 2-3 着コース分布 `P(2着, 3着 | セル)`。
 B案 `v10_kimarite` が Stage1 の出力に掛けて 3連単 120 通りにする。
 32 セル × 20 ペア = **640 行**。
@@ -677,6 +683,7 @@ index の 強さpt を合成して作るので、**`build_index.py` と `build_k
 | `状態` | `daily`(朝バッチ・枠なり)/ `realtime`(直前・展示進入) |
 | `買い目1` 〜 `買い目5` | `3-1-4` 形式の**艇番**。確率上位から順 |
 | `決まり手1` 〜 `決まり手5` | 各出目の最頻決まり手(`suji/tables/kimarite_table.csv` 由来。**A案と共通**) |
+| `確率1` 〜 `確率5` | 各出目のブレンド後 3連単確率(0〜1、小数 6 桁。**2026-09-19 追加**)。120 通りの分布の値そのもので、1 コース頭を除いた後の正規化はしない。fun-site の穴予想詳細ページが「なぜこの 5 点か」を出すために使う。列追加前に書かれた行は空欄 |
 
 > **A案 `data/estimate/suji/` との違い**: A案は 1着が 1 艇に決まるので
 > `1着コース` / `1着艇番` 列を持つが、B案は 120 通りの確率から上位 5 点を

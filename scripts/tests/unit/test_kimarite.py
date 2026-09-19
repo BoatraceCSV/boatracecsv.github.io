@@ -394,6 +394,18 @@ class TestBlend:
         # 除外しなければ 1 コース頭も入る
         assert blend.top_picks(probs, top_k=1, exclude_first_course=None) == [(1, 2, 3)]
 
+    def test_top_picks_with_probs_carries_the_blend_values(self) -> None:
+        """確率つきの版は出目の並びが top_picks と同じで、値は入力の確率そのもの
+        (除外後に正規化しない)。"""
+        probs = {t: 1.0 / len(blend.TRIPLES) for t in blend.TRIPLES}
+        probs[(3, 4, 5)] = 0.5
+        probs[(1, 2, 3)] = 0.9  # 1コース頭は除外される
+        ranked = blend.top_picks_with_probs(probs)
+        assert [t for t, _ in ranked] == blend.top_picks(probs)
+        assert ranked[0] == ((3, 4, 5), 0.5)
+        assert all(a >= b for (_, a), (_, b) in zip(ranked, ranked[1:]))
+        assert all(t[0] != 1 for t, _ in ranked)
+
     def test_top_picks_break_ties_deterministically(self) -> None:
         """同確率は出目の昇順。再実行で買い目が入れ替わらないようにする。"""
         probs = {t: 0.0 for t in blend.TRIPLES}
@@ -526,6 +538,49 @@ class TestKimaritePicks:
         rows = list(csv.DictReader(
             open(bkpk.picks_csv_path(repo, DAY), encoding="utf-8")))
         assert [r["状態"] for r in rows] == ["daily", "realtime"]
+
+    def test_probability_columns_follow_the_picks(self, tmp_path: Path) -> None:
+        """確率1..5 は 買い目1..5 と同順で降順、合計は 1 以下 (120 通りの一部)。"""
+        import build_kimarite_picks as bkpk
+
+        repo = self._repo(tmp_path)
+        bkpk.write_day(repo, DAY, "realtime", None)
+        rows = list(csv.DictReader(
+            open(bkpk.picks_csv_path(repo, DAY), encoding="utf-8")))
+        probs = [float(rows[0][f"確率{i}"]) for i in range(1, 6)]
+        assert all(0.0 < p <= 1.0 for p in probs)
+        assert probs == sorted(probs, reverse=True)
+        assert sum(probs) <= 1.0 + 1e-9
+        # 最有力 3-4-5 の確率が突出している (ペア表を (4,5) に寄せてあるため)
+        # PL 成分 (0.3) が他の出目にも確率を配るので突出は 2 倍程度に留まる
+        assert probs[0] > probs[1] * 2
+
+    def test_rows_written_before_probability_columns_are_padded(
+        self, tmp_path: Path
+    ) -> None:
+        """確率列追加前 (15 列) の行が残っていても、upsert 後は全行が HEADER 幅。"""
+        import build_kimarite_picks as bkpk
+
+        repo = self._repo(tmp_path)
+        old_header = bkpk.HEADER[: len(bkpk.HEADER) - bkpk.TOP_K]
+        _write(
+            bkpk.picks_csv_path(repo, DAY),
+            old_header,
+            [["202608120301", "2026-08-12", "03", "1R", "daily",
+              "3-4-5", "3-4-1", "3-4-2", "3-4-6", "3-5-4",
+              "まくり", "まくり", "まくり", "まくり", "まくり"]],
+        )
+        bkpk.write_day(repo, DAY, "realtime", None)
+        with open(bkpk.picks_csv_path(repo, DAY), encoding="utf-8") as fh:
+            raw = list(csv.reader(fh))
+        assert raw[0] == bkpk.HEADER
+        assert all(len(r) == len(bkpk.HEADER) for r in raw[1:])
+        rows = list(csv.DictReader(
+            open(bkpk.picks_csv_path(repo, DAY), encoding="utf-8")))
+        assert [r["状態"] for r in rows] == ["daily", "realtime"]
+        assert rows[0]["確率1"] == ""       # 旧行は確率なし
+        assert rows[0]["買い目1"] == "3-4-5"
+        assert rows[1]["確率1"] != ""
 
     def test_race_without_stage1_probs_is_skipped(self, tmp_path: Path) -> None:
         """荒れ度メーターが未生成のレースは買い目を出さない (無言で 0 行)。"""

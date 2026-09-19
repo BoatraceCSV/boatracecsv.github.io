@@ -3,6 +3,8 @@
 
 `data/estimate/kimarite/picks/YYYY/MM/DD.csv` に、レース 1 行 × 買い目 5 点を出力する。
 fun-site はこの CSV を読むだけで、買い目の計算はしない(A案 `v9_suji` と同じ規約)。
+各出目のブレンド後確率も `確率1..5` 列で配る(fun-site の穴予想詳細ページが
+「なぜこの 5 点か」を出すため。fun-site 側で合成を再計算させない)。
 
 買い目の作り方(B案。設計は docs/design/ana_prediction.md §4.3 / §5.2):
 
@@ -50,7 +52,7 @@ from boatrace.kimarite_blend import (  # noqa: E402
     blend,
     load_pair_table,
     read_cell_probs,
-    top_picks,
+    top_picks_with_probs,
     z_scores,
 )
 from build_kimarite_probs import probs_csv_path  # noqa: E402
@@ -67,10 +69,14 @@ from build_suji_table import KIMARITE_OUT_RELPATH  # noqa: E402
 PREDICTOR_ID = "v10_kimarite"
 PICKS_DIR = Path("data") / "estimate" / "kimarite" / "picks"
 
+# 列は末尾に足す (fun-site の `parseAnaPicks` はヘッダ名で引くので順序は自由だが、
+# 旧行との混在 (`write_day` の空欄埋め) を単純にするため追記のみにする)。
 HEADER = (
     ["レースコード", "レース日", "レース場コード", "レース回", "状態"]
     + [f"買い目{i}" for i in range(1, TOP_K + 1)]
     + [f"決まり手{i}" for i in range(1, TOP_K + 1)]
+    # 2026-09-19 追加。各出目のブレンド後確率 (0〜1、小数 6 桁)。買い目N と同順
+    + [f"確率{i}" for i in range(1, TOP_K + 1)]
 )
 
 
@@ -95,15 +101,17 @@ def build_row(
     for boat, course in enumerate(course_of_boat, start=1):
         boat_at[course] = boat
 
-    picks = top_picks(blend(p1, tab, z_scores(strength, boat_at)))
-    if not picks:
+    ranked = top_picks_with_probs(blend(p1, tab, z_scores(strength, boat_at)))
+    if not ranked:
         return None
 
-    combos = [f"{boat_at[a]}-{boat_at[b]}-{boat_at[c]}" for a, b, c in picks]
-    marks = [kimarite.get(t, "") for t in picks]
+    combos = [f"{boat_at[a]}-{boat_at[b]}-{boat_at[c]}" for (a, b, c), _ in ranked]
+    marks = [kimarite.get(t, "") for t, _ in ranked]
+    probs = [f"{p:.6f}" for _, p in ranked]
     # TOP_K 未満しか取れなかった場合は空欄で埋める(列数を固定するため)
     combos += [""] * (TOP_K - len(combos))
     marks += [""] * (TOP_K - len(marks))
+    probs += [""] * (TOP_K - len(probs))
 
     return [
         index_row.get("レースコード", ""),
@@ -111,7 +119,7 @@ def build_row(
         index_row.get("レース場コード", ""),
         index_row.get("レース回", ""),
         state,
-    ] + combos + marks
+    ] + combos + marks + probs
 
 
 def build_day(
@@ -171,7 +179,10 @@ def write_day(repo: Path, day: dt.date, state: str, race_codes: set[str] | None)
     new_rows = build_day(repo, day, state, race_codes)
     path = picks_csv_path(repo, day)
     kept = [
-        r for r in read_existing(path)
+        # 列を足す前に書かれた行 (例: 確率列追加当日の daily 行) は末尾を空欄で
+        # 埋めて HEADER と幅を揃える。fun-site 側は空欄を「確率なし」と読む
+        r + [""] * (len(HEADER) - len(r))
+        for r in read_existing(path)
         if len(r) > 4 and not (
             r[4] == state and (race_codes is None or r[0] in race_codes)
         )
