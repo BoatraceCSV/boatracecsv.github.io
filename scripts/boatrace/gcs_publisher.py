@@ -76,6 +76,11 @@ WAKU_TABLE_CSV_TYPE = "waku_table"
 # 場×特徴量×コースの気象線形回帰係数テーブル (気象pt の生データ) の csv_type。
 SUI_PARAMS_CSV_TYPE = "sui_params"
 
+# 穴予想 v10_kimarite の根拠テーブル (日付パーティション無し)。fun-site の
+# 穴予想詳細ページが Stage2 のペア表と出目ごとの決まり手分布を出すために読む。
+KIMARITE_PAIR_TABLE_CSV_TYPE = "kimarite_pair_table"
+KIMARITE_TABLE_CSV_TYPE = "kimarite_table"
+
 # Imports are deferred so that the module can be imported even if the GCP
 # client libraries are not yet installed (e.g. during pure-Python unit tests).
 try:
@@ -253,6 +258,8 @@ def _static_table_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
     * ``win_rate.csv``: 場×季節×コース勝率 (枠番pt の raw 値)
     * ``sui_params.csv``: 場×特徴量×コースの気象回帰係数 (気象pt の raw 値。
       切片 ``base_c*`` は下流も上流も使わないが、ファイル単位で配る)
+    * ``kimarite/tables/pair_table.csv`` / ``suji/tables/kimarite_table.csv``:
+      穴予想 v10_kimarite の根拠テーブル (fun-site の穴予想詳細ページが読む)
     * ``weights/{predictor_id}/YYYY-MM.csv``: 場別の μ / σ / w
       (raw → 偏差値pt → 寄与 の変換に必要)
 
@@ -266,6 +273,15 @@ def _static_table_specs(repo: Path, day: dt.date) -> List[CsvUploadSpec]:
     specs: List[CsvUploadSpec] = [
         CsvUploadSpec(WAKU_TABLE_CSV_TYPE, "data/estimate/stadium/win_rate.csv"),
         CsvUploadSpec(SUI_PARAMS_CSV_TYPE, "data/estimate/stadium/sui_params.csv"),
+        # 穴予想 v10_kimarite の根拠 (2026-09-19 追加)。pair_table は Stage2 の
+        # P(2着,3着|セル) 640 行、kimarite_table は出目ごとの決まり手分布 120 行。
+        # どちらも monthly-weights で月 1 回しか変わらない。
+        CsvUploadSpec(
+            KIMARITE_PAIR_TABLE_CSV_TYPE, "data/estimate/kimarite/tables/pair_table.csv",
+        ),
+        CsvUploadSpec(
+            KIMARITE_TABLE_CSV_TYPE, "data/estimate/suji/tables/kimarite_table.csv",
+        ),
     ]
     for predictor in active_predictors():
         resolved = predictor.resolve_weights_csv_path(repo, day)

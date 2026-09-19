@@ -79,8 +79,9 @@ def test_build_csv_specs_includes_results():
     # kimarite / kimarite_picks も同じく予想者 ID を持たない固定 spec
     # (買い目そのものを配るため。docs/design/ana_prediction.md §13)。
     # suji (v9_suji の買い目) は 2026-08-22 の退役で生成が止まったため spec ごと
-    # 外した。決まり手注釈テーブル (data/estimate/suji/tables/) は
-    # v10_kimarite が使うので残っているが、GCS ミラー対象ではない。
+    # 外した。決まり手注釈テーブル (data/estimate/suji/tables/kimarite_table.csv)
+    # は v10_kimarite が使うので残っており、2026-09-19 に静的テーブルとして
+    # mirror 対象へ加えた (下記 kimarite_table)。
     # 直前情報の残り (tkz / sui / original_exhibition / tokuten_hayami) と
     # daily-sync 系 (recent_national / recent_local / waku10 / motor_stats) は
     # 2026-08-12 に mirror 対象へ追加した (fun-site の直前情報・近況5節・
@@ -117,6 +118,11 @@ def test_build_csv_specs_includes_results():
         # 特徴量 × 係数 → z → 偏差値 → 寄与 を再現する)。
         "waku_table",
         "sui_params",
+        # 穴予想 v10_kimarite の根拠テーブル。2026-09-19 に mirror 対象へ追加した
+        # (fun-site の穴予想詳細ページが Stage2 のペア表と出目ごとの決まり手分布を
+        # 出すため)。
+        "kimarite_pair_table",
+        "kimarite_table",
         "weights:v1_basic",
         "weights:v10_kimarite",
     ]
@@ -128,6 +134,14 @@ def test_build_csv_specs_preview_and_program_paths():
     by_type = {s.csv_type: s for s in specs}
 
     assert by_type["tkz"].repo_relative_path == "data/previews/tkz/2026/05/07.csv"
+    assert (
+        by_type["kimarite_pair_table"].repo_relative_path
+        == "data/estimate/kimarite/tables/pair_table.csv"
+    )
+    assert (
+        by_type["kimarite_table"].repo_relative_path
+        == "data/estimate/suji/tables/kimarite_table.csv"
+    )
     assert by_type["sui"].repo_relative_path == "data/previews/sui/2026/05/07.csv"
     assert (
         by_type["original_exhibition"].repo_relative_path
