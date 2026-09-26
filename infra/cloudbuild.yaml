@@ -100,10 +100,10 @@ steps:
       - --parallelism=1
       - --tasks=1
       - --cpu=1
-      # 1Gi is well over the working set for a partial+sparse clone (~tens of
-      # MB), but provides headroom for git's transient packfile work and the
-      # python pandas/lightgbm import footprint.
-      - --memory=1Gi
+      # 実測のメモリ使用率は 1Gi 設定で p99 約 21% (~215MB)。partial+sparse
+      # clone と pandas/lightgbm の import を含めても 512Mi で 2 倍強の余裕が
+      # あるため、課金 (GiB 秒) を半分にする目的で 512Mi にしている。
+      - --memory=512Mi
 
   # daily-sync Job: 旧 .github/workflows/daily-sync.yml を置き換える。
   # JST 07:30 に Cloud Scheduler から起動される (Scheduler の作成は
