@@ -12,7 +12,7 @@ GCP の Cloud Scheduler から Cloud Run Jobs を直接叩く構成にしてい�
 
 | Job 名 | スケジュール | 旧 GHA workflow | 概要 |
 | --- | --- | --- | --- |
-| `preview-realtime` | JST 08:00–22:58 / 2 分毎 | `.github/workflows/preview-realtime.yml` (`schedule:` 削除済み、`workflow_dispatch` のみフォールバック) | 直前バッチ + index 更新 + 結果取り込み |
+| `preview-realtime` | JST 08:00–22:55 / 5 分毎 | `.github/workflows/preview-realtime.yml` (`schedule:` 削除済み、`workflow_dispatch` のみフォールバック) | 直前バッチ + index 更新 + 結果取り込み |
 | `daily-sync` | JST 07:30 / 1 日 1 回 | `.github/workflows/daily-sync.yml` (移行完了後に削除) | K-file 結果 + 当日 race_cards / recent_form / motor_stats / title 取得 + daily index 生成 |
 | `monthly-weights` | JST 06:00 / 毎月 1 日 | `.github/workflows/monthly-weights.yml` (移行完了後に削除) | active な全予想者について、直近 6 ヶ月の特徴量から場ごとの n_components 要素重みを再計算し `data/estimate/stadium/weights/{predictor_id}/YYYY-MM.csv` を更新 (daily-sync 直前に走らせ、境界日の daily/realtime index を同一 weights で計算)。あわせて静的テーブル `data/estimate/{suji,kimarite}/tables/*.csv` (スジ表・決まり手セル係数・Stage2 ペア表・校正・log-loss) も再生成して commit する |
 
@@ -20,13 +20,13 @@ GCP の Cloud Scheduler から Cloud Run Jobs を直接叩く構成にしてい�
 
 ```
 Cloud Scheduler (Asia/Tokyo)
-   │  preview-realtime-daytime: */2 8-22 * * *   → preview-realtime Job
+   │  preview-realtime-daytime: */5 8-22 * * *   → preview-realtime Job
    │  daily-sync:               30 7 * * *       → daily-sync Job
    │  monthly-weights:          0 6 1 * *        → monthly-weights Job
    │  HTTP POST + OIDC token (preview-realtime-invoker SA)
    ▼
 Cloud Run Jobs (1 image, 3 jobs — switch by --command):
-   ├─ preview-realtime  (--command=/app/run.sh,                 cpu=1, mem=1Gi, timeout=300s)
+   ├─ preview-realtime  (--command=/app/run.sh,                 cpu=1, mem=512Mi, timeout=300s)
    ├─ daily-sync        (--command=/app/run-daily-sync.sh,      cpu=2, mem=2Gi, timeout=3600s)
    └─ monthly-weights   (--command=/app/run-monthly-weights.sh, cpu=2, mem=2Gi, timeout=3600s)
    │
@@ -90,7 +90,7 @@ fun-site が Eventarc 経由で Cloud Run Job として起動 → Astro 再ビ�
 
 ### sparse-checkout 対象 (preview-realtime / `run.sh`)
 
-Cloud Run Job の 1 GiB メモリ制約のためフルクローンせず、`preview-realtime.py`
+Cloud Run Job の 512 MiB メモリ制約のためフルクローンせず、`preview-realtime.py`
 が実際に読み書きする領域だけを cone-mode sparse-checkout で取得します。
 スクリプト側で参照ファイルが増えたら `run.sh` の `git sparse-checkout set`
 リストを忘れずに拡張してください(さもないと `index_csv_missing` 等のログを
@@ -133,7 +133,7 @@ daily-sync は preview-realtime とは別系統の入出力を扱うため、`ru
 | `data/programs/race_cards/` + `title/` の 90 日窓ぶんの月 | **モーターptの 90 日ルックバック** (`MOTOR_HISTORY_LOOKBACK_DAYS`)。各場の直近 6 節の検出と、各節最終日の節間成績 + グレード読み出しに使う。欠けると採用節数が落ちてモーターptが平均 50 側に潰れる (月初は 0 節 = 全モーターptが 50)。`motor_lookback_months` として 90 日窓が触る月を実際に列挙する (短い月が続くと 4 ヶ月前まで届くため固定の月数にはしない。例: 5/1 の 90 日前は 1/31) |
 | `data/estimate/motor_pt/{runs,motors,baseline}/<YYYY/MM>/` | build_motor_pt_breakdown.py の出力先 (モーターpt 素点の内訳。commit + GCS ミラー対象) |
 
-> preview-realtime 側はこの 90 日ぶんを **取らない**。2 分毎に走るジョブで
+> preview-realtime 側はこの 90 日ぶんを **取らない**。5 分毎に走るジョブで
 > 毎回 20MB 近い race_cards を引くのは割に合わないため、index CSV の
 > `realtime` 行は朝バッチが計算したモーターptを再利用する
 > (`build_index.DAILY_REUSED_COMPONENTS`)。素点は当日中に変化しないので
@@ -404,9 +404,9 @@ gcloud run jobs add-iam-policy-binding "$JOB_NAME" \
   --role=roles/run.invoker
 ```
 
-### 8. Cloud Scheduler 登録 (JST 08:00〜22:59 を 2 分毎)
+### 8. Cloud Scheduler 登録 (JST 08:00〜22:59 を 5 分毎)
 
-`preview-realtime-daytime` 1 本を JST 08:00 起点・2 分毎で登録します
+`preview-realtime-daytime` 1 本を JST 08:00 起点・5 分毎で登録します
 (過去には JST 08:30 系列を別 Scheduler `preview-realtime-morning` として
 切っていましたが、開催日朝の `getHoldingList2` で扱える時刻が前倒し
 された関係で 08:00 起点に統合し、`preview-realtime-morning` は削除済み)。
@@ -418,7 +418,7 @@ INVOKER_EMAIL="${INVOKER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 # JST 08:00, 08:05, ..., 22:55
 gcloud scheduler jobs create http preview-realtime-daytime \
   --location="$REGION" \
-  --schedule="*/2 8-22 * * *" \
+  --schedule="*/5 8-22 * * *" \
   --time-zone="Asia/Tokyo" \
   --uri="$JOB_URI" \
   --http-method=POST \
@@ -427,6 +427,19 @@ gcloud scheduler jobs create http preview-realtime-daytime \
   --attempt-deadline=60s \
   --description="Preview realtime — JST 08:00-22:59"
 ```
+
+既存の Scheduler の間隔を変える場合は `update` を使います:
+
+```bash
+gcloud scheduler jobs update http preview-realtime-daytime \
+  --location="$REGION" --schedule="*/5 8-22 * * *"
+```
+
+> 5 分毎なのはコスト削減のため (2026-09 に 2 分毎から戻した)。
+> `preview-realtime.py` の直前情報の取得窓は締切 `[1, 10]` 分前で、5 分毎でも
+> 各レースが最低 1 回は窓に入るため取りこぼしは出ない。反映の遅れは
+> 最大 2 分から最大 5 分に伸びる。稼働時間帯は締切 08:32 のモーニングと
+> 22:45 のミッドナイトを両方拾うため 08:00〜22:55 から削らない。
 
 > `attempt-deadline` は Scheduler が `jobs:run` API のレスポンスを待つ時間
 > です。Cloud Run Jobs の `:run` は実行をキックしてすぐ返るので 60 秒で十分。
@@ -840,14 +853,14 @@ gcloud builds triggers create github \
   3 Job 全てが同じ Secret を参照しているため 1 回の更新で済む。
 * **想定外の重複実行**: 3 Job とも `parallelism=1 tasks=1 max-retries=0` で動く
   ため同一 Scheduler 内の重複は無い。Scheduler は 3 本:
-  `preview-realtime-daytime` (`*/2 8-22 * * *`) /
+  `preview-realtime-daytime` (`*/5 8-22 * * *`) /
   `daily-sync` (`30 7 * * *`) /
   `monthly-weights` (`0 6 1 * *`)。
   Python 側もレースコードで冪等化されており、CSV 上書きは MD5 dedup される。
 * **3 Job の時間帯重なり**: 毎月 1 日のタイムライン:
   - JST 06:00: `monthly-weights` 起動 (実測 10〜15 分、FeatureContext 導入後)
   - JST 07:30: `daily-sync` 起動 (実測 ~22 分)
-  - JST 08:00–22:58: `preview-realtime` 2 分毎
+  - JST 08:00–22:55: `preview-realtime` 5 分毎
   3 Job は書き込む path がそれぞれ独立しており **ファイル単位の merge conflict は
   起きない**が、git の non-fast-forward (= 相手が先に push して remote が進んだ)
   reject は普通に起きる。とくに `preview-realtime` 稼働時間帯 (JST 08:00–22:59)
@@ -959,7 +972,7 @@ Job 側は `:latest` 参照なので再デプロイ不要。
 [run-monthly-weights ...] FAILED (exit=1) at line 231
 ```
 
-`preview-realtime` (2 分毎) と push レースを 5 回連続で負けた状態。通常は
+`preview-realtime` (5 分毎) と push レースを 5 回連続で負けた状態。通常は
 2〜3 回のリトライで通る。連続失敗する場合の原因候補:
 
 1. **`preview-realtime` が極端に頻繁に push している** (5 分間に複数 commit)
@@ -1061,7 +1074,7 @@ gcloud scheduler jobs update http monthly-weights --location="$REGION" \
   --max-retry-attempts=3 --min-backoff=30s --max-backoff=300s
 ```
 
-> `preview-realtime-daytime` にはリトライを付けていない。2 分毎に発火するので
+> `preview-realtime-daytime` にはリトライを付けていない。5 分毎に発火するので
 > 1 回の 503 は次サイクルが自然に吸収し、リトライを足すと実行が重なる方が
 > 害が大きいため。
 

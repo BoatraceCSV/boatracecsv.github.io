@@ -67,7 +67,7 @@ REMOTE_WITH_TOKEN="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_RE
 REMOTE_PUBLIC="https://github.com/${GITHUB_REPO}.git"
 
 # The repo is ~5 GB (mostly data/ and models/). A naive `git clone` OOMs on
-# the 1 GiB Cloud Run Job. We do a partial clone (commits/trees only, no
+# the 512 MiB Cloud Run Job. We do a partial clone (commits/trees only, no
 # blobs) and then a cone-mode sparse-checkout of just the paths the script
 # actually reads or writes:
 #
